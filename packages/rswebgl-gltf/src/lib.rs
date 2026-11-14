@@ -28,6 +28,7 @@ mod buffers;
 mod draco;
 mod fetch;
 mod geometry;
+mod image_formats;
 mod ktx2;
 mod material;
 mod meshopt;
@@ -71,6 +72,8 @@ const HANDLED_EXTENSIONS: &[&str] = &[
     "EXT_meshopt_compression",
     "KHR_meshopt_compression",
     "KHR_texture_basisu",
+    "EXT_texture_webp",
+    "EXT_texture_avif",
     "KHR_draco_mesh_compression",
     "KHR_mesh_quantization",
     "KHR_materials_variants",
@@ -571,7 +574,8 @@ pub async fn load_model(ctx: &Context, url: &str) -> Result<Model, Error> {
         let _s = tracing::info_span!("gltf.parse", bytes = bytes.len()).entered();
         split(&bytes)?
     };
-    patch_basisu_sources(&mut json);
+    let (webp, avif) = image_formats::support().await;
+    patch_image_sources(&mut json, ktx2::has_transcoder(), webp, avif);
 
     let base = fetch::absolute_base(url).map_err(js_err)?;
     let mut buffers = buffers::resolve_buffers(&json, blob, &base)
@@ -737,23 +741,39 @@ fn document(json: &serde_json::Value) -> Result<gltf::Document, Error> {
     gltf::Document::from_json(root).map_err(|e| format!("glTF invalid: {e}").into())
 }
 
-// KHR_texture_basisu: with a transcoder, a texture's source becomes its
-// KTX2 image (textures.rs knows it by its type); without, it keeps its
-// PNG/JPEG fallback — or, with none (no `source`, which the gltf crate
-// requires), gets the KTX2 image anyway, to fail visibly at load.
-fn patch_basisu_sources(json: &mut serde_json::Value) {
-    let prefer = ktx2::has_transcoder();
+// Image extensions, by preference (three.js' plugin order): a texture's
+// source becomes the first one's image this browser can use —
+// KHR_texture_basisu with a transcoder (textures.rs knows a KTX2 image by
+// its type), EXT_texture_webp / EXT_texture_avif where the browser decodes
+// them (the browser's decoder does the rest, as for PNG and JPEG).
+// Otherwise it keeps its PNG/JPEG fallback — or, with none (no `source`,
+// which the gltf crate requires), gets the first extension's image anyway,
+// to fail visibly at load.
+fn patch_image_sources(json: &mut serde_json::Value, ktx2: bool, webp: bool, avif: bool) {
+    let usable = [
+        ("KHR_texture_basisu", ktx2),
+        ("EXT_texture_webp", webp),
+        ("EXT_texture_avif", avif),
+    ];
     let Some(textures) = json.get_mut("textures").and_then(|t| t.as_array_mut()) else {
         return;
     };
     for t in textures {
-        let ext = t.pointer("/extensions/KHR_texture_basisu/source").cloned();
-        if let (Some(source), Some(obj)) = (ext, t.as_object_mut()) {
-            if prefer {
-                obj.insert("source".into(), source);
-            } else {
-                obj.entry("source").or_insert(source);
-            }
+        let sources: Vec<(serde_json::Value, bool)> = usable
+            .iter()
+            .filter_map(|&(name, ok)| {
+                t.pointer(&format!("/extensions/{name}/source"))
+                    .cloned()
+                    .map(|s| (s, ok))
+            })
+            .collect();
+        let Some(obj) = t.as_object_mut() else {
+            continue;
+        };
+        if let Some((source, _)) = sources.iter().find(|(_, ok)| *ok) {
+            obj.insert("source".into(), source.clone());
+        } else if let Some((source, _)) = sources.first() {
+            obj.entry("source").or_insert_with(|| source.clone());
         }
     }
 }
@@ -910,5 +930,26 @@ mod tests {
         }
         let unknown = split(doc("EXT_unknown_extension").as_bytes()).unwrap().0;
         assert!(document(&unknown).is_err());
+    }
+
+    // A texture's source: WebP before AVIF where the browser decodes them,
+    // the PNG/JPEG fallback otherwise, an extension's image without one.
+    #[test]
+    fn image_extensions_pick_the_source() {
+        let textures = r#"{"textures": [
+            {"source": 0, "extensions": {"EXT_texture_webp": {"source": 1}, "EXT_texture_avif": {"source": 2}}},
+            {"source": 0, "extensions": {"EXT_texture_avif": {"source": 2}}},
+            {"extensions": {"EXT_texture_avif": {"source": 2}}}
+        ]}"#;
+        let picked = |webp, avif| {
+            let mut json: serde_json::Value = serde_json::from_str(textures).unwrap();
+            patch_image_sources(&mut json, false, webp, avif);
+            (0..3)
+                .map(|i| json["textures"][i]["source"].as_u64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(picked(true, true), [1, 2, 2]);
+        assert_eq!(picked(false, true), [2, 2, 2]);
+        assert_eq!(picked(false, false), [0, 0, 2]);
     }
 }

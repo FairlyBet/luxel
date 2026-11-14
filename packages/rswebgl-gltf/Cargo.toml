@@ -39,6 +39,7 @@ bevy_mikktspace = "1"
 [dependencies.web-sys]
 workspace = true
 features = [
+    "HtmlImageElement",
     "Location",
     "Response",
     "Url",

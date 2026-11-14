@@ -4,51 +4,40 @@ Known limits and deferred work.
 
 ## Planned
 
-In the order we mean to take them (TAAU, npm publishing and a gem shader are
+In the order we mean to take them (TAAU, npm publishing, a gem shader and a
+lighter TAA — `setTaaQuality("low")`: 5-tap Catmull-Rom history, a cross
+neighbourhood, about half the resolve's reads — are
 set aside for now).
 
-1. **Antialiasing on phones** (next). On the Mali-G57 test phone (half
-   resolution, OpenPBR, IridescentDishWithOlives from above) no AA runs
-   at 60 fps, TAA at ~40 (~8 ms: the opaque copy, the motion pass, a
-   resolve of ~25 RGBA16F taps per pixel, history + RG16F motion writes,
-   RCAS). MSAA, even 2×, costs too much there (the user tried it).
-   - done: **FXAA** (`setFxaa`, three.js r180 `FXAAShader`): the display
-     pass draws into an RGBA8 texture, FXAA filters it onto the canvas;
-     the viewer picks it on touch devices. Still to measure on the phone
-     (the view-cost probe has a "no FXAA" / "+ FXAA" row);
-   - a lighter TAA (`setTaaQuality("low")`): history by 5-tap Catmull-Rom
-     (Jimenez 2016 / Unreal) instead of Godot's 9, a 5-tap cross
-     neighbourhood instead of 3×3 (Karis), 3 depth taps — about half the
-     resolve's reads.
-   Frame spikes on phones turned out to be the viewer panel's
-   backdrop-filter (fixed); the profiler stays (`rswebgl::trace`).
-2. **`EXT_texture_webp` / `EXT_texture_avif`**: not handled; gltf-transform
-   writes WebP often. The browser decodes both (`createImageBitmap`); the
-   texture's source moves to the extension's, as for `KHR_texture_basisu`.
-3. **Quantized vertex attributes on the GPU**: everything is dequantized to
+Done: antialiasing on phones — FXAA (`setFxaa`), the default on touch
+devices, runs without dropping frames on the Mali-G57 test phone (MSAA,
+even 2×, and TAA cost too much there). Done: `EXT_texture_webp` /
+`EXT_texture_avif`.
+
+1. **Quantized vertex attributes on the GPU** (next): everything is dequantized to
    f32 today. Upload `KHR_mesh_quantization` attributes as they are
    (positions i16 / i8, normals and tangents i8 normalized, UVs u16
    normalized; the dequantization is in the node matrix), and quantize
    plain files ourselves (normals / tangents to i8, UVs to u16 or half,
    morph deltas to half): about half the vertex memory. CPU-side users
    (bounds, MikkTSpace) keep a temporary f32 copy.
-4. **`R11F_G11F_B10F`**: for the IBL cubes (half of RGBA16F; Filament does
+2. **`R11F_G11F_B10F`**: for the IBL cubes (half of RGBA16F; Filament does
    it) and, if no pass needs its alpha, the HDR scene target (RGBA16F with
    4× MSAA at 2560×1440 is ~118 MB).
-5. **Shadows**: directional and spot shadow maps (depth texture,
+3. **Shadows**: directional and spot shadow maps (depth texture,
    `sampler2DShadow` hardware PCF, Castaño's optimized PCF as in Filament /
    Bevy, normal-offset bias, the shadow camera fitted to the scene bounds;
    cascades for large scenes; point lights later). Then screen-space contact
    shadows (a short march toward the light through the depth buffer; MSAA
    needs a resolved depth). For environment-only scenes: GTAO (XeGTAO, as
    Godot / Bevy) and a ground shadow (three.js' contact-shadows example).
-6. **Runtime texture compression**: glTF images that came uncompressed,
+4. **Runtime texture compression**: glTF images that came uncompressed,
    encoded on the GPU in fragment shaders (Godot's Betsy, MIT: BC1/BC4/BC5/
    BC6H, ETC2), read back through a PBO and uploaded compressed — BC on
    desktop, ETC2 / EAC on mobile, two-channel formats for normal maps.
    2048² RGBA8 with mips is ~21 MB, BC1 / ETC2 ~2.8 MB. BC6H for the IBL
    cubes on desktop.
-7. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
+5. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
    Mali-G57 MC2, Chrome 157, 1000 draws × 80 bytes, CPU submit / fence ms):
    one upload of a big UBO 1.31 / 13.0; a `bufferSubData` per draw into it
    2.97 / 16.5; a small UBO rewritten per draw 2.31 / 21.0; plain uniforms
@@ -58,7 +47,7 @@ set aside for now).
    runs less than 1 KB apart upload as one write (`uniform_buffer.rs`). A
    shared material UBO would gain ~25% over plain uniforms — low priority,
    per-object data already goes through the instance texture.
-8. Later: bloom, LOD by meshoptimizer's simplifier, `KHR_animation_pointer`,
+6. Later: bloom, LOD by meshoptimizer's simplifier, `KHR_animation_pointer`,
    `KHR_node_visibility`, `KHR_materials_volume_scatter`, `ctx.gpuInfo()`.
 
 Texture arrays to cut texture switches: not planned in general. Layers
