@@ -43,7 +43,9 @@ const float PI = 3.14159265359;
 vec3 r11_round(vec3 c) {
     vec3 e = floor(log2(max(c, vec3(1e-30))));
     vec3 step = exp2(e - vec3(6.0, 6.0, 5.0));
-    return max(round(c / step) * step, 0.0);
+    // Rounding up past the largest finite value (65024; 64512 in the 5-bit
+    // blue) would store infinity: a 65504 sun, say, which TAA then smears.
+    return clamp(round(c / step) * step, vec3(0.0), vec3(65024.0, 65024.0, 64512.0));
 }
 #endif
 
