@@ -240,6 +240,21 @@ fn device_size(
     )
 }
 
+// A boolean of `getContextAttributes()` (what the browser actually gave;
+// None for a lost context or an unknown name).
+fn context_attribute(gl: &WebGl2RenderingContext, name: &str) -> Option<bool> {
+    let attrs = js_sys::Reflect::get(gl.as_ref(), &"getContextAttributes".into())
+        .ok()?
+        .dyn_into::<js_sys::Function>()
+        .ok()?
+        .call0(gl.as_ref())
+        .ok()
+        .filter(|a| a.is_object())?;
+    js_sys::Reflect::get(&attrs, &JsValue::from_str(name))
+        .ok()?
+        .as_bool()
+}
+
 // Resizes the drawing buffer to `(w, h)` device pixels and updates the
 // viewport to what the browser gave (it may clamp a large buffer: the
 // drawing buffer's size, not the canvas's). Only touches the backing store
@@ -441,6 +456,21 @@ impl DefaultFramebuffer {
     #[wasm_bindgen(js_name = isAutoResizeEnabled)]
     pub fn is_auto_resize_enabled(&self) -> bool {
         self.inner.borrow().observer.is_some()
+    }
+
+    /// Whether the canvas's drawing buffer has a depth buffer (the context
+    /// was created with `depth: true`, the default). Without one, only
+    /// draws that need no depth test belong on the canvas.
+    #[wasm_bindgen(js_name = hasDepth)]
+    pub fn has_depth(&self) -> bool {
+        context_attribute(&self.inner.borrow().gl, "depth").unwrap_or(true)
+    }
+
+    /// Whether the canvas's drawing buffer is multisampled (the context was
+    /// created with `antialias: true`): a blit can't write into it then.
+    #[wasm_bindgen(js_name = isMultisampled)]
+    pub fn is_multisampled(&self) -> bool {
+        context_attribute(&self.inner.borrow().gl, "antialias").unwrap_or(false)
     }
 
     /// Color space of the drawing buffer (`drawingBufferColorSpace`). `Srgb`

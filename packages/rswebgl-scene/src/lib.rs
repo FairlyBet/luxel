@@ -32,6 +32,7 @@ mod animation;
 mod brdf_lut;
 mod camera;
 mod culling;
+mod direct;
 mod environment;
 mod gpu_pick;
 mod hdr;

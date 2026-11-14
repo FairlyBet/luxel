@@ -107,6 +107,13 @@ pub struct Scene {
     // displayed.
     hdr_wanted: bool,
     hdr: Option<crate::output::HdrOutput>,
+    // HDR off and a canvas without depth: the target direct frames draw
+    // into (made on need); the canvas's depth, read once.
+    direct: Option<crate::direct::DirectTarget>,
+    canvas_depth: bool,
+    // The last frame renderFrame drew: its size and whether through HDR
+    // (what presentFrame can show again).
+    last_frame: Option<(i32, i32, bool)>,
     samples: i32,
     // Temporal antialiasing: on, the frame count (jitter phase) and the
     // last frame's unjittered view-projection and camera.
@@ -190,6 +197,9 @@ impl Scene {
             reloads: Reloads::default(),
             hdr_wanted: crate::output::HdrOutput::supported(ctx),
             hdr: None,
+            direct: None,
+            canvas_depth: ctx.default_framebuffer().has_depth(),
+            last_frame: None,
             samples: 4,
             taa: false,
             taa_frame: 0,
@@ -579,7 +589,63 @@ impl Scene {
         drawn
     }
 
+    /// Shows the last `renderFrame` again, without drawing the scene: the
+    /// display pass (exposure, tone mapping, FXAA — at their current
+    /// settings) from what that frame left in the HDR target, or a copy of
+    /// the direct target. For a still scene: the GPU keeps a light,
+    /// steady load instead of going idle (and clocking down: the next real
+    /// frame would stutter), and the page keeps presenting frames. False —
+    /// nothing drawn; call `renderFrame` — when there is no such frame to
+    /// show: none yet, the canvas resized since, the output changed (HDR,
+    /// samples, TAA switched), the context lost, or a direct frame drawn
+    /// straight to the canvas (one with its own depth buffer keeps nothing).
+    /// What changes the picture (the camera, the scene, the environment,
+    /// animations; TAA converging for a few frames after a change) still
+    /// needs `renderFrame`; telling those apart is the caller's to do.
+    #[wasm_bindgen(js_name = presentFrame)]
+    pub fn present_frame(&mut self) -> bool {
+        let _span = tracing::info_span!("presentFrame").entered();
+        if self.ctx.is_lost() || self.generation != self.ctx.generation() {
+            return false;
+        }
+        let fb = self.ctx.default_framebuffer();
+        let (w, h) = (fb.width(), fb.height());
+        let Some((lw, lh, through_hdr)) = self.last_frame else {
+            return false;
+        };
+        if (lw, lh) != (w, h) {
+            return false;
+        }
+        if through_hdr {
+            let Some(out) = &mut self.hdr else {
+                return false;
+            };
+            if out.is_lost(&self.ctx) || !out.holds(w, h) {
+                return false;
+            }
+            out.present(
+                &self.ctx,
+                self.renderer.exposure(),
+                self.tone_mapping,
+                self.dither,
+                self.sharpness,
+                None,
+            );
+        } else {
+            let Some(d) = &self.direct else {
+                return false;
+            };
+            if self.canvas_depth || d.is_lost(&self.ctx) || !d.holds(w, h) {
+                return false;
+            }
+            d.present(&self.ctx);
+        }
+        rswebgl::trace::gpu_fence(&self.ctx);
+        true
+    }
+
     fn render_frame_inner(&mut self, camera: Entity) -> usize {
+        self.last_frame = None;
         let fb = self.ctx.default_framebuffer();
         let (w, h) = (fb.width(), fb.height());
         let aspect = w.max(1) as f32 / h.max(1) as f32;
@@ -697,16 +763,22 @@ impl Scene {
             }
             drawn
         } else {
+            // A canvas without depth: into the direct target, then copied.
+            let direct = !self.canvas_depth && self.prepare_direct(&mut pass, w, h);
             self.renderer.set_scene_color(&self.ctx, None);
             let drawn = self.render(camera, &mut pass);
             let _s = tracing::info_span!("scene.opaque").entered();
             pass.sort();
             self.time(&mut pass, "opaque");
             self.ctx.render(&pass);
+            if direct && let Some(d) = &self.direct {
+                d.present(&self.ctx);
+            }
             drawn
         };
         self.frame_pass = pass;
         self.late_pass = late;
+        self.last_frame = Some((w, h, hdr));
         drawn
     }
 
@@ -1017,6 +1089,9 @@ impl Scene {
         }
         for model in self.models.into_values() {
             model.destroy(&self.ctx);
+        }
+        if let Some(d) = self.direct {
+            d.destroy(&self.ctx);
         }
         if let Some(out) = self.hdr {
             out.destroy(&self.ctx);

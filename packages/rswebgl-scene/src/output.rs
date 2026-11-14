@@ -551,6 +551,12 @@ impl HdrOutput {
         self.generation != ctx.generation()
     }
 
+    /// Whether the target is allocated at `w`×`h` (holds a frame of that
+    /// size once one was drawn).
+    pub fn holds(&self, w: i32, h: i32) -> bool {
+        !self.color.is_null() && self.size == (w.max(1), h.max(1))
+    }
+
     /// The radiance the last frame left (resolved), for passes that read
     /// the scene; NULL before the first frame.
     pub fn color_texture(&self) -> TextureId {

@@ -242,6 +242,10 @@ impl Scene {
                 Ok(()) => {
                     out.prepare_late(late);
                     self.renderer.set_output(false, self.tone_mapping);
+                    // Through HDR: the direct target isn't needed.
+                    if let Some(d) = self.direct.take() {
+                        d.destroy(&self.ctx);
+                    }
                     return true;
                 }
                 Err(e) if self.taa => {
@@ -260,6 +264,40 @@ impl Scene {
         pass.clear_resolve();
         pass.set_invalidate(&rswebgl::framebuffer::InvalidateMask::none());
         false
+    }
+
+    // The direct target, made (or remade after a loss) on need, set up for
+    // `pass`. False where it can't be: `pass` stays on the canvas then
+    // (drawn without a depth test), with a warning once.
+    pub(super) fn prepare_direct(&mut self, pass: &mut Pass, w: i32, h: i32) -> bool {
+        if self.direct.as_ref().is_some_and(|d| d.is_lost(&self.ctx))
+            && let Some(d) = self.direct.take()
+        {
+            d.destroy(&self.ctx);
+        }
+        if self.direct.is_none() {
+            match crate::direct::DirectTarget::new(&self.ctx) {
+                Ok(d) => self.direct = Some(d),
+                Err(e) => {
+                    console::error_once(&format!(
+                        "[rswebgl-scene] direct target: {e}; drawing to a canvas without depth"
+                    ));
+                    return false;
+                }
+            }
+        }
+        let Some(d) = &mut self.direct else {
+            return false;
+        };
+        match d.prepare(&self.ctx, w, h, self.samples, pass) {
+            Ok(()) => true,
+            Err(e) => {
+                console::error_once(&format!(
+                    "[rswebgl-scene] direct target: {e}; drawing to a canvas without depth"
+                ));
+                false
+            }
+        }
     }
 
     // TAA off for good (`isTaa` answers false); HDR output stays.

@@ -91,9 +91,11 @@ const status = (/** @type {string} */ text, error = false) => {
   $("status").classList.toggle("error", error);
 };
 
-// The scene does its own antialiasing (MSAA on its HDR target).
+// The scene does its own antialiasing (MSAA on its HDR target), and needs no
+// depth buffer on the canvas: with HDR off it draws into a target of its own.
 const options = new ContextOptions();
 options.antialias = false;
+options.depth = false;
 const ctx = Context.fromCanvas(canvas, options);
 const fb = ctx.defaultFramebuffer();
 fb.setClearColor(0.05, 0.05, 0.06, 1);
@@ -284,6 +286,7 @@ async function load(/** @type {string} */ url, /** @type {string} */ label) {
     Trace.instant(`model: ${label}`);
     if (root) scene.despawn(root);
     root = scene.addModel(model);
+    invalidate();
     modelLabel = label;
     modelUrl = url;
     const [cx, cy, cz, r] = scene.modelBounds(root);
@@ -298,6 +301,7 @@ async function load(/** @type {string} */ url, /** @type {string} */ label) {
     applySemantics();
     status(`Compiling shaders for ${label}…`);
     await scene.whenReady();
+    invalidate();
     if (ticket === loading) {
       status(`${label}: ${((performance.now() - t0) / 1000).toFixed(1)} s`);
       setTimeout(() => ticket === loading && status(""), 2500);
@@ -389,6 +393,8 @@ async function loadEnv(/** @type {string} */ name, /** @type {string} */ label) 
     scene.setEnvironmentHdr(bytes, 256);
     scene.setEnvironmentIntensity(envIntensity, envIntensity, envIntensity);
     status("");
+    // The bake finishing changes the picture.
+    scene.whenReady().then(invalidate);
   } catch (err) {
     status(`Can't load ${label}: ${err instanceof Error ? err.message : err}`, true);
   }
@@ -641,6 +647,24 @@ let last = -1; // no frame yet
 let fpsShown = 0;
 let lastStats = 0;
 
+// A still view: once it has settled (TAA converged), the last frame is shown
+// again (presentFrame) instead of drawn. Drawing nothing at all would let
+// the GPU clock down, and the first frame after it would stutter. Whatever
+// changes the picture starts the settling over: the camera, any control,
+// a pointer, wheel or key, a model, environment or shader arriving.
+const SETTLE_FRAMES = 30; // TAA's 8-frame jitter cycle, a few times over
+const REDRAW_MS = 1000; // a real frame now and then all the same
+let settle = SETTLE_FRAMES;
+let lastDrawn = 0;
+let lastView = "";
+let still = false;
+const invalidate = () => {
+  settle = SETTLE_FRAMES;
+};
+for (const type of ["input", "change", "pointerdown", "pointerup", "wheel", "keydown"]) {
+  document.addEventListener(type, invalidate, { capture: true, passive: true });
+}
+
 // "gpu 1.20 ms  (opaque 0.90 late 0.10 present 0.20)", or why there's none.
 function gpuLine() {
   if (!gpuTiming) return "gpu: no timer queries in this browser";
@@ -661,9 +685,22 @@ function frame(/** @type {number} */ now) {
   if ($("spin").checked) orbit.yaw += dt * 0.0003;
   resize();
   placeCamera();
-  scene.advanceAnimations(Math.min(dt, 100) / 1000);
+  const view = JSON.stringify([orbit, viewCamera(), canvas.width, canvas.height]);
+  if (view !== lastView) {
+    lastView = view;
+    invalidate();
+  }
+  const animating = root !== 0 && Number(animSelect.value) >= 0;
+  const changing =
+    animating || settle > 0 || scene.pending() > 0 || $("auto-exposure").checked || now - lastDrawn >= REDRAW_MS;
   const t0 = performance.now();
-  scene.renderFrame(viewCamera());
+  still = !changing && scene.presentFrame();
+  if (!still) {
+    scene.advanceAnimations(Math.min(dt, 100) / 1000);
+    scene.renderFrame(viewCamera());
+    settle--;
+    lastDrawn = now;
+  }
   cpuTimes.push(performance.now() - t0);
   if (cpuTimes.length > 60) cpuTimes.shift();
 
@@ -679,7 +716,7 @@ function frame(/** @type {number} */ now) {
     $("fps").style.color = fpsShown >= 55 ? "var(--good)" : fpsShown >= 30 ? "var(--warn)" : "var(--bad)";
     $("frame").textContent = `frame ${avg.toFixed(1)} ms (worst ${worst.toFixed(0)})  cpu ${cpu.toFixed(2)} ms`;
     $("info").textContent =
-      `\n${canvas.width}×${canvas.height}  ${scene.isHdr() ? (scene.isTaa() ? (scene.isFxaa() ? "HDR TAA+FXAA" : "HDR TAA") : scene.isFxaa() ? "HDR FXAA" : "HDR") : "direct"}  ${scene.shadingModel()}\n` +
+      `\n${canvas.width}×${canvas.height}${still ? "  still" : ""}  ${scene.isHdr() ? (scene.isTaa() ? (scene.isFxaa() ? "HDR TAA+FXAA" : "HDR TAA") : scene.isFxaa() ? "HDR FXAA" : "HDR") : "direct"}  ${scene.shadingModel()}\n` +
       `drawn ${scene.drawn()} in ${scene.drawCalls()} calls  culled ${scene.culled()}  pending ${scene.pending()}  moving ${scene.movingMeshes()}\n` +
       `variants ${scene.shaderVariantCount()}  entities ${scene.entityCount()}  file lights ${root ? scene.lights(root).length : 0}
 ` +
