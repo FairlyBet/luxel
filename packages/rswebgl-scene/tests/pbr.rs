@@ -35,6 +35,9 @@ fn context() -> (Context, Gl) {
     let mut options = ContextOptions::new();
     options.antialias = false;
     let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    // As the scene does: links run off the main thread, so the page stays
+    // responsive while dozens of variants compile.
+    ctx.enable_extension(rswebgl::extension::Extension::KhrParallelShaderCompile);
     let gl = canvas
         .get_context("webgl2")
         .unwrap()
@@ -44,18 +47,19 @@ fn context() -> (Context, Gl) {
     (ctx, gl)
 }
 
-// Split by shading model: each half stays well inside the runner's timeout.
+// Split by shading model, and async: the links are polled, so the page keeps
+// answering the test runner while they compile.
 #[wasm_bindgen_test]
-fn every_openpbr_feature_compiles_and_links() {
-    every_feature_compiles_and_links(ShadingModel::OpenPbr);
+async fn every_openpbr_feature_compiles_and_links() {
+    every_feature_compiles_and_links(ShadingModel::OpenPbr).await;
 }
 
 #[wasm_bindgen_test]
-fn every_gltf_feature_compiles_and_links() {
-    every_feature_compiles_and_links(ShadingModel::Gltf);
+async fn every_gltf_feature_compiles_and_links() {
+    every_feature_compiles_and_links(ShadingModel::Gltf).await;
 }
 
-fn every_feature_compiles_and_links(model: ShadingModel) {
+async fn every_feature_compiles_and_links(model: ShadingModel) {
     let (ctx, _) = context();
     let mut shaders = PbrShaders::new();
     // Bits (see pbr.rs): 0..5 attributes, 5..7 alpha, 7 unlit, 8..12
@@ -99,7 +103,10 @@ fn every_feature_compiles_and_links(model: ShadingModel) {
             })
             .collect();
         for (bits, key, p) in programs {
-            // Waits for the link; then validity is known.
+            // Polled (no blocking wait); once linked, validity is known.
+            while !ctx.program_is_ready(p) {
+                sleep_ms(5).await;
+            }
             ctx.program_active_uniform_names(p);
             assert!(
                 ctx.program_is_valid(p),
@@ -347,4 +354,14 @@ async fn transparent_draws_go_back_to_front() {
         "{px:?}"
     );
     s.scene.destroy();
+}
+
+async fn sleep_ms(ms: i32) {
+    let p = js_sys::Promise::new(&mut |resolve, _| {
+        web_sys::window()
+            .unwrap()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+            .unwrap();
+    });
+    wasm_bindgen_futures::JsFuture::from(p).await.unwrap();
 }
