@@ -334,7 +334,8 @@ void main() {
     s.metallic *= mr.b;
 #endif
     s.metallic = clamp(s.metallic, 0.0, 1.0);
-    s.roughness = specular_aa(s.n_coat, clamp(roughness, 0.0, 1.0), u_shading.x, u_shading.y);
+    s.aa_kernel = specular_aa_kernel(s.n_coat, u_shading.x, u_shading.y);
+    s.roughness = specular_aa(clamp(roughness, 0.0, 1.0), s.aa_kernel);
     s.diffuse_roughness = 0.0;
 #ifdef HAS_DIFFUSE_ROUGHNESS
     s.diffuse_roughness = clamp(u_diffuse_roughness, 0.0, 1.0);
@@ -395,7 +396,8 @@ void main() {
     cm.xy *= u_clearcoat_normal_scale;
     s.n_coat = normalize(mat3(frame.t, frame.b, frame.ng) * cm);
 #endif
-    s.coat_roughness = specular_aa(frame.ng, clamp(coat_roughness, 0.0, 1.0), u_shading.x, u_shading.y);
+    s.coat_roughness = specular_aa(clamp(coat_roughness, 0.0, 1.0),
+                                   specular_aa_kernel(frame.ng, u_shading.x, u_shading.y));
     s.coat_ior = u_coat_ior;
     s.coat_color = u_coat_color;
     s.coat_darkening = u_coat_darkening;

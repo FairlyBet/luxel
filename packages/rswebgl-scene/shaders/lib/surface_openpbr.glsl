@@ -351,7 +351,8 @@ vec3 shade_openpbr(Surface s) {
         vec3 ray = volume_ray(n, v, s.thickness, o.eta_refract);
         if (light.params.w > 0.5) to_exit -= ray; // a directional light is infinitely far
 #endif
-        vec3 t_light = o.tint * punctual_transmission(n, v, normalize(to_exit), o.alpha, o.eta_refract);
+        vec3 t_light = o.tint * punctual_transmission(n, v, normalize(to_exit), o.alpha, s.aa_kernel,
+                                                     o.eta_refract);
 #ifdef HAS_VOLUME
         t_light = volume_attenuation(t_light, length(ray), s.attenuation_color,
                                      s.attenuation_distance);

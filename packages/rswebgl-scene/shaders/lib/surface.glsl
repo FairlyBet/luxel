@@ -16,6 +16,7 @@ struct Surface {
     float base_weight;      // OpenPBR base_weight
     float metallic;
     float roughness;        // perceptual (after specular antialiasing)
+    float aa_kernel;        // the α² specular antialiasing added to it
     float diffuse_roughness; // OpenPBR base_diffuse_roughness (EON)
     float ior;
     float specular_weight;  // KHR_materials_specular factor / OpenPBR specular_weight
@@ -127,7 +128,12 @@ vec3 env_transmission(Surface s, float ior, float roughness) {
 // what the reference renderer shows (LightsPunctualLamp's shade: with a
 // cosine it lost its front lights and went teal from the one behind). The
 // cost: a few white sparkles where n·l and n·v both near 0 (silhouettes).
-float punctual_transmission(vec3 n, vec3 v, vec3 l, float alpha, float ior) {
+// `kernel`: the α² specular antialiasing added to `alpha`, taken back off —
+// a lobe widened at silhouettes (where the normal turns fastest) met that
+// unbounded V there: a dotted line of sparkles along the rim, worst at
+// the strongest filtering.
+float punctual_transmission(vec3 n, vec3 v, vec3 l, float alpha, float kernel, float ior) {
+    alpha = sqrt(max(alpha * alpha - kernel, 1e-8));
     float t_alpha = ior_roughness(alpha, ior);
     vec3 l_mirror = normalize(l + 2.0 * n * dot(-l, n));
     vec3 h = normalize(l_mirror + v);

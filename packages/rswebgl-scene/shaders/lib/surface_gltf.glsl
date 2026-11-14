@@ -146,7 +146,7 @@ vec3 shade_gltf(Surface s) {
         if (light.params.w > 0.5) to_exit -= ray; // a directional light is infinitely far
 #endif
         vec3 transmitted = intensity * base
-            * punctual_transmission(n, v, normalize(to_exit), alpha, s.ior);
+            * punctual_transmission(n, v, normalize(to_exit), alpha, s.aa_kernel, s.ior);
 #ifdef HAS_VOLUME
         transmitted = volume_attenuation(transmitted, length(ray), s.attenuation_color,
                                          s.attenuation_distance);
