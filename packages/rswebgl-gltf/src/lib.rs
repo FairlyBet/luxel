@@ -35,6 +35,7 @@ mod meshopt;
 mod pack;
 mod scene;
 mod textures;
+mod vertex_format;
 
 pub use animation::{Animation, AnimationChannel, AnimationPath, Interpolation};
 pub use draco::set_draco_decoder_path;
@@ -391,6 +392,14 @@ impl Model {
     #[wasm_bindgen(js_name = bufferCount)]
     pub fn buffer_count(&self) -> usize {
         self.buffers.len()
+    }
+    /// Bytes of those buffers (vertex attributes and indices) on the GPU.
+    #[wasm_bindgen(js_name = geometryBytes)]
+    pub fn geometry_bytes(&self, ctx: &Context) -> f64 {
+        self.buffers
+            .iter()
+            .map(|&b| f64::from(ctx.buffer_size(b)))
+            .sum()
     }
     /// World-space center of the model's bounding sphere (3 floats).
     pub fn center(&self) -> Vec<f32> {

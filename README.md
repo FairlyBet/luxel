@@ -27,7 +27,9 @@ low-level WebGL2 layer that owns all GL state.
 - **Compressed glTF**: `EXT_meshopt_compression` / `KHR_meshopt_compression`
   (decoded in Rust), `KHR_draco_mesh_compression` and `KHR_texture_basisu`
   (KTX2, transcoded to ASTC / BC7 / ETC2 / S3TC) in worker pools,
-  `KHR_mesh_quantization`; `EXT_texture_webp` / `EXT_texture_avif` (where
+  `KHR_mesh_quantization` (uploaded as stored; plain files' normals,
+  tangents, UVs and colors go up as 16-bit: `setVertexCompression`);
+  `EXT_texture_webp` / `EXT_texture_avif` (where
   the browser decodes them, else the PNG / JPEG fallback).
 - **Shading**: OpenPBR (MaterialX's real-time model) or the glTF reference
   model; glTF materials keep glTF's meaning under OpenPBR (converted in one

@@ -15,9 +15,11 @@
 //! and a destroyed buffer still in use is freed with its last user). Each mesh
 //! is built once however many nodes instance it.
 //!
-//! Attributes are uploaded as `f32` (the `gltf` readers dequantize normalized /
-//! integer variants, so one attribute path covers every primitive); indices
-//! keep their source width (u8 / u16 / u32) — WebGL2 draws all three.
+//! Attributes are read as floats (the `gltf` readers dequantize every
+//! component type) and stored in the smallest GPU format that keeps them —
+//! a quantized file's own, 16-bit normals, tangents, texture coordinates
+//! and colors otherwise (`vertex_format.rs`); indices keep their source
+//! width (u8 / u16 / u32) — WebGL2 draws all three.
 
 use std::collections::HashMap;
 
@@ -31,6 +33,7 @@ use rswebgl::vao::VertexAttr;
 use rswebgl::ids::TextureId;
 use rswebgl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget};
 
+use crate::vertex_format;
 use crate::{
     ATTR_COLOR, ATTR_MORPH_NORMAL, ATTR_MORPH_POSITION, ATTR_MORPH_TANGENT, ATTR_NORMAL, ATTR_SKIN,
     ATTR_SKIN8, ATTR_TANGENT, ATTR_UV0, ATTR_UV1,
@@ -39,7 +42,8 @@ use crate::{
 /// Texels per row of a morph texture; `MORPH_TEXTURE_WIDTH` in the shader.
 pub const MORPH_TEXTURE_WIDTH: i32 = 2048;
 
-/// A primitive's morph targets on the GPU: an RGBA32F texture of deltas —
+/// A primitive's morph targets on the GPU: an RGBA16F texture of deltas
+/// (RGBA32F past a half's range) —
 /// for vertex `v`, target `t` and kind `k` (position, normal, tangent, those
 /// present in that order) the texel `(v * targets + t) * kinds + k`,
 /// `MORPH_TEXTURE_WIDTH` texels a row.
@@ -69,7 +73,7 @@ pub struct PrimitiveGpu {
 /// from them. Owned by the model and destroyed with it.
 #[derive(Default)]
 pub struct GeometryCache {
-    vertex: HashMap<usize, BufferId>,
+    vertex: HashMap<usize, (BufferId, VertexAttr)>,
     index: HashMap<usize, (BufferId, IndexType)>,
     meshes: HashMap<usize, Vec<PrimitiveGpu>>,
     // The TEXCOORD sets each material reads, in its two UV slots
@@ -88,7 +92,7 @@ impl GeometryCache {
     pub fn buffers(&self) -> impl Iterator<Item = BufferId> + '_ {
         self.vertex
             .values()
-            .copied()
+            .map(|(b, _)| *b)
             .chain(self.index.values().map(|(b, _)| *b))
             .chain(
                 self.weights
@@ -202,24 +206,25 @@ impl GeometryCache {
             }
         };
 
-        // (location, semantic, components, ATTR_* bit)
+        // (location, semantic, ATTR_* bit)
         let attrs = [
-            (0, gltf::Semantic::Positions, 3u8, 0),
-            (1, gltf::Semantic::Normals, 3, ATTR_NORMAL),
-            (2, gltf::Semantic::TexCoords(uv[0]), 2, ATTR_UV0),
-            (3, gltf::Semantic::Tangents, 4, ATTR_TANGENT),
-            (4, gltf::Semantic::Colors(0), 4, ATTR_COLOR),
-            (5, gltf::Semantic::TexCoords(uv[1]), 2, ATTR_UV1),
+            (0, gltf::Semantic::Positions, 0),
+            (1, gltf::Semantic::Normals, ATTR_NORMAL),
+            (2, gltf::Semantic::TexCoords(uv[0]), ATTR_UV0),
+            (3, gltf::Semantic::Tangents, ATTR_TANGENT),
+            (4, gltf::Semantic::Colors(0), ATTR_COLOR),
+            (5, gltf::Semantic::TexCoords(uv[1]), ATTR_UV1),
         ];
         let mut attributes = 0;
-        for (loc, semantic, size, bit) in attrs {
+        for (loc, semantic, bit) in attrs {
             let Some(accessor) = primitive.get(&semantic) else {
                 continue;
             };
-            let Some(buf) = self.vertex_buffer(ctx, buffers, &reader, &accessor, &semantic) else {
+            let Some((buf, attr)) = self.vertex_buffer(ctx, buffers, &reader, &accessor, &semantic)
+            else {
                 continue;
             };
-            ctx.vertex_array_attr(vao, loc, buf, &VertexAttr::float(size));
+            ctx.vertex_array_attr(vao, loc, buf, &attr);
             attributes |= bit;
         }
         // A normal map without TANGENT: MikkTSpace tangents, as glTF 2.0
@@ -234,7 +239,8 @@ impl GeometryCache {
             && let Some(slot) = normal_slot
             && let Some(t) = self.mikktspace(ctx, primitive, buffers, uv[slot as usize & 1])
         {
-            ctx.vertex_array_attr(vao, 3, t, &VertexAttr::float(4));
+            let (_, tangent) = vertex_format::pack(&[], 4, vertex_format::direction());
+            ctx.vertex_array_attr(vao, 3, t, &tangent);
             attributes |= ATTR_TANGENT;
         }
         // Skinning needs both: four joint indices and their weights, and
@@ -251,11 +257,11 @@ impl GeometryCache {
             });
             let w = self.skin_weights(ctx, buffers, &w, more.as_ref().map(|(_, w1)| w1));
             if let (Some(j), Some((w, w1))) = (j, w) {
-                ctx.vertex_array_attr(vao, 6, j, &VertexAttr::float(4));
+                ctx.vertex_array_attr(vao, 6, j.0, &j.1);
                 ctx.vertex_array_attr(vao, 7, w, &VertexAttr::float(4));
                 attributes |= ATTR_SKIN;
                 if let (Some(j1), Some(w1)) = (j1, w1) {
-                    ctx.vertex_array_attr(vao, 8, j1, &VertexAttr::float(4));
+                    ctx.vertex_array_attr(vao, 8, j1.0, &j1.1);
                     ctx.vertex_array_attr(vao, 9, w1, &VertexAttr::float(4));
                     attributes |= ATTR_SKIN8;
                 }
@@ -341,7 +347,10 @@ impl GeometryCache {
         };
         bevy_mikktspace::generate_tangents(&mut mesh).ok()?;
         let b = ctx
-            .create_buffer(BufferUsage::StaticDraw, bytes_of(mesh.out.as_flattened()))
+            .create_buffer(
+                BufferUsage::StaticDraw,
+                &vertex_format::pack(mesh.out.as_flattened(), 4, vertex_format::direction()).0,
+            )
             .inspect_err(|e| console::error(&format!("[rswebgl-gltf] tangents: {e}")))
             .ok()?;
         self.tangents.insert(key, b);
@@ -398,31 +407,62 @@ impl GeometryCache {
         reader: &gltf::mesh::Reader<'a, 's, F>,
         accessor: &gltf::Accessor,
         semantic: &gltf::Semantic,
-    ) -> Option<BufferId>
+    ) -> Option<(BufferId, VertexAttr)>
     where
         F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
     {
-        if let Some(&b) = self.vertex.get(&accessor.index()) {
-            return Some(b);
+        if let Some(b) = self.vertex.get(&accessor.index()) {
+            return Some(b.clone());
         }
-        let data: Vec<f32> = match semantic {
-            // Any component type (KHR_mesh_quantization), dequantized.
-            gltf::Semantic::Positions
-            | gltf::Semantic::Normals
-            | gltf::Semantic::TexCoords(_)
-            | gltf::Semantic::Tangents => crate::accessor::read_floats(accessor, buffers)?,
-            gltf::Semantic::Colors(n) => flatten(reader.read_colors(*n)?.into_rgba_f32()),
-            // Indices as floats: exact up to 2^24, cast back in the shader.
-            gltf::Semantic::Joints(n) => {
-                flatten(reader.read_joints(*n)?.into_u16().map(|j| j.map(f32::from)))
-            }
-            gltf::Semantic::Weights(n) => flatten(reader.read_weights(*n)?.into_f32()),
+        use vertex_format::Kind;
+        // Every component type read as floats (dequantized), then stored in
+        // the smallest format that keeps them (vertex_format.rs).
+        let (data, n, kind): (Vec<f32>, usize, Kind) = match semantic {
+            gltf::Semantic::Positions => (
+                crate::accessor::read_floats(accessor, buffers)?,
+                3,
+                Kind::Exact,
+            ),
+            gltf::Semantic::Normals => (
+                crate::accessor::read_floats(accessor, buffers)?,
+                3,
+                Kind::Direction,
+            ),
+            gltf::Semantic::Tangents => (
+                crate::accessor::read_floats(accessor, buffers)?,
+                4,
+                Kind::Direction,
+            ),
+            gltf::Semantic::TexCoords(_) => (
+                crate::accessor::read_floats(accessor, buffers)?,
+                2,
+                Kind::Unit,
+            ),
+            gltf::Semantic::Colors(c) => (
+                flatten(reader.read_colors(*c)?.into_rgba_f32()),
+                4,
+                Kind::Unit,
+            ),
+            // Joint indices: their own integers, read as floats (exact),
+            // cast back in the shader.
+            gltf::Semantic::Joints(j) => (
+                flatten(reader.read_joints(*j)?.into_u16().map(|j| j.map(f32::from))),
+                4,
+                Kind::Exact,
+            ),
             _ => return None,
         };
-        match ctx.create_buffer(BufferUsage::StaticDraw, bytes_of(&data)) {
+        let format = vertex_format::choose(
+            kind,
+            vertex_format::Comp::of(accessor.data_type()),
+            accessor.normalized(),
+            &data,
+        );
+        let (bytes, attr) = vertex_format::pack(&data, n, format);
+        match ctx.create_buffer(BufferUsage::StaticDraw, &bytes) {
             Ok(b) => {
-                self.vertex.insert(accessor.index(), b);
-                Some(b)
+                self.vertex.insert(accessor.index(), (b, attr.clone()));
+                Some((b, attr))
             }
             Err(e) => {
                 console::error(&format!("[rswebgl-gltf] vertex buffer: {e}"));
@@ -672,7 +712,13 @@ fn morph_texture(
             return None;
         }
     };
-    let format = TextureFormat::rgba32f();
+    // Half precision (half the memory; a delta keeps 11 significant bits),
+    // unless a delta goes past what a half holds.
+    let format = if vertex_format::enabled() && data.iter().all(|d| d.abs() < 60000.0) {
+        TextureFormat::rgba16f_from_float()
+    } else {
+        TextureFormat::rgba32f()
+    };
     let (w, h) = (MORPH_TEXTURE_WIDTH, rows as i32);
     ctx.texture_storage_2d(texture, 1, &format, w, h);
     ctx.texture_sub_image_2d(texture, 0, 0, 0, w, h, &format, bytes_of(&data));

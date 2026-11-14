@@ -12,32 +12,32 @@ set aside for now).
 Done: antialiasing on phones — FXAA (`setFxaa`), the default on touch
 devices, runs without dropping frames on the Mali-G57 test phone (MSAA,
 even 2×, and TAA cost too much there). Done: `EXT_texture_webp` /
-`EXT_texture_avif`.
+`EXT_texture_avif`. Done: quantized vertex attributes on the GPU
+(`vertex_format.rs`, `setVertexCompression`): a quantized file's go up as
+they are, plain files' normals / tangents / UVs / colors as 16-bit, morph
+deltas as half — 21–28% less geometry memory (Sponza 9.1 → 6.6 MB).
+Left: positions of plain files (16-bit with the dequantization in the node
+matrix, as gltfpack — needs a uniform scale so normals stay right, and
+bounds / picking to follow) and skin weights (unorm16); they would bring
+it near half.
 
-1. **Quantized vertex attributes on the GPU** (next): everything is dequantized to
-   f32 today. Upload `KHR_mesh_quantization` attributes as they are
-   (positions i16 / i8, normals and tangents i8 normalized, UVs u16
-   normalized; the dequantization is in the node matrix), and quantize
-   plain files ourselves (normals / tangents to i8, UVs to u16 or half,
-   morph deltas to half): about half the vertex memory. CPU-side users
-   (bounds, MikkTSpace) keep a temporary f32 copy.
-2. **`R11F_G11F_B10F`**: for the IBL cubes (half of RGBA16F; Filament does
+1. **`R11F_G11F_B10F`** (next): for the IBL cubes (half of RGBA16F; Filament does
    it) and, if no pass needs its alpha, the HDR scene target (RGBA16F with
    4× MSAA at 2560×1440 is ~118 MB).
-3. **Shadows**: directional and spot shadow maps (depth texture,
+2. **Shadows**: directional and spot shadow maps (depth texture,
    `sampler2DShadow` hardware PCF, Castaño's optimized PCF as in Filament /
    Bevy, normal-offset bias, the shadow camera fitted to the scene bounds;
    cascades for large scenes; point lights later). Then screen-space contact
    shadows (a short march toward the light through the depth buffer; MSAA
    needs a resolved depth). For environment-only scenes: GTAO (XeGTAO, as
    Godot / Bevy) and a ground shadow (three.js' contact-shadows example).
-4. **Runtime texture compression**: glTF images that came uncompressed,
+3. **Runtime texture compression**: glTF images that came uncompressed,
    encoded on the GPU in fragment shaders (Godot's Betsy, MIT: BC1/BC4/BC5/
    BC6H, ETC2), read back through a PBO and uploaded compressed — BC on
    desktop, ETC2 / EAC on mobile, two-channel formats for normal maps.
    2048² RGBA8 with mips is ~21 MB, BC1 / ETC2 ~2.8 MB. BC6H for the IBL
    cubes on desktop.
-5. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
+4. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
    Mali-G57 MC2, Chrome 157, 1000 draws × 80 bytes, CPU submit / fence ms):
    one upload of a big UBO 1.31 / 13.0; a `bufferSubData` per draw into it
    2.97 / 16.5; a small UBO rewritten per draw 2.31 / 21.0; plain uniforms
@@ -47,7 +47,7 @@ even 2×, and TAA cost too much there). Done: `EXT_texture_webp` /
    runs less than 1 KB apart upload as one write (`uniform_buffer.rs`). A
    shared material UBO would gain ~25% over plain uniforms — low priority,
    per-object data already goes through the instance texture.
-6. Later: bloom, LOD by meshoptimizer's simplifier, `KHR_animation_pointer`,
+5. Later: bloom, LOD by meshoptimizer's simplifier, `KHR_animation_pointer`,
    `KHR_node_visibility`, `KHR_materials_volume_scatter`, `ctx.gpuInfo()`.
 
 Texture arrays to cut texture switches: not planned in general. Layers

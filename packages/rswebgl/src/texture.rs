@@ -153,6 +153,12 @@ impl TextureFormat {
     pub fn rgb16f() -> TextureFormat {
         TextureFormat::RGB16F
     }
+    /// RGBA16F filled from 32-bit float data (FLOAT: the GPU rounds it to
+    /// half precision on upload).
+    #[wasm_bindgen(js_name = rgba16fFromFloat)]
+    pub fn rgba16f_from_float() -> TextureFormat {
+        TextureFormat::RGBA16F_FROM_FLOAT
+    }
     pub fn rgba16f() -> TextureFormat {
         TextureFormat::RGBA16F
     }
@@ -247,6 +253,11 @@ impl TextureFormat {
         format: 0x1908,
         data_type: 0x140B,
     }; // RGBA16F / RGBA / HALF_FLOAT
+    pub const RGBA16F_FROM_FLOAT: Self = Self {
+        internal: 0x881A,
+        format: 0x1908,
+        data_type: 0x1406,
+    }; // RGBA16F / RGBA / FLOAT
 
     // --- float ---
     pub const R32F: Self = Self {

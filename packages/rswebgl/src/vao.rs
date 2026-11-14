@@ -89,6 +89,12 @@ impl VertexAttr {
     pub fn normalized_ushort(size: u8) -> Self {
         Self::new(size, AttrType::UnsignedShort, true, false)
     }
+    /// Any component type read as floats: normalized (to [0, 1] / [-1, 1])
+    /// or as the integer values themselves (`vertexAttribPointer`).
+    #[wasm_bindgen(js_name = floatFrom)]
+    pub fn float_from(size: u8, attr_type: AttrType, normalized: bool) -> Self {
+        Self::new(size, attr_type, normalized, false)
+    }
 
     // --- integer pointer (vertexAttribIPointer) ---
 
