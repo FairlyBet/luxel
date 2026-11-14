@@ -172,9 +172,15 @@ function eye() {
 function placeCamera() {
   const e = eye();
   scene.lookAt(camera, e, orbit.target);
-  // A key light above and to the left of the eye, aimed at the model.
+  // A key light above and to the left of the eye, aimed at the model. A
+  // directional light: placed from the eye at the home distance, so its
+  // direction follows where the camera looks from, not how near it is (from
+  // the eye itself, zooming in swung it overhead and darkened what's below).
   const r = orbit.radius;
-  scene.lookAt(light, [e[0] - r * 2, e[1] + r * 3, e[2] + r], orbit.target);
+  const { target, distance } = orbit;
+  const home = (r / Math.sin(((orbit.fov / 2) * Math.PI) / 180)) * 1.15;
+  const p = e.map((v, i) => target[i] + ((v - target[i]) * home) / distance);
+  scene.lookAt(light, [p[0] - r * 2, p[1] + r * 3, p[2] + r], target);
 }
 const light = scene.spawn();
 let lightIntensity = 2;
