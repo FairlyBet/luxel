@@ -26,7 +26,8 @@ const FRAG: &str = include_str!("../shaders/pbr.frag");
 // glTF reference model; 13 EON diffuse; 14..17 sheen, thin film,
 // anisotropy; 17.. which maps the material has (`MAP_SLOTS` order), then
 // which of them read TEXCOORD_1, KHR_texture_transform, and the features
-// after it (deformers, subsurface, eight joints, diffuse transmission).
+// after it (deformers, subsurface, eight joints, diffuse transmission,
+// OpenPBR-native parameters).
 const ATTRS: [(u64, &str); 5] = [
     (ATTR_NORMAL as u64, "HAS_NORMAL"),
     (ATTR_UV0 as u64, "HAS_UV0"),
@@ -65,9 +66,13 @@ const SUBSURFACE: u64 = TEXTURE_TRANSFORM << 5;
 const SKIN8: u64 = TEXTURE_TRANSFORM << 6;
 // KHR_materials_diffuse_transmission.
 const DIFFUSE_TRANSMISSION: u64 = TEXTURE_TRANSFORM << 7;
-const TOP_BIT: u64 = DIFFUSE_TRANSMISSION;
+// The material's parameters mean what OpenPBR means (else glTF's, read
+// through openpbr_gltf.glsl). OpenPBR model only.
+const OPENPBR_NATIVE: u64 = TEXTURE_TRANSFORM << 8;
+const TOP_BIT: u64 = OPENPBR_NATIVE;
 // Feature defines, by bit.
-const FEATURES: [(u64, &str); 18] = [
+const FEATURES: [(u64, &str); 19] = [
+    (OPENPBR_NATIVE, "OPENPBR_NATIVE"),
     (DIFFUSE_TRANSMISSION, "HAS_DIFFUSE_TRANSMISSION"),
     (SKIN8, "HAS_SKIN8"),
     (SUBSURFACE, "HAS_SUBSURFACE"),
@@ -184,6 +189,9 @@ impl PbrKey {
         if material.has_uv_transform() {
             key |= TEXTURE_TRANSFORM;
         }
+        if material.openpbr_native() {
+            key |= OPENPBR_NATIVE;
+        }
         Self(key).fit_texture_units()
     }
 
@@ -226,7 +234,7 @@ impl PbrKey {
     /// A key from raw bits (see the layout above). For tools and tests;
     /// models go through `new`.
     pub fn from_bits(bits: u64) -> Self {
-        Self(bits & ((TOP_BIT << 1) - 1))
+        Self(bits & (TOP_BIT | (TOP_BIT - 1)))
     }
 
     pub fn bits(&self) -> u64 {
@@ -237,7 +245,8 @@ impl PbrKey {
     pub fn with_model(self, model: ShadingModel) -> Self {
         match model {
             ShadingModel::OpenPbr => Self(self.0 & !MODEL_GLTF),
-            ShadingModel::Gltf => Self(self.0 | MODEL_GLTF),
+            // The glTF reference reads every material as glTF.
+            ShadingModel::Gltf => Self((self.0 | MODEL_GLTF) & !OPENPBR_NATIVE),
         }
     }
 

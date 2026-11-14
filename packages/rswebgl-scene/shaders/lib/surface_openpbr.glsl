@@ -2,23 +2,25 @@
 // Foundation): fuzz over a coat over a base substrate that mixes a
 // dielectric (specular over diffuse or transmission) with an F82-tint metal,
 // thin film on both, layered by albedo scaling. Needs brdf.glsl, eon.glsl,
-// sheen.glsl, iridescence.glsl, surface.glsl, lights.glsl, environment.glsl.
+// sheen.glsl, iridescence.glsl, surface.glsl, openpbr_gltf.glsl,
+// lights.glsl, environment.glsl.
+//
+// Materials from glTF are read through openpbr_gltf.glsl: their data
+// converted to OpenPBR's parameters where it converts, glTF's meaning kept
+// by its functions where it doesn't. What follows is the model itself.
 //
 // Follows the spec where it is explicit and MaterialX's reference graph
 // (libraries/bxdf/open_pbr_surface.mtlx, Apache-2.0) where it leaves room:
-// - the dielectric's specular_weight modulates its IOR, and the exact
-//   Fresnel of that IOR shades it; glTF's specular semantics (what's
-//   stored, KHR_materials_specular): specular_color tints F0 only
-//   (clamped, grazing stays white), neither touches the metal (no F82
-//   tint) or the refraction angle; under a coat the base keeps its own
-//   IOR against air (glTF's clearcoat leaves the base as it is);
+// - the dielectric's specular_weight modulates its IOR (relative to the
+//   coat), and the exact Fresnel of that IOR shades it; specular_color
+//   tints the reflection; the metal is F82-tint by specular_color, scaled
+//   by specular_weight;
 // - every layer passes on (1 − its directional albedo), from MaterialX's
 //   analytic GGX fit with Turquin's multiple-scattering compensation;
 // - diffuse is EON (energy-preserving Oren-Nayar), Lambert at roughness 0;
-// - anisotropy: the strength is glTF's, so Khronos' lobe (α_t = mix(α, 1,
-//   a²), α_b = α) in place of OpenPBR's parametrization, the albedo at
-//   their geometric mean; image-based light along a bent normal; the
-//   coat's (OpenPBR-only) keeps OpenPBR's;
+// - anisotropy: α_t = α √(2 / (1 + (1 − a)²)), α_b = (1 − a) α_t, the
+//   albedo at their geometric mean; image-based light along a bent normal
+//   (Khronos', from the glTF strength these α make);
 // - thin film (Belcour-Barla, MaterialX's Airy form) on the dielectric's
 //   and the metal's reflection, its albedo blended from the mirror value
 //   to the rough fit by √α (MaterialX), not on transmission;
@@ -30,8 +32,9 @@
 // - image-based light: split-sum prefiltered specular × directional
 //   albedo, irradiance × EON / fuzz albedo; ambient occlusion also occludes
 //   specular (Lagarde).
-// glTF inputs map onto it: sheen → fuzz (weight = max of the color),
-// iridescence → thin film, anisotropy → specular anisotropy.
+// - transmission tinted by transmission_color (`transmission_tint`) on
+//   the surface, absorbed in the medium (`attenuation_color`) with a depth;
+// - fuzz stored as glTF's sheen color: its strongest channel the weight;
 // - the coat's anisotropy as the specular's (MaterialX open_pbr_anisotropy),
 //   along the surface tangent;
 // - subsurface: MaterialX's real-time approximation (subsurface.glsl) —
@@ -43,15 +46,16 @@ struct OpenPbr {
     float alpha;          // base specular α (roughened by the coat; mean of the two below)
     float alpha_t;        // along the anisotropy direction
     float alpha_b;
-    float roughness;      // its perceptual roughness
-    float eta;            // the dielectric's IOR after specular_weight
-    float eta_refract;    // what refraction bends by: the IOR alone
+    float roughness;      // perceptual, along the bitangent (image-based light, refraction)
+    float ibl_anisotropy; // the bent normal's strength (glTF's, from α_t, α_b)
+    float eta;            // the dielectric's reflection IOR after specular_weight
+    float eta_refract;    // what refraction bends by
     float f0_dielectric;
     vec3 comp_dielectric; // multiple-scattering compensation
-    vec3 fg_dielectric;   // directional albedo (compensated, tinted, film blended in)
+    vec3 fg_dielectric;   // directional albedo (compensated, film blended in): what the layers under it lose
     vec3 f0_metal;
     vec3 comp_metal;
-    vec3 fg_metal;        // the metal's directional albedo
+    vec3 fg_metal;        // the metal's directional albedo (weighted)
     float film;           // thin-film weight (0 without a film)
     vec3 tint;            // translucent base: thin-walled tint
     float coat_alpha;     // the coat's α (mean of the two below)
@@ -84,21 +88,11 @@ float refracted_cos(float mu, float eta) {
 // The film's Fresnel over the dielectric or the metal at cosine `mu`.
 vec3 film_dielectric(Surface s, OpenPbr o, float mu) {
     return openpbr_thin_film(mu, s.iridescence_ior, s.iridescence_thickness,
-                             vec3(o.f0_dielectric), vec3(1.0), true, o.eta);
+                             vec3(o.f0_dielectric), vec3(1.0), false, true, o.eta);
 }
 
 vec3 film_metal(Surface s, OpenPbr o, float mu) {
-    return openpbr_thin_film(mu, s.iridescence_ior, s.iridescence_thickness,
-                             o.f0_metal, vec3(1.0), false, 1.0);
-}
-
-// glTF's specular color (KHR_materials_specular, what's stored) tints the
-// dielectric's F0 only, clamped: F0' = min(F0 · color, 1), the grazing
-// value staying 1 — applied to the exact Fresnel F (of F0 = f0) by keeping
-// its rise toward 1: F' = F0' + (1 − F0') (F − f0) / (1 − f0).
-vec3 tint_fresnel(vec3 f, float f0, vec3 color) {
-    vec3 f0_t = min(vec3(f0) * color, vec3(1.0));
-    return f0_t + (1.0 - f0_t) * (f - f0) / max(1.0 - f0, 1e-4);
+    return film_over_metal(s, o.f0_metal, mu);
 }
 
 OpenPbr openpbr_setup(Surface s, float NdotV, float coat_NdotV) {
@@ -111,45 +105,39 @@ OpenPbr openpbr_setup(Surface s, float NdotV, float coat_NdotV) {
     r = mix(r, sqrt(sqrt(min(1.0, r4 + 2.0 * rc * rc * rc * rc))), s.coat);
 #endif
     o.roughness = r;
+    o.ibl_anisotropy = 0.0;
     float alpha = max(r * r, 1e-4);
     o.alpha_t = alpha;
     o.alpha_b = alpha;
 #ifdef HAS_ANISOTROPY
-    // The strength is glTF's (KHR_materials_anisotropy, what's stored), so
-    // its lobe as the Khronos renderer builds it: the tangent roughens
-    // toward 1 with strength², the bitangent keeps the material's. OpenPBR's
-    // own parametrization (α_t = α √(2 / (1 + (1 − a)²)), α_b = (1 − a) α_t)
-    // read from that strength sharpened the bitangent toward a mirror
-    // instead: a thin streak where the reference shows a broad brush.
-    o.alpha_t = mix(alpha, 1.0, s.anisotropy * s.anisotropy);
-    o.alpha_b = alpha;
+    float a1 = 1.0 - s.anisotropy;
+    o.alpha_t = alpha * sqrt(2.0 / (1.0 + a1 * a1));
+    o.alpha_b = max(a1 * o.alpha_t, 1e-4);
     alpha = sqrt(o.alpha_t * o.alpha_b);
+    // Image-based light: Khronos' bent normal and prefilter roughness, from
+    // the glTF strength and roughness of this lobe (α_t = mix(α_b, 1, a²)):
+    // glTF data gets back exactly its own.
+    o.ibl_anisotropy = sqrt(clamp((o.alpha_t - o.alpha_b) / max(1.0 - o.alpha_b, 1e-4), 0.0, 1.0));
+    o.roughness = sqrt(o.alpha_b);
 #endif
     o.alpha = alpha;
 
-    // The dielectric's IOR modulated by specular_weight. Its own against
-    // air, coat or not: glTF's clearcoat (what's stored) leaves the base's
-    // reflection as it is — OpenPBR's IOR relative to the coat took it
-    // away (a 1.5 base under a 1.5 coat: none).
-    float eta_s = s.ior;
+    // The dielectric's reflection IOR, modulated by specular_weight.
+    float eta_s = base_reflection_ior(s);
     float f_s = ior_to_f0(eta_s);
     float xi_f = clamp(s.specular_weight * f_s, 0.0, 0.99999);
     float eps = sign(eta_s - 1.0) * sqrt(xi_f);
     o.eta = (1.0 + eps) / (1.0 - eps);
-    // Refraction bends by the IOR alone: glTF's specular "has no effect on
-    // the refraction angle" (KHR_materials_specular).
-    o.eta_refract = max(s.ior, 1.0);
+    o.eta_refract = refraction_ior(s);
     o.f0_dielectric = xi_f;
-    vec3 f0_tinted = min(vec3(xi_f) * s.specular_color, vec3(1.0));
-    o.comp_dielectric = ggx_energy_compensation(NdotV, alpha, f0_tinted, vec3(1.0));
-    o.fg_dielectric = ggx_dir_albedo(NdotV, alpha, f0_tinted, vec3(1.0)) * o.comp_dielectric;
+    vec3 f0_d = dielectric_f0(xi_f, s.specular_color);
+    o.comp_dielectric = ggx_energy_compensation(NdotV, alpha, f0_d, vec3(1.0));
+    o.fg_dielectric = ggx_dir_albedo(NdotV, alpha, f0_d, vec3(1.0)) * o.comp_dielectric;
 
-    // The metal: glTF's specular leaves it alone ("The metal BRDF is not
-    // affected"), so no specular_weight on it and no edge tint from
-    // specular_color (OpenPBR's F82 tint): Schlick to white, as glTF.
     o.f0_metal = s.base_weight * s.base_color;
     o.comp_metal = ggx_energy_compensation(NdotV, alpha, o.f0_metal, vec3(1.0));
-    o.fg_metal = ggx_dir_albedo(NdotV, alpha, o.f0_metal, vec3(1.0)) * o.comp_metal;
+    o.fg_metal = metal_weight(s) * ggx_dir_albedo(NdotV, alpha, o.f0_metal, vec3(1.0))
+        * o.comp_metal;
 
     o.film = 0.0;
 #ifdef HAS_IRIDESCENCE
@@ -171,18 +159,14 @@ OpenPbr openpbr_setup(Surface s, float NdotV, float coat_NdotV) {
             vec3 fg_film_m = mix(film_metal(s, o, NdotV),
                                  ggx_dir_albedo(NdotV, alpha, film_metal(s, o, 1.0), vec3(1.0)),
                                  blend);
-            o.fg_metal = mix(o.fg_metal, fg_film_m * o.comp_metal, o.film);
+            o.fg_metal = mix(o.fg_metal, metal_weight(s) * fg_film_m * o.comp_metal, o.film);
         }
     }
 #endif
 
-    // Transmission is tinted by the base color, with or without a volume
-    // (glTF's KHR_materials_transmission; a volume absorbs on top). OpenPBR
-    // proper tints by transmission_color alone; glTF-made materials would
-    // lose their color under it.
-    // × OpenPBR's transmission_color when it has no depth (no medium: a
-    // tint where light crosses the surface, `transmissionTint`).
-    o.tint = s.base_color * s.transmission_tint;
+    // transmission_color without a depth: a tint where light crosses the
+    // surface (with one it is the medium's absorption, attenuation_color).
+    o.tint = s.transmission_tint;
 
     o.coat_alpha = 1.0;
     o.coat_alpha_t = 1.0;
@@ -215,7 +199,7 @@ OpenPbr openpbr_setup(Surface s, float NdotV, float coat_NdotV) {
     float r_b = mix(r_d, s.roughness, s.metallic);
     float k = mix(k_smooth, k_rough, r_b);
     vec3 e_base = mix(s.base_weight * s.base_color * (1.0 - s.transmission),
-                      o.f0_metal, s.metallic);
+                      metal_weight(s) * o.f0_metal, s.metallic);
     vec3 delta = (1.0 - k) / (1.0 - e_base * k);
     o.darkening = mix(vec3(1.0), delta, s.coat * s.coat_darkening);
 #endif
@@ -247,6 +231,7 @@ vec3 openpbr_coat_filter(Surface s, OpenPbr o, float mu_i, float mu_o) {
 }
 
 vec3 shade_openpbr(Surface s) {
+    s = openpbr_from_gltf(s);
     vec3 n = s.n;
     vec3 v = s.v;
     float NdotV = clamp(dot(n, v), 1e-4, 1.0);
@@ -257,12 +242,12 @@ vec3 shade_openpbr(Surface s) {
     // Image-based light.
     float spec_ao = specular_occlusion(NdotV, s.ao, o.alpha);
 #ifdef HAS_ANISOTROPY
-    vec3 r_dir = aniso_reflection(n, v, o.roughness, s.anisotropy, s.anisotropy_b);
+    vec3 r_dir = aniso_reflection(n, v, o.roughness, o.ibl_anisotropy, s.anisotropy_b);
 #else
     vec3 r_dir = reflect(-v, n);
 #endif
     vec3 prefiltered = scene_reflection(r_dir, o.roughness) * spec_ao;
-    vec3 dielectric = prefiltered * o.fg_dielectric; // specular_color is in it
+    vec3 dielectric = prefiltered * dielectric_reflected(o.fg_dielectric, s.specular_color);
     vec3 diffuse_ibl = diffuse_albedo(s.base_color, s.diffuse_roughness, NdotV);
 #ifdef HAS_SUBSURFACE
     // MaterialX: indirect subsurface as plain irradiance × its color.
@@ -321,16 +306,16 @@ vec3 shade_openpbr(Surface s) {
 #else
             float dv = D_GGX(NdotH, o.alpha) * V_GGX(NdotL, NdotV, o.alpha);
 #endif
-            vec3 f_d = tint_fresnel(vec3(fresnel_dielectric(VdotH, o.eta)), o.f0_dielectric,
-                                    s.specular_color);
-            vec3 f_m = F_Schlick(o.f0_metal, vec3(1.0), VdotH);
+            vec3 f_d = dielectric_fresnel(fresnel_dielectric(VdotH, o.eta), o.f0_dielectric,
+                                          s.specular_color);
+            vec3 f_m = metal_fresnel(VdotH, o.f0_metal, s);
 #ifdef HAS_IRIDESCENCE
             if (o.film > 0.0) {
                 if (s.metallic < 1.0) f_d = mix(f_d, film_dielectric(s, o, VdotH), o.film);
                 if (s.metallic > 0.0) f_m = mix(f_m, film_metal(s, o, VdotH), o.film);
             }
 #endif
-            vec3 spec_d = dv * f_d * o.comp_dielectric;
+            vec3 spec_d = dv * dielectric_reflected(f_d, s.specular_color) * o.comp_dielectric;
             vec3 diff = diffuse_weight
                 * diffuse_brdf(s.base_color, s.diffuse_roughness, NdotL, NdotV, dot(l, v));
 #ifdef HAS_DIFFUSE_TRANSMISSION
@@ -339,7 +324,7 @@ vec3 shade_openpbr(Surface s) {
 #ifdef HAS_SUBSURFACE
             diff *= 1.0 - s.subsurface;
 #endif
-            vec3 spec_m = dv * f_m * o.comp_metal;
+            vec3 spec_m = metal_weight(s) * dv * f_m * o.comp_metal;
             lit = mix(spec_d + (1.0 - o.fg_dielectric) * diff, spec_m, s.metallic) * NdotL;
         }
 #ifdef HAS_SUBSURFACE

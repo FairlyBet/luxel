@@ -88,6 +88,9 @@ pub struct Material {
     pub(crate) diffuse_transmission_color: [f32; 3],
     // OpenPBR's on-surface transmission tint (`transmissionTint`).
     pub(crate) transmission_tint: [f32; 3],
+    // Its parameters mean what OpenPBR means (else glTF's: what it was
+    // loaded with); see the scene's `setMaterialSemantics`.
+    pub(crate) openpbr_native: bool,
 }
 
 #[wasm_bindgen]
@@ -242,6 +245,17 @@ impl Material {
     #[wasm_bindgen(getter, js_name = diffuseTransmission)]
     pub fn diffuse_transmission(&self) -> f32 {
         self.diffuse_transmission
+    }
+    /// Whether its parameters mean what OpenPBR means (false: glTF's, as
+    /// loaded). The OpenPBR model reads glTF data through a conversion.
+    #[wasm_bindgen(getter, js_name = openPbrNative)]
+    pub fn openpbr_native(&self) -> bool {
+        self.openpbr_native
+    }
+    /// Sets what its parameters mean (see `openPbrNative`).
+    #[wasm_bindgen(setter, js_name = openPbrNative)]
+    pub fn set_openpbr_native(&mut self, native: bool) {
+        self.openpbr_native = native;
     }
 
     /// `KHR_materials_iridescence` factor (0: no thin film).
@@ -891,6 +905,7 @@ pub fn translate(mat: &gltf::Material) -> Material {
             [1.0; 3],
         ),
         transmission_tint: [1.0; 3],
+        openpbr_native: false,
     }
 }
 
@@ -962,6 +977,7 @@ pub fn default_material() -> Material {
         diffuse_transmission: 0.0,
         diffuse_transmission_color: [1.0; 3],
         transmission_tint: [1.0; 3],
+        openpbr_native: false,
     }
 }
 

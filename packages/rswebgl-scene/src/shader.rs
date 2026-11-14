@@ -77,6 +77,10 @@ pub const CHUNKS: &[(&str, &str)] = &[
         include_str!("../shaders/lib/surface_gltf.glsl"),
     ),
     (
+        "openpbr_gltf.glsl",
+        include_str!("../shaders/lib/openpbr_gltf.glsl"),
+    ),
+    (
         "surface_openpbr.glsl",
         include_str!("../shaders/lib/surface_openpbr.glsl"),
     ),

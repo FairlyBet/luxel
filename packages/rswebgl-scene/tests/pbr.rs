@@ -84,6 +84,9 @@ fn every_feature_compiles_and_links(model: ShadingModel) {
         attrs | maps | uv1 | layers | 1 << 51,
         attrs | deform,
         attrs | maps | layers | deform | 1 << 56,
+        // OpenPBR-native parameters (63), alone and with every layer.
+        1 << 63,
+        attrs | maps | layers | 1 << 63,
     ]);
     {
         shaders.set_model(model);

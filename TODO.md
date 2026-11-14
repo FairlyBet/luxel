@@ -227,8 +227,12 @@ its owner.
   (entry), no internal reflections. glTF sheen's IBL uses the GGX map at the
   sheen roughness (no Charlie-prefiltered cube). OpenPBR subsurface is
   MaterialX's real-time approximation; emission is radiance, not nits.
-- OpenPBR model vs glTF data — left as they are (2026-11-10 audit; the
-  ones fixed are in 9975947 and 0fff03a):
+- OpenPBR model vs glTF data — glTF's meaning is read through
+  `shaders/lib/openpbr_gltf.glsl` (converted where it converts, kept where
+  OpenPBR can't say it; `setMaterialSemantics(m, "openpbr")` turns it off
+  per material). With a coat and anisotropy both, the anisotropy is
+  converted before the coat roughens it (glTF's lobe was built after):
+  AnisotropyBarnLamp ≤ 4/255. Left as they are (2026-11-10 audit):
   - sheen roughness: glTF's Charlie takes α = sheenRoughness², OpenPBR's
     fuzz (Zeltner) α = fuzz_roughness; the stored sheenRoughness goes to
     the fuzz unsquared (at 0.3: α 0.09 in glTF ref, 0.3 in OpenPBR — a

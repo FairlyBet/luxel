@@ -8,8 +8,9 @@
 //   Schlick interfaces, unpolarized, sensitivity to Rec.709);
 // - OpenPBR: MaterialX mx_microfacet_specular.glsl (mx_fresnel_airy:
 //   polarized exact dielectric first interface, generalized-Schlick base,
-//   XYZ → CIE RGB), but a metal base as glTF takes it (an IOR from its F0,
-//   Schlick: KHR_materials_iridescence, what's stored), not F82.
+//   XYZ → CIE RGB); a metal base as F82 (OpenPBR) or as glTF takes it (an
+//   IOR from its F0, Schlick: KHR_materials_iridescence) —
+//   openpbr_gltf.glsl picks.
 
 // The spectral sensitivity of the eye to an optical path difference, in
 // Fourier space (Gaussian fits): XYZ, `opd_nm` in nanometres.
@@ -99,10 +100,12 @@ vec2 fresnel_dielectric_polarized(float cos_theta, float ior) {
 }
 
 // The film over a base whose own Fresnel is `base_fresnel(cos)` — given
-// as its normal-incidence F0 and F82 tint (metal) or a dielectric IOR —
-// in air. `thickness_nm` in nanometres.
+// as its normal-incidence F0 and F82 tint (metal: F82 with `f82_metal`,
+// else Schlick from an IOR of its F0) or a dielectric IOR — in air.
+// `thickness_nm` in nanometres.
 vec3 openpbr_thin_film(float cos_theta, float film_ior, float thickness_nm,
-                       vec3 base_f0, vec3 base_f82, bool dielectric_base, float base_eta) {
+                       vec3 base_f0, vec3 base_f82, bool f82_metal, bool dielectric_base,
+                       float base_eta) {
     const mat3 XYZ_TO_RGB = mat3(2.3706743, -0.5138850, 0.0052982,
                                  -0.9000405, 1.4253036, -0.0146949,
                                  -0.4706338, 0.0885814, 1.0093968);
@@ -114,14 +117,14 @@ vec3 openpbr_thin_film(float cos_theta, float film_ior, float thickness_nm,
     if (cos_t <= 0.0) r12 = vec2(1.0);
     vec2 t121 = vec2(1.0) - r12;
 
-    // The base interface, seen from inside the film.
-    // A metal as glTF's KHR_materials_iridescence takes it (what's stored,
-    // the Khronos renderer's evalIridescence): an IOR from its F0, Schlick
-    // against the film — MaterialX's F82 conductor left a dark metal (F0 ≈
-    // 0: CompareIridescence's black sphere) with nothing to interfere with.
-    vec3 f23 = dielectric_base
-        ? vec3(fresnel_dielectric(cos_t, base_eta / eta2))
-        : F_Schlick(ior_to_f0_rel(eta3, eta2), vec3(1.0), cos_t);
+    // The base interface, seen from inside the film. A metal as glTF's
+    // KHR_materials_iridescence takes it (the Khronos renderer's
+    // evalIridescence): an IOR from its F0, Schlick against the film —
+    // MaterialX's F82 conductor leaves a dark glTF metal (F0 ≈ 0:
+    // CompareIridescence's black sphere) with nothing to interfere with.
+    vec3 f23 = dielectric_base ? vec3(fresnel_dielectric(cos_t, base_eta / eta2))
+             : f82_metal       ? fresnel_f82(cos_t, base_f0, base_f82)
+                               : F_Schlick(ior_to_f0_rel(eta3, eta2), vec3(1.0), cos_t);
     // Unpolarized base reflectance split equally: Rp = Rs = F. (MaterialX
     // halves it on its Schlick branch, which loses half of a metal under a
     // film; the spec wants the film non-absorbing.)

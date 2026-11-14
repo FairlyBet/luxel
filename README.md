@@ -29,12 +29,15 @@ low-level WebGL2 layer that owns all GL state.
   (KTX2, transcoded to ASTC / BC7 / ETC2 / S3TC) in worker pools,
   `KHR_mesh_quantization`.
 - **Shading**: OpenPBR (MaterialX's real-time model) or the glTF reference
-  model; image-based light from `.hdr` environments (prefiltered on the
+  model; glTF materials keep glTF's meaning under OpenPBR (converted in one
+  place, `openpbr_gltf.glsl`), or take OpenPBR's per material
+  (`setMaterialSemantics`); image-based light from `.hdr` environments (prefiltered on the
   GPU); punctual lights; transmission with depth-peeled glass layers;
   specular antialiasing.
 - **Output**: HDR target, tone mapping (PBR Neutral, ACES, AgX), exposure,
-  dither, MSAA or temporal antialiasing (motion vectors for moving meshes,
-  a reactive mask for glass, velocity disocclusion) with RCAS sharpening.
+  auto exposure, dither, MSAA, FXAA or temporal antialiasing (motion
+  vectors for moving meshes, velocity disocclusion; glass and transparency
+  drawn after it, with FXAA) with RCAS sharpening.
 - **The rest**: GPU picking, frustum culling, instanced batching, GPU
   timings, reverse-Z, and recovery from WebGL context loss (the scene
   rebuilds itself and reloads its models).

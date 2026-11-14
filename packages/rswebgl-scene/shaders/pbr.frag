@@ -28,6 +28,7 @@ flat in vec3 v_model_scale;
 #include "iridescence.glsl"
 #include "surface.glsl"
 #include "surface_gltf.glsl"
+#include "openpbr_gltf.glsl"
 #include "surface_openpbr.glsl"
 
 // Material maps sampled with the frame's LOD bias (negative under TAA, which

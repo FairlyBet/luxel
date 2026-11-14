@@ -186,6 +186,68 @@ async fn openpbr_transmission_color_without_depth_tints_the_surface() {
     scene.destroy();
 }
 
+// A loaded material means what glTF means: its base color tints the light
+// through it, under the OpenPBR model too. Marked OpenPBR-native, only
+// transmission_color does: green glass in front of white shows white.
+#[wasm_bindgen_test]
+async fn openpbr_native_glass_is_not_tinted_by_its_base_color() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    if !scene.is_hdr() {
+        return;
+    }
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    let root = scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    let json = |v: &str| js_sys::JSON::parse(v).unwrap();
+    let behind = scene.find_material(root, "Behind");
+    scene
+        .set_material_property(behind, "baseColorFactor", json("[1, 1, 1, 1]"))
+        .unwrap();
+    let glass = scene.find_material(root, "Glass");
+    scene
+        .set_material_property(glass, "base_color", json("[0, 1, 0]"))
+        .unwrap();
+    scene.set_shading_model("openpbr").unwrap();
+    assert_eq!(scene.material_semantics(glass).as_deref(), Some("gltf"));
+    let gltf = center(&gl, &mut scene, camera).await;
+    assert!(gltf[1] > 150 && gltf[0] < 60, "gltf data: {gltf:?}");
+    scene.set_material_semantics(glass, "openpbr").unwrap();
+    let native = center(&gl, &mut scene, camera).await;
+    assert!(
+        native[0] > 150 && native[1] > 150,
+        "openpbr native: {native:?}"
+    );
+    assert!(scene.set_material_semantics(glass, "mtlx").is_err());
+    scene.destroy();
+}
+
 // The center pixel after two frames.
 async fn center(gl: &Gl, scene: &mut Scene, camera: rswebgl_ecs::Entity) -> [u8; 4] {
     wasm_bindgen_futures::JsFuture::from(scene.when_ready())

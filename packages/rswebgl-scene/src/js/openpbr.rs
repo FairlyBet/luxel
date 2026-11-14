@@ -1,7 +1,9 @@
 //! OpenPBR Surface parameter names (`base_color`, `coat_weight`, …) for the
 //! material API, next to glTF's (`baseColorFactor`, `clearcoatFactor`, …).
 //! Materials store glTF's parameters plus OpenPBR's own; each OpenPBR name
-//! reads and writes the ones that carry it:
+//! reads and writes the ones that carry it. The values are stored as given;
+//! what they mean to the OpenPBR model — glTF's (a loaded material) or
+//! OpenPBR's — is the material's `setMaterialSemantics`:
 //!
 //! | OpenPBR | stored as |
 //! |---|---|
@@ -9,7 +11,7 @@
 //! | base_color, geometry_opacity | baseColorFactor rgb, a |
 //! | base_metalness | metallicFactor |
 //! | specular_weight, specular_color, specular_roughness, specular_ior | specularFactor, specularColorFactor, roughnessFactor, ior |
-//! | specular_roughness_anisotropy | anisotropyStrength (glTF's meaning: shaded as the Khronos lobe) |
+//! | specular_roughness_anisotropy | anisotropyStrength |
 //! | transmission_weight, transmission_depth | transmissionFactor, attenuationDistance (0: no medium) |
 //! | transmission_color | attenuationColor with a depth (absorbed in the medium), transmissionTint without (a tint on the surface, as OpenPBR) |
 //! | transmission_dispersion_abbe_number | dispersion = 20 / Abbe |

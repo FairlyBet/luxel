@@ -219,6 +219,57 @@ impl Scene {
         self.set_material_values(material, name, &values)
     }
 
+    /// What a material's parameters mean to the OpenPBR model: "gltf" (as
+    /// loaded: glTF's meaning, converted to OpenPBR's where it converts and
+    /// kept where OpenPBR can't say it — shaders/lib/openpbr_gltf.glsl) or
+    /// "openpbr" (the OpenPBR names mean what the OpenPBR spec says:
+    /// specular_color tints the reflection and the metal's edge,
+    /// specular_weight scales the metal and the refraction, the base's IOR
+    /// is relative to the coat, the anisotropy is OpenPBR's, transmission
+    /// isn't tinted by the base color). Stored values stay as they are;
+    /// the glTF reference model reads every material as glTF. Throws for an
+    /// unknown material or name.
+    #[wasm_bindgen(js_name = setMaterialSemantics)]
+    pub fn set_material_semantics(
+        &mut self,
+        material: ParamGroupId,
+        semantics: &str,
+    ) -> Result<(), Error> {
+        let native = match semantics {
+            "openpbr" => true,
+            "gltf" => false,
+            other => {
+                return Err(
+                    format!("setMaterialSemantics: \"{other}\" isn't gltf or openpbr").into(),
+                );
+            }
+        };
+        let record = self
+            .materials
+            .get_mut(&material)
+            .ok_or("setMaterialSemantics: not a material of this scene")?;
+        if record.material.openpbr_native() != native {
+            record.material.set_openpbr_native(native);
+            self.update_variants_of(material);
+        }
+        Ok(())
+    }
+
+    /// "gltf" or "openpbr" (see `setMaterialSemantics`); undefined for an
+    /// unknown material.
+    #[wasm_bindgen(js_name = materialSemantics)]
+    pub fn material_semantics(&self, material: ParamGroupId) -> Option<String> {
+        let record = self.materials.get(&material)?;
+        Some(
+            if record.material.openpbr_native() {
+                "openpbr"
+            } else {
+                "gltf"
+            }
+            .to_string(),
+        )
+    }
+
     /// A copy of `material` the scene owns: change it without touching the
     /// meshes that share the original. Freed with `destroyMaterial` or the
     /// scene. Its textures are the original model's: keep that model.
