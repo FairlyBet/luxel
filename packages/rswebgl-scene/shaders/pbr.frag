@@ -297,6 +297,9 @@ ShadingFrame shading_frame() {
     f.n = f.ng;
 #ifdef HAS_NORMAL_MAP
     vec3 m = texture(u_normal_tex, NORMAL_UV).xyz * 2.0 - 1.0;
+    // A map compressed to two channels (BC5) reads blue 0, which no real
+    // tangent-space normal has: Z from X and Y then.
+    if (m.z <= -1.0) m.z = sqrt(max(1.0 - dot(m.xy, m.xy), 0.0));
     m.xy *= u_normal_scale;
     f.n = normalize(mat3(f.t, f.b, f.ng) * m);
 #endif

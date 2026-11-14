@@ -15,6 +15,8 @@ import init, {
   loadModel,
   setDracoDecoderPath,
   setKtx2TranscoderPath,
+  setTextureCompression,
+  textureCompression,
 } from "./pkg/rswebgl_scene.js";
 import { createProfiling } from "./profiling.js";
 
@@ -343,6 +345,13 @@ function listVariants() {
 variantSelect.addEventListener("change", () => {
   if (root) scene.setMaterialVariant(root, variantSelect.value || undefined);
   applySemantics();
+});
+
+// Runtime texture compression: for the models loaded from now on.
+$("texture-compression").checked = textureCompression();
+$("texture-compression").addEventListener("change", () => {
+  setTextureCompression($("texture-compression").checked);
+  if (modelUrl) load(modelUrl, modelLabel);
 });
 
 // The model's own cameras (glTF `cameras`) as alternatives to the orbit.

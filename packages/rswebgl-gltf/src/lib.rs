@@ -25,6 +25,7 @@
 mod accessor;
 mod animation;
 mod buffers;
+mod compress;
 mod draco;
 mod fetch;
 mod geometry;

@@ -30,6 +30,7 @@ use rswebgl::error::Error;
 use rswebgl::ids::{SamplerId, TextureId};
 use rswebgl::sampler::SamplerDesc;
 use rswebgl::texture::TextureTarget;
+use rswebgl::texture_compressor::CompressKind;
 use rswebgl::texture_packer::{Channel, PackSpec, TexturePacker};
 
 use crate::textures::{build_texture, mag_filter, min_filter, srgb_texture_set, wrap};
@@ -88,6 +89,24 @@ pub fn build_texture_set(
                 .or_default() |= mips;
         }
     }
+    // The compressed format of each GPU texture: what its uses agree on.
+    let doc_kinds = crate::compress::kinds(doc);
+    let mut kinds: HashMap<TextureKey, Option<Option<CompressKind>>> = HashMap::new();
+    for (i, t) in docs.iter().enumerate() {
+        if !consumed.contains(&i) {
+            let k = kinds.entry(texture_key(t, srgb.contains(&i))).or_default();
+            *k = Some(match (*k, doc_kinds[i]) {
+                (None, d) => d,
+                (Some(a), b) if a == b => a,
+                // Color with and without alpha: with.
+                (Some(Some(CompressKind::Rgb)), Some(CompressKind::Rgba))
+                | (Some(Some(CompressKind::Rgba)), Some(CompressKind::Rgb)) => {
+                    Some(CompressKind::Rgba)
+                }
+                _ => None,
+            });
+        }
+    }
     let mut seen: HashMap<TextureKey, i32> = HashMap::new();
     for (i, t) in docs.iter().enumerate() {
         if consumed.contains(&i) {
@@ -98,6 +117,8 @@ pub fn build_texture_set(
             remap[i] = j;
             continue;
         }
+        let (on_load, cell) =
+            crate::compress::after_load(ctx, kinds[&key].flatten(), empty_callback());
         let tex = build_texture(
             ctx,
             t,
@@ -105,8 +126,9 @@ pub fn build_texture_set(
             base,
             srgb.contains(&i),
             needs_mips[&key],
-            empty_callback(),
+            on_load,
         )?;
+        cell.set(tex);
         remap[i] = textures.len() as i32;
         seen.insert(key, remap[i]);
         textures.push(tex);
@@ -396,8 +418,9 @@ fn on_source_loaded(
     }
     spec.set_constant(Channel::A, 1.0);
 
-    if let Err(e) = packer.pack_into(output, &spec, w, h, false, true) {
-        console::error(&format!("[rswebgl-gltf] ORM pack failed: {e}"));
+    match packer.pack_into(output, &spec, w, h, false, true) {
+        Ok(()) => crate::compress::compress_later(&ctx, output, CompressKind::Rgb),
+        Err(e) => console::error(&format!("[rswebgl-gltf] ORM pack failed: {e}")),
     }
     free_sources();
 }

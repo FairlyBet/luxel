@@ -36,12 +36,13 @@ blending, the display's divide, TAA, the glass copy).
    screen-space contact shadows (a short march toward the light through the depth buffer; MSAA
    needs a resolved depth). For environment-only scenes: GTAO (XeGTAO, as
    Godot / Bevy) and a ground shadow (three.js' contact-shadows example).
-2. **Runtime texture compression**: glTF images that came uncompressed,
-   encoded on the GPU in fragment shaders (Godot's Betsy, MIT: BC1/BC4/BC5/
-   BC6H, ETC2), read back through a PBO and uploaded compressed — BC on
-   desktop, ETC2 / EAC on mobile, two-channel formats for normal maps.
-   2048² RGBA8 with mips is ~21 MB, BC1 / ETC2 ~2.8 MB. BC6H for the IBL
-   cubes on desktop.
+2. **Runtime texture compression**: BC done (`TextureCompressor`,
+   `setTextureCompression`, on by default: BC1 / BC3 / BC5 from Betsy,
+   encoded in fragment shaders, PBO to compressed storage on the GPU;
+   DamagedHelmet 90 → 14 MB of textures, PSNR 47 dB). Left: ETC2 / EAC for
+   phones (Betsy's `etc2_rgb.glsl`, `eac.glsl` from darksylinc/betsy: RGB8,
+   RGBA8 EAC, RG11 for normals), BC6H for the IBL cubes on desktop, and
+   extension maps (sheen, clearcoat, specular: some keep data in alpha).
 3. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
    Mali-G57 MC2, Chrome 157, 1000 draws × 80 bytes, CPU submit / fence ms):
    one upload of a big UBO 1.31 / 13.0; a `bufferSubData` per draw into it

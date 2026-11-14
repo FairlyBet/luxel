@@ -335,6 +335,12 @@ impl Context {
         self.core.epoch.get()
     }
 
+    /// Whether `other` is a handle to this same context.
+    #[wasm_bindgen(js_name = isSameContext)]
+    pub fn is_same_context(&self, other: &Context) -> bool {
+        Rc::ptr_eq(&self.core, &other.core)
+    }
+
     /// JS: called when the context is lost. Every handle is dead from here on.
     #[wasm_bindgen(js_name = setOnLost)]
     pub fn set_on_lost(&self, f: js_sys::Function) {

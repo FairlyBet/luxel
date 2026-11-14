@@ -23,7 +23,9 @@ const SIZE: i32 = 16;
 // red and twice as large at z = 0 (far).
 fn asset_url() -> String {
     let mut bin = Vec::new();
-    for v in [-0.5f32, -0.5, 0.0, 0.5, -0.5, 0.0, 0.5, 0.5, 0.0, -0.5, 0.5, 0.0] {
+    for v in [
+        -0.5f32, -0.5, 0.0, 0.5, -0.5, 0.0, 0.5, 0.5, 0.0, -0.5, 0.5, 0.0,
+    ] {
         bin.extend_from_slice(&v.to_le_bytes());
     }
     for i in [0u16, 1, 2, 0, 2, 3] {

@@ -181,12 +181,8 @@ impl DirectTarget {
             let fb = ctx.create_framebuffer(w, h)?;
             self.fb = fb;
             if samples > 1 {
-                self.color_rb = ctx.create_renderbuffer_multisample(
-                    RenderbufferFormat::Rgba8,
-                    samples,
-                    w,
-                    h,
-                )?;
+                self.color_rb =
+                    ctx.create_renderbuffer_multisample(RenderbufferFormat::Rgba8, samples, w, h)?;
                 self.depth_rb = ctx.create_renderbuffer_multisample(depth, samples, w, h)?;
                 ctx.framebuffer_attach_color_renderbuffer(fb, 0, self.color_rb);
                 let resolve = ctx.create_framebuffer(w, h)?;
