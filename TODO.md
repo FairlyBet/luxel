@@ -20,24 +20,26 @@ Left: positions of plain files (16-bit with the dequantization in the node
 matrix, as gltfpack — needs a uniform scale so normals stay right, and
 bounds / picking to follow) and skin weights (unorm16); they would bring
 it near half.
+Done: the IBL cubes as `R11F_G11F_B10F` (`setCompactEnvironment`, as
+Filament): half the memory, the image within 1/255 (the bake rounds to the
+format itself: the GPU's conversion truncated, a 1.5% warm shift). The HDR
+scene target stays RGBA16F: its alpha carries coverage (premultiplied
+blending, the display's divide, TAA, the glass copy).
 
-1. **`R11F_G11F_B10F`** (next): for the IBL cubes (half of RGBA16F; Filament does
-   it) and, if no pass needs its alpha, the HDR scene target (RGBA16F with
-   4× MSAA at 2560×1440 is ~118 MB).
-2. **Shadows**: directional and spot shadow maps (depth texture,
+1. **Shadows** (next): directional and spot shadow maps (depth texture,
    `sampler2DShadow` hardware PCF, Castaño's optimized PCF as in Filament /
    Bevy, normal-offset bias, the shadow camera fitted to the scene bounds;
    cascades for large scenes; point lights later). Then screen-space contact
    shadows (a short march toward the light through the depth buffer; MSAA
    needs a resolved depth). For environment-only scenes: GTAO (XeGTAO, as
    Godot / Bevy) and a ground shadow (three.js' contact-shadows example).
-3. **Runtime texture compression**: glTF images that came uncompressed,
+2. **Runtime texture compression**: glTF images that came uncompressed,
    encoded on the GPU in fragment shaders (Godot's Betsy, MIT: BC1/BC4/BC5/
    BC6H, ETC2), read back through a PBO and uploaded compressed — BC on
    desktop, ETC2 / EAC on mobile, two-channel formats for normal maps.
    2048² RGBA8 with mips is ~21 MB, BC1 / ETC2 ~2.8 MB. BC6H for the IBL
    cubes on desktop.
-4. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
+3. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
    Mali-G57 MC2, Chrome 157, 1000 draws × 80 bytes, CPU submit / fence ms):
    one upload of a big UBO 1.31 / 13.0; a `bufferSubData` per draw into it
    2.97 / 16.5; a small UBO rewritten per draw 2.31 / 21.0; plain uniforms
@@ -47,7 +49,7 @@ it near half.
    runs less than 1 KB apart upload as one write (`uniform_buffer.rs`). A
    shared material UBO would gain ~25% over plain uniforms — low priority,
    per-object data already goes through the instance texture.
-5. Later: bloom, LOD by meshoptimizer's simplifier, `KHR_animation_pointer`,
+4. Later: bloom, LOD by meshoptimizer's simplifier, `KHR_animation_pointer`,
    `KHR_node_visibility`, `KHR_materials_volume_scatter`, `ctx.gpuInfo()`.
 
 Texture arrays to cut texture switches: not planned in general. Layers

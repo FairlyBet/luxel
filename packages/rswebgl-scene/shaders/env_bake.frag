@@ -29,8 +29,23 @@ uniform float u_source_size; // texels per face side at mip 0
 #ifdef SPECULAR
 uniform float u_roughness;
 #endif
+#ifndef DECODE
+uniform float u_r11; // 1: the target is R11F_G11F_B10F
+#endif
 
 const float PI = 3.14159265359;
+
+#ifndef DECODE
+// Rounded to the nearest R11F_G11F_B10F value (6, 6 and 5 mantissa bits),
+// which the target then stores exactly, whatever the GPU's own conversion
+// does: it may truncate (measured here: 0.7%, 0.7% and 1.5% darker on
+// average, a warm shift).
+vec3 r11_round(vec3 c) {
+    vec3 e = floor(log2(max(c, vec3(1e-30))));
+    vec3 step = exp2(e - vec3(6.0, 6.0, 5.0));
+    return max(round(c / step) * step, 0.0);
+}
+#endif
 
 // Direction through this texel of face u_face (GL cube-map conventions; the
 // framebuffer's rows are the face's t axis).
@@ -94,31 +109,31 @@ void main() {
 #ifdef SPECULAR
     if (u_roughness <= 0.0) {
         frag_color = vec4(textureLod(u_source, n, 0.0).rgb, 1.0);
-        return;
-    }
-    const uint COUNT = 128u;
-    float a = u_roughness * u_roughness;
-    float a2 = a * a;
-    mat3 tbn = basis(n);
-    vec3 sum = vec3(0.0);
-    float weight = 0.0;
-    for (uint i = 0u; i < COUNT; i++) {
-        vec2 xi = hammersley(i, COUNT);
-        float phi = 2.0 * PI * xi.x;
-        float cos_t = sqrt((1.0 - xi.y) / (1.0 + (a2 - 1.0) * xi.y));
-        float sin_t = sqrt(1.0 - cos_t * cos_t);
-        vec3 h = tbn * vec3(sin_t * cos(phi), sin_t * sin(phi), cos_t);
-        // n = v = r (the split-sum assumption).
-        vec3 l = 2.0 * dot(n, h) * h - n;
-        float n_l = dot(n, l);
-        if (n_l > 0.0) {
-            float d = (cos_t * cos_t * (a2 - 1.0) + 1.0);
-            float pdf = a2 / (PI * d * d) * 0.25; // D·(n·h) / (4 v·h), n = v
-            sum += textureLod(u_source, l, sample_lod(pdf, COUNT)).rgb * n_l;
-            weight += n_l;
+    } else {
+        const uint COUNT = 128u;
+        float a = u_roughness * u_roughness;
+        float a2 = a * a;
+        mat3 tbn = basis(n);
+        vec3 sum = vec3(0.0);
+        float weight = 0.0;
+        for (uint i = 0u; i < COUNT; i++) {
+            vec2 xi = hammersley(i, COUNT);
+            float phi = 2.0 * PI * xi.x;
+            float cos_t = sqrt((1.0 - xi.y) / (1.0 + (a2 - 1.0) * xi.y));
+            float sin_t = sqrt(1.0 - cos_t * cos_t);
+            vec3 h = tbn * vec3(sin_t * cos(phi), sin_t * sin(phi), cos_t);
+            // n = v = r (the split-sum assumption).
+            vec3 l = 2.0 * dot(n, h) * h - n;
+            float n_l = dot(n, l);
+            if (n_l > 0.0) {
+                float d = (cos_t * cos_t * (a2 - 1.0) + 1.0);
+                float pdf = a2 / (PI * d * d) * 0.25; // D·(n·h) / (4 v·h), n = v
+                sum += textureLod(u_source, l, sample_lod(pdf, COUNT)).rgb * n_l;
+                weight += n_l;
+            }
         }
+        frag_color = vec4(sum / max(weight, 1e-6), 1.0);
     }
-    frag_color = vec4(sum / max(weight, 1e-6), 1.0);
 #endif
 
 #ifdef IRRADIANCE
@@ -136,5 +151,9 @@ void main() {
         sum += textureLod(u_source, l, sample_lod(cos_t / PI, COUNT)).rgb;
     }
     frag_color = vec4(sum / float(COUNT), 1.0);
+#endif
+
+#ifndef DECODE
+    if (u_r11 > 0.5) frag_color.rgb = r11_round(frag_color.rgb);
 #endif
 }

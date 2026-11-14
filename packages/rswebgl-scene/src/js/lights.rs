@@ -162,6 +162,32 @@ impl Scene {
         Ok(())
     }
 
+    /// Whether environments bake into R11F_G11F_B10F cube maps (on by
+    /// default, as Filament's IBL prefilter): half the memory of RGBA16F
+    /// (a 256 environment's specular cube: ~2.1 MB instead of ~4.2), ~1.5%
+    /// color steps — on devices that render to it (`EXT_color_buffer_float`;
+    /// RGBA16F otherwise). Off: RGBA16F (full half-float precision). A
+    /// change bakes the current environment again.
+    #[wasm_bindgen(js_name = setCompactEnvironment)]
+    pub fn set_compact_environment(&mut self, on: bool) -> Result<(), Error> {
+        if self.compact_environment == on {
+            return Ok(());
+        }
+        self.compact_environment = on;
+        if let Some((bytes, size)) = self.env_source.clone() {
+            self.sync_context();
+            let image = decode_hdr_rgbe(&bytes)?;
+            self.start_environment(&image, size)?;
+        }
+        Ok(())
+    }
+
+    /// See `setCompactEnvironment`.
+    #[wasm_bindgen(js_name = compactEnvironment)]
+    pub fn compact_environment(&self) -> bool {
+        self.compact_environment
+    }
+
     /// Back to the default: a flat white ambient light at intensity 0.2.
     #[wasm_bindgen(js_name = clearEnvironment)]
     pub fn clear_environment(&mut self) {
@@ -228,7 +254,13 @@ impl Scene {
                 b
             }
         };
-        self.env_pending = Some(PendingEnvironment::start(&self.ctx, baker, image, size)?);
+        self.env_pending = Some(PendingEnvironment::start(
+            &self.ctx,
+            baker,
+            image,
+            size,
+            self.compact_environment,
+        )?);
         Ok(())
     }
 

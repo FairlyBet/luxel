@@ -96,7 +96,7 @@ impl Environment {
             ctx.program_active_uniform_names(p); // waits for the link
         }
         let result = baker.check_linked().and_then(|()| {
-            let mut job = BakeJob::start(ctx, image, size)?;
+            let mut job = BakeJob::start(ctx, image, size, true)?;
             loop {
                 match job.step(&baker) {
                     Ok(Some(env)) => return Ok(env),
@@ -183,6 +183,7 @@ pub struct EnvBaker {
     f_face: ParamField,
     f_roughness: ParamField,
     f_source_size: ParamField,
+    f_r11: ParamField,
     f_rgbe: ParamField,
     f_equirect: ParamField,
     f_source: ParamField,
@@ -204,6 +205,7 @@ impl EnvBaker {
                 .uniform("u_face", UniformType::I32)
                 .uniform("u_roughness", UniformType::F32)
                 .uniform("u_source_size", UniformType::F32)
+                .uniform("u_r11", UniformType::F32)
                 .texture("u_rgbe")
                 .texture("u_equirect")
                 .texture("u_source"),
@@ -230,6 +232,7 @@ impl EnvBaker {
                 f_face: ctx.param_field(layout, "u_face")?,
                 f_roughness: ctx.param_field(layout, "u_roughness")?,
                 f_source_size: ctx.param_field(layout, "u_source_size")?,
+                f_r11: ctx.param_field(layout, "u_r11")?,
                 f_rgbe: ctx.param_field(layout, "u_rgbe")?,
                 f_equirect: ctx.param_field(layout, "u_equirect")?,
                 f_source: ctx.param_field(layout, "u_source")?,
@@ -332,6 +335,8 @@ pub struct BakeJob {
     diffuse: TextureId,
     fb: FramebufferId,
     stage: i32,
+    // The cubes are R11F_G11F_B10F.
+    r11: bool,
 }
 
 impl BakeJob {
@@ -339,7 +344,12 @@ impl BakeJob {
     /// CPU) and makes the textures. `size` is the specular cube's face side
     /// (256 is plenty for lighting; the background shows it too), rounded up
     /// to a power of two in 32..=2048 (the specular mips need 32).
-    pub fn start(ctx: &Context, image: &RgbeImage, size: u32) -> Result<Self, Error> {
+    pub fn start(
+        ctx: &Context,
+        image: &RgbeImage,
+        size: u32,
+        compact: bool,
+    ) -> Result<Self, Error> {
         const MIN_SIZE: u32 = 1 << (SPECULAR_MIPS - 1);
         let size = size.clamp(MIN_SIZE, 2048).next_power_of_two() as i32;
         let (w, h) = (image.width as i32, image.height as i32);
@@ -347,7 +357,7 @@ impl BakeJob {
             return Err("environment: image data doesn't match its size".into());
         }
         let mut made: Vec<TextureId> = Vec::new();
-        let result = Self::make(ctx, image, size, &mut made);
+        let result = Self::make(ctx, image, size, compact, &mut made);
         if result.is_err() {
             for t in made {
                 ctx.destroy_texture(t);
@@ -360,6 +370,7 @@ impl BakeJob {
         ctx: &Context,
         image: &RgbeImage,
         size: i32,
+        compact: bool,
         made: &mut Vec<TextureId>,
     ) -> Result<Self, Error> {
         use TextureMagFilter as Mag;
@@ -372,6 +383,18 @@ impl BakeJob {
             Ok::<_, Error>(t)
         };
         let rgba16f = TextureFormat::rgba16f();
+        // The cubes kept as R11F_G11F_B10F with `compact`, as Filament's IBL
+        // prefilter makes them (the source cube they are filtered from, freed
+        // after, stays RGBA16F: its mipmaps would truncate again): half of
+        // RGBA16F (no alpha; 6 + 5-bit mantissas, ~1.5% steps; env_bake.frag
+        // rounds to them), where the device renders to it
+        // (EXT_color_buffer_float).
+        let r11 = TextureFormat::r11f_g11f_b10f();
+        let cube_format = if compact && ctx.can_render_to(&r11) {
+            r11
+        } else {
+            rgba16f.clone()
+        };
         // Read texel for texel by the decode pass: no filtering across
         // exponents.
         let rgbe = texture(
@@ -406,7 +429,7 @@ impl BakeJob {
             TextureTarget::TextureCubeMap,
             Min::LinearMipmapLinear,
             SPECULAR_MIPS,
-            &rgba16f,
+            &cube_format,
             size,
             size,
         )?;
@@ -414,7 +437,7 @@ impl BakeJob {
             TextureTarget::TextureCubeMap,
             Min::Linear,
             1,
-            &rgba16f,
+            &cube_format,
             DIFFUSE_SIZE,
             DIFFUSE_SIZE,
         )?;
@@ -430,6 +453,7 @@ impl BakeJob {
             diffuse,
             fb: ctx.create_framebuffer(w.max(size), h.max(size))?,
             stage: 0,
+            r11: cube_format.internal == TextureFormat::r11f_g11f_b10f().internal,
         })
     }
 
@@ -439,6 +463,9 @@ impl BakeJob {
         let ctx = &self.ctx;
         let stage = self.stage;
         self.stage += 1;
+        // Stages 2 on draw into the kept cubes.
+        let r11 = self.r11 && stage >= 2;
+        ctx.param_set_f32(baker.group, baker.f_r11, if r11 { 1.0 } else { 0.0 });
         match stage {
             // RGBE → linear half floats, then the mips the cube reads.
             0 => {
@@ -532,8 +559,9 @@ impl PendingEnvironment {
         baker: Rc<EnvBaker>,
         image: &RgbeImage,
         size: u32,
+        compact: bool,
     ) -> Result<Self, Error> {
-        let mut job = BakeJob::start(ctx, image, size)?;
+        let mut job = BakeJob::start(ctx, image, size, compact)?;
         let state = Rc::new(RefCell::new(PendingState::Running));
         let shared = state.clone();
         let task_ctx = ctx.clone();

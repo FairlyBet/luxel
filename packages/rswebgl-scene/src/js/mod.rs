@@ -90,6 +90,8 @@ pub struct Scene {
     // The `.hdr` bytes and cube size of the environment, baked again after
     // a loss.
     env_source: Option<(Vec<u8>, u32)>,
+    // Environment cubes as R11F_G11F_B10F (`setCompactEnvironment`).
+    compact_environment: bool,
     // The environment bake's shaders (made on first use) and the bake in
     // progress, swapped in at the first frame after it finishes.
     env_baker: Option<std::rc::Rc<crate::environment::EnvBaker>>,
@@ -180,6 +182,7 @@ impl Scene {
             program_aliases: HashMap::new(),
             restore_models: true,
             env_source: None,
+            compact_environment: true,
             env_baker: None,
             env_pending: None,
             env_intensity_after_bake: None,
