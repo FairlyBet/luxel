@@ -782,10 +782,20 @@ fn apply_group(
 //
 // Handles carry a generation, so a destroyed object (which GL unbinds) never
 // compares equal to whatever reuses its slot.
+//
+// Each unit's state is known exactly, or known to be unknown: an upload
+// binds its texture on the active unit behind the cache's back, and that
+// unit is then `Unknown` — not taken for empty, which left the uploaded
+// texture bound for a draw whose texture field is unset (sampled, or a
+// feedback loop if it was the draw's target). A unit holds at most one
+// texture, on one target: binding one of another target first unbinds the
+// old one, so nothing stale lingers on the other targets either.
 #[derive(Default)]
 struct GlBindings {
     active_unit: Option<u32>,
-    units: Vec<TextureId>,
+    units: Vec<UnitBinding>,
+    // What the units past `units` hold (Unknown once all were forgotten).
+    beyond: UnitBinding,
     // None = unknown. Texture uploads don't touch these, so they survive
     // `forget_active_unit`.
     samplers: Vec<Option<SamplerId>>,
@@ -794,6 +804,25 @@ struct GlBindings {
 
 // A buffer bound to a uniform-buffer point, with its sub-range (None = whole).
 type BoundBlock = (UniformBufferId, Option<(i32, i32)>);
+
+// What a texture unit holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum UnitBinding {
+    /// Nothing, on any target.
+    #[default]
+    Empty,
+    /// This texture on this target (GL enum), nothing on the others.
+    Bound(TextureId, u32),
+    /// Something bound behind the cache's back (an upload): any target.
+    Unknown,
+}
+
+const TEXTURE_TARGETS: [u32; 4] = [
+    WebGl2RenderingContext::TEXTURE_2D,
+    WebGl2RenderingContext::TEXTURE_CUBE_MAP,
+    WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+    WebGl2RenderingContext::TEXTURE_3D,
+];
 
 impl GlBindings {
     // True if it issued a bind.
@@ -818,12 +847,29 @@ impl GlBindings {
 
     fn forget_active_unit(&mut self) {
         match self.active_unit {
-            Some(u) => {
-                if let Some(t) = self.units.get_mut(u as usize) {
-                    *t = TextureId::NULL;
-                }
+            Some(u) => self.set_unit(u as usize, UnitBinding::Unknown),
+            None => {
+                self.units.fill(UnitBinding::Unknown);
+                self.beyond = UnitBinding::Unknown;
             }
-            None => self.units.clear(),
+        }
+    }
+
+    fn unit(&self, idx: usize) -> UnitBinding {
+        self.units.get(idx).copied().unwrap_or(self.beyond)
+    }
+
+    fn set_unit(&mut self, idx: usize, b: UnitBinding) {
+        if idx >= self.units.len() {
+            self.units.resize(idx + 1, self.beyond);
+        }
+        self.units[idx] = b;
+    }
+
+    fn activate(&mut self, gl: &WebGl2RenderingContext, unit: u32) {
+        if self.active_unit != Some(unit) {
+            gl.active_texture(WebGl2RenderingContext::TEXTURE0 + unit);
+            self.active_unit = Some(unit);
         }
     }
 
@@ -836,40 +882,46 @@ impl GlBindings {
         obj: &TextureObj,
     ) -> bool {
         let idx = unit as usize;
-        if self.units.get(idx) == Some(&id) {
+        let target = obj.target_gl();
+        let held = self.unit(idx);
+        if held == UnitBinding::Bound(id, target) {
             return false;
         }
-        if self.active_unit != Some(unit) {
-            gl.active_texture(WebGl2RenderingContext::TEXTURE0 + unit);
-            self.active_unit = Some(unit);
+        self.activate(gl, unit);
+        // One texture a unit: off the other targets first.
+        match held {
+            UnitBinding::Bound(_, old) if old != target => gl.bind_texture(old, None),
+            UnitBinding::Unknown => {
+                for t in TEXTURE_TARGETS {
+                    if t != target {
+                        gl.bind_texture(t, None);
+                    }
+                }
+            }
+            _ => {}
         }
-        gl.bind_texture(obj.target_gl(), Some(&obj.raw));
-        if idx >= self.units.len() {
-            self.units.resize(idx + 1, TextureId::NULL);
-        }
-        self.units[idx] = id;
+        gl.bind_texture(target, Some(&obj.raw));
+        self.set_unit(idx, UnitBinding::Bound(id, target));
         true
     }
 
     // Binds nothing to every target of `unit`; true if it did anything.
     fn unbind_unit(&mut self, gl: &WebGl2RenderingContext, unit: u32) -> bool {
         let idx = unit as usize;
-        if self.units.get(idx).is_none_or(|t| t.is_null()) {
-            return false;
+        match self.unit(idx) {
+            UnitBinding::Empty => return false,
+            UnitBinding::Bound(_, target) => {
+                self.activate(gl, unit);
+                gl.bind_texture(target, None);
+            }
+            UnitBinding::Unknown => {
+                self.activate(gl, unit);
+                for target in TEXTURE_TARGETS {
+                    gl.bind_texture(target, None);
+                }
+            }
         }
-        if self.active_unit != Some(unit) {
-            gl.active_texture(WebGl2RenderingContext::TEXTURE0 + unit);
-            self.active_unit = Some(unit);
-        }
-        for target in [
-            WebGl2RenderingContext::TEXTURE_2D,
-            WebGl2RenderingContext::TEXTURE_CUBE_MAP,
-            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
-            WebGl2RenderingContext::TEXTURE_3D,
-        ] {
-            gl.bind_texture(target, None);
-        }
-        self.units[idx] = TextureId::NULL;
+        self.set_unit(idx, UnitBinding::Empty);
         true
     }
 

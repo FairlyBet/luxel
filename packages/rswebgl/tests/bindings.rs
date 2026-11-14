@@ -195,3 +195,77 @@ fn remapped_blocks_draw_with_the_new_buffer() {
 
     assert_eq!(read_quads(&f.gl), [BLACK, GREEN, BLACK]);
 }
+
+// An upload binds its texture on the active unit behind the binding cache's
+// back (and unbinds it after, from its own target only). A draw that then
+// leaves that unit's texture field unset must sample nothing — not the 2D
+// texture an earlier draw left there (the cache had taken the unit for
+// empty after the upload, and skipped the unbind).
+#[wasm_bindgen_test]
+fn an_unset_texture_samples_nothing_after_an_upload() {
+    let f = fixture();
+    let prog = f.ctx.create_program(VERT, SAMPLER_A_FRAG).expect("program");
+    let red = texture_group(&f, "u_a", solid_texture(&f.ctx, RED));
+    let unset = texture_group(&f, "u_a", TextureId::NULL);
+    render(&f, vec![quad_batch(&f, prog, 0, red)]);
+    // A 2D-array texture made and filled on unit 0, where RED is bound.
+    let array = f
+        .ctx
+        .create_texture(
+            TextureTarget::Texture2DArray,
+            TextureMinFilter::Nearest,
+            TextureMagFilter::Nearest,
+        )
+        .expect("texture");
+    f.ctx
+        .texture_storage_3d(array, 1, &TextureFormat::rgba8(), 1, 1, 1);
+    render(&f, vec![quad_batch(&f, prog, 1, unset)]);
+
+    assert_eq!(read_quads(&f.gl)[1], BLACK);
+}
+
+// A unit holds one texture: binding one of another target (a 2D array after
+// a 2D texture) takes the old one off its target.
+#[wasm_bindgen_test]
+fn a_unit_holds_one_texture_across_targets() {
+    const ARRAY_FRAG: &str = r#"#version 300 es
+precision highp float;
+precision highp sampler2DArray;
+uniform sampler2DArray u_b;
+out vec4 frag_color;
+void main() {
+    frag_color = texture(u_b, vec3(0.5, 0.5, 0.0));
+}
+"#;
+    let f = fixture();
+    let prog_2d = f.ctx.create_program(VERT, SAMPLER_A_FRAG).expect("program");
+    let prog_array = f.ctx.create_program(VERT, ARRAY_FRAG).expect("program");
+    let array = f
+        .ctx
+        .create_texture(
+            TextureTarget::Texture2DArray,
+            TextureMinFilter::Nearest,
+            TextureMagFilter::Nearest,
+        )
+        .expect("texture");
+    f.ctx
+        .texture_storage_3d(array, 1, &TextureFormat::rgba8(), 1, 1, 1);
+    f.ctx
+        .texture_sub_image_3d(array, 0, 0, 0, 0, 1, 1, 1, &TextureFormat::rgba8(), &BLUE);
+    let a = texture_group(&f, "u_a", solid_texture(&f.ctx, RED));
+    let b = texture_group(&f, "u_b", array);
+    render(
+        &f,
+        vec![
+            quad_batch(&f, prog_2d, 0, a),
+            quad_batch(&f, prog_array, 1, b),
+        ],
+    );
+
+    assert_eq!(read_quads(&f.gl)[..2], [RED, BLUE]);
+    f.gl.active_texture(web_sys::WebGl2RenderingContext::TEXTURE0);
+    let bound_2d =
+        f.gl.get_parameter(web_sys::WebGl2RenderingContext::TEXTURE_BINDING_2D)
+            .unwrap();
+    assert!(bound_2d.is_null(), "unit 0 still holds the 2D texture");
+}
