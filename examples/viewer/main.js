@@ -137,10 +137,31 @@ Object.assign(globalThis, { viewer: { ctx, scene } });
 // Phones at 3× pay for 9× the pixels; start them at ¾.
 let resolution = devicePixelRatio > 2 ? "0.75" : "1";
 $("resolution").value = resolution;
+// The canvas's exact size in device pixels, as the browser lays it out
+// (MDN, WebGL best practices: CSS size × a fractional devicePixelRatio,
+// rounded, can miss by a pixel and shimmer as moiré). The observer only
+// records it; the frame loop resizes before drawing, so no drawn frame is
+// cleared. Browsers without device-pixel boxes (Safari) get CSS × ratio.
+/** @type {[number, number] | null} */
+let devicePixels = null;
+const sizeObserver = new ResizeObserver(([entry]) => {
+  const box = entry.devicePixelContentBoxSize?.[0];
+  devicePixels = box ? [box.inlineSize, box.blockSize] : null;
+});
+try {
+  sizeObserver.observe(canvas, { box: "device-pixel-content-box" });
+} catch {
+  sizeObserver.observe(canvas);
+}
 function resize() {
-  const scale = resolution === "css" ? 1 : devicePixelRatio * Number(resolution);
-  const w = Math.max(1, Math.round(canvas.clientWidth * scale));
-  const h = Math.max(1, Math.round(canvas.clientHeight * scale));
+  // Without the observer's answer (yet, or at all), from CSS pixels.
+  const [dw, dh] = devicePixels ?? [
+    canvas.clientWidth * devicePixelRatio,
+    canvas.clientHeight * devicePixelRatio,
+  ];
+  const scale = resolution === "css" ? 1 / devicePixelRatio : Number(resolution);
+  const w = Math.max(1, Math.round(dw * scale));
+  const h = Math.max(1, Math.round(dh * scale));
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
@@ -148,7 +169,6 @@ function resize() {
     Trace.instant(`canvas ${w}x${h}`);
   }
 }
-addEventListener("resize", resize);
 resize();
 
 // --- camera and light ----------------------------------------------------------
