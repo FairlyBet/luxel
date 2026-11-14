@@ -348,7 +348,7 @@ impl SceneRenderer {
             lighting: Vec::new(),
             env_intensity: Vec3::splat(DEFAULT_ENV_INTENSITY),
             exposure: 1.0,
-            specular_aa: (0.15, 0.2),
+            specular_aa: (0.0, 0.2),
             peel: 0,
             jitter: Vec2::ZERO,
             mip_bias: 0.0,
@@ -667,7 +667,8 @@ impl SceneRenderer {
     /// normal turns within a pixel, roughness grows by up to `threshold` (in
     /// α²), `variance` scaling how fast. Higher calms the sparkle of sharp
     /// highlights on curved, smooth surfaces and softens highlights more;
-    /// variance 0 turns it off. Default (0.15, 0.2), Filament's.
+    /// variance 0 turns it off. Default off (0, 0.2): it blurred more than
+    /// it calmed (Filament's default is 0.15, 0.2).
     pub fn set_specular_antialiasing(&mut self, variance: f32, threshold: f32) {
         self.specular_aa = (variance.max(0.0), threshold.clamp(0.0, 1.0));
     }

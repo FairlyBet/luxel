@@ -116,7 +116,7 @@ impl Scene {
     /// pixel, roughness grows (by up to `threshold` in α², `variance`
     /// scaling how fast), so sharp highlights on curved smooth surfaces
     /// don't sparkle. Higher is calmer and softer; variance 0 turns it off.
-    /// Default (0.15, 0.2), as Filament.
+    /// Default off (0, 0.2); Filament's is (0.15, 0.2).
     #[wasm_bindgen(js_name = setSpecularAntialiasing)]
     pub fn set_specular_antialiasing(&mut self, variance: f32, threshold: f32) {
         self.renderer.set_specular_antialiasing(variance, threshold);
