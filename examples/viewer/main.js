@@ -258,6 +258,7 @@ async function load(/** @type {string} */ url, /** @type {string} */ label) {
     listCameras();
     listAnimations();
     listVariants();
+    applySemantics();
     status(`Compiling shaders for ${label}…`);
     await scene.whenReady();
     if (ticket === loading) {
@@ -300,6 +301,7 @@ function listVariants() {
 }
 variantSelect.addEventListener("change", () => {
   if (root) scene.setMaterialVariant(root, variantSelect.value || undefined);
+  applySemantics();
 });
 
 // The model's own cameras (glTF `cameras`) as alternatives to the orbit.
@@ -383,6 +385,24 @@ shading.addEventListener("click", (/** @type {MouseEvent} */ e) => {
   if (v) setShading(v);
 });
 setShading("openpbr");
+
+// What the model's materials mean to OpenPBR: glTF's (as loaded) or
+// OpenPBR's own. Applied to what's drawn: again after a load or a variant.
+const semanticsSeg = $("semantics");
+let semantics = "gltf";
+const applySemantics = () => {
+  if (root) for (const m of scene.materials(root)) scene.setMaterialSemantics(m, semantics);
+};
+const setSemantics = (/** @type {string} */ s) => {
+  semantics = s;
+  applySemantics();
+  for (const b of semanticsSeg.children) b.classList.toggle("on", b.dataset.v === s);
+};
+semanticsSeg.addEventListener("click", (/** @type {MouseEvent} */ e) => {
+  const v = /** @type {HTMLElement} */ (e.target).dataset?.v;
+  if (v) setSemantics(v);
+});
+setSemantics("gltf");
 
 $("tone").addEventListener("change", () => scene.setToneMapping($("tone").value));
 slider("exposure", (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)} EV`, (v) => scene.setExposure(2 ** v));
