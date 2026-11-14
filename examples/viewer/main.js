@@ -437,9 +437,11 @@ $("samples").addEventListener("change", () => {
     scene.setSamples(Number(v));
   }
 });
-// Phones: FXAA (MSAA, even 2×, and TAA cost too much on the Mali test phone).
-if (matchMedia("(pointer: coarse)").matches && scene.isHdr()) {
-  $("samples").value = "fxaa";
+// Phones: FXAA (MSAA, even 2×, and TAA cost too much on the Mali test
+// phone). Desktops: TAA (FXAA for the glass drawn after it). MSAA 4×
+// without HDR output.
+if (scene.isHdr()) {
+  $("samples").value = matchMedia("(pointer: coarse)").matches ? "fxaa" : "taa";
   $("samples").dispatchEvent(new Event("change"));
 }
 $("resolution").addEventListener("change", () => {
@@ -452,6 +454,11 @@ slider("sharpen", (v) => (v ? v.toFixed(2) : "off"), (v) => scene.setSharpening(
 slider("spec-aa", (v) => v.toFixed(2), (v) => scene.setSpecularAntialiasing(v, Math.max(0.2, Math.min(0.5, v))));
 // Glass behind glass: depth-peeled transmission layers.
 $("glass-layers").addEventListener("change", () => scene.setTransmissionLayers(Number($("glass-layers").value)));
+// Desktops: four (glass behind glass seen through); phones: the fast one.
+if (!matchMedia("(pointer: coarse)").matches) {
+  $("glass-layers").value = "4";
+  $("glass-layers").dispatchEvent(new Event("change"));
+}
 $("dither").addEventListener("change", () => scene.setDither($("dither").checked));
 $("reverse-z").addEventListener("change", () => {
   $("reverse-z").checked = scene.setReverseZ($("reverse-z").checked);
