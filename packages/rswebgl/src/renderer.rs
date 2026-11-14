@@ -573,6 +573,16 @@ impl GlState {
         self.bindings.forget_active_unit();
     }
 
+    /// `tex` now names another GL texture: the units the cache thinks hold
+    /// it hold nothing (deleting the old one unbound it).
+    pub(crate) fn forget_texture(&mut self, tex: TextureId) {
+        for u in self.bindings.units.iter_mut() {
+            if matches!(u, UnitBinding::Bound(t, _) if *t == tex) {
+                *u = UnitBinding::Empty;
+            }
+        }
+    }
+
     fn forget_render_state(&mut self) {
         self.render_state = None;
     }

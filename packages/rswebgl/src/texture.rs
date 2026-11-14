@@ -593,6 +593,30 @@ impl Context {
         }
     }
 
+    // `tex` takes `raw` (its storage already made and filled) in place of
+    // its GL texture, which is deleted: the handle stays valid everywhere
+    // (param groups, passes), now sampling the new one.
+    pub(crate) fn replace_texture_storage(
+        &self,
+        tex: TextureId,
+        raw: web_sys::WebGlTexture,
+        internal: u32,
+        extent: [i32; 4],
+    ) {
+        let old = {
+            let mut res = self.res();
+            let Some(obj) = res.textures.get_mut(tex.0) else {
+                self.gl().delete_texture(Some(&raw));
+                return;
+            };
+            obj.internal.set(internal);
+            obj.extent.set(extent);
+            std::mem::replace(&mut obj.raw, raw)
+        };
+        self.gl().delete_texture(Some(&old));
+        self.gl_state().forget_texture(tex);
+    }
+
     /// The texture's target, or None for a stale handle.
     #[wasm_bindgen(js_name = textureTarget)]
     pub fn texture_target(&self, tex: TextureId) -> Option<TextureTarget> {

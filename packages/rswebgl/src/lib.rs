@@ -55,6 +55,7 @@ pub mod renderer;
 pub mod sampler;
 pub mod shader_source;
 pub mod texture;
+pub mod texture_compressor;
 pub mod texture_packer;
 pub mod trace;
 pub mod undo;
