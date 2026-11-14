@@ -33,6 +33,7 @@ use crate::hierarchy::descendants;
 use crate::model::Primitive;
 use crate::pbr::PbrKey;
 use crate::render::MeshRenderer;
+use crate::shadows::ShadowCaster;
 
 /// What the scene knows about one material: its data (mirrored in the
 /// group's uniforms) and whether the scene made it (`cloneMaterial`) and so
@@ -514,6 +515,42 @@ impl Scene {
         }
     }
 
+    // Whether and with what PBR mesh `e` casts shadows: opaque and
+    // alpha-masked materials do, with their depth-only variant; blended and
+    // transmissive ones don't (light goes through them). A mesh with a shader
+    // of the app's is left as the app set it.
+    pub(super) fn refresh_shadow_caster(&mut self, e: Entity) {
+        let Some(mesh) = self.world.get::<MeshRenderer>(e).copied() else {
+            return;
+        };
+        if !self.pbr.is_pbr(mesh.program) {
+            return;
+        }
+        let attributes = self.world.get::<Primitive>(e).map_or(0, |p| p.attributes);
+        let material = self
+            .materials
+            .get(&mesh.material)
+            .map_or_else(rswebgl_gltf::default_material, |r| r.material.clone());
+        let casts = !mesh.transparent
+            && material.transmission() <= 0.0
+            && material.alpha_mode() != rswebgl_gltf::AlphaMode::Blend;
+        if !casts {
+            self.world.remove::<ShadowCaster>(e);
+            return;
+        }
+        match self
+            .pbr
+            .shadow_program(&self.ctx, PbrKey::new(attributes, &material))
+        {
+            Ok(program) => {
+                self.world.insert(e, ShadowCaster { program });
+            }
+            Err(err) => console::error_once(&format!(
+                "[rswebgl-scene] a shadow shader variant failed to build: {err}"
+            )),
+        }
+    }
+
     // A glTF mesh on the built-in PBR: its program follows its material's
     // variant.
     fn update_variant(&mut self, e: Entity) {
@@ -559,6 +596,7 @@ impl Scene {
                 "[rswebgl-scene] a PBR shader variant failed to build: {err}"
             )),
         }
+        self.refresh_shadow_caster(e);
     }
 
     // Switches meshes whose new variant has finished linking (or failed:

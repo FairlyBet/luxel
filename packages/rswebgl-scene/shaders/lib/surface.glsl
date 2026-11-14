@@ -11,6 +11,7 @@ struct Surface {
     vec3 v;                 // toward the eye
     vec3 n;                 // shading normal (normal-mapped), facing the eye's side
     vec3 n_coat;            // the coat's normal (geometric)
+    vec3 ng;                // the geometric normal (shadow normal bias)
     vec3 base_color;        // linear
     float opacity;          // alpha
     float base_weight;      // OpenPBR base_weight

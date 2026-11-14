@@ -10,7 +10,8 @@ use super::{Scene, options};
 use crate::camera::Camera;
 use crate::environment::{EnvBaker, PendingEnvironment};
 use crate::hdr::{RgbeImage, decode_hdr_rgbe};
-use crate::light::Light;
+use crate::light::{Light, LightKind};
+use crate::shadows::LightShadow;
 
 #[wasm_bindgen]
 impl Scene {
@@ -97,8 +98,36 @@ impl Scene {
                 .into());
             }
         };
+        let cast = options::bool_or(&light, "castShadow", false)?;
+        if cast && matches!(l.kind, LightKind::Point) {
+            console::warn_once("[rswebgl-scene] setLight: point lights cast no shadows yet");
+        }
+        if cast {
+            let d = LightShadow::default();
+            let shadow = LightShadow {
+                normal_bias: options::f32_or(&light, "shadowNormalBias", d.normal_bias)?,
+                slope_bias: options::f32_or(&light, "shadowSlopeBias", d.slope_bias)?,
+                constant_bias: options::f32_or(&light, "shadowConstantBias", d.constant_bias)?,
+            };
+            self.world.insert(e, shadow);
+        } else {
+            self.world.remove::<LightShadow>(e);
+        }
         self.insert_light(e, l);
         Ok(())
+    }
+
+    /// The side of each shadow map in texels: 2048 by default; rounded to
+    /// a power of two in 256..=8192 (and the device's limit). One depth
+    /// layer per shadow-casting light, ~4 bytes a texel (2048: 16 MB each).
+    #[wasm_bindgen(js_name = setShadowMapSize)]
+    pub fn set_shadow_map_size(&mut self, size: u32) {
+        self.renderer.set_shadow_map_size(size);
+    }
+
+    #[wasm_bindgen(js_name = shadowMapSize)]
+    pub fn shadow_map_size(&self) -> u32 {
+        self.renderer.shadow_map_size()
     }
 
     #[wasm_bindgen(js_name = removeLight)]

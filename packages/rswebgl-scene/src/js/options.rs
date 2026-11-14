@@ -21,6 +21,15 @@ export interface LightOptions {
   /** Spot cone, radians from the axis; defaults 0 and π/4. */
   innerConeAngle?: number;
   outerConeAngle?: number;
+  /** Directional and spot: cast shadows (`setShadowMapSize`); default false. */
+  castShadow?: boolean;
+  /** Shadow biases (Filament's defaults): receivers moved along their
+   *  normal by this many shadow-map texels (1); casters pushed back by
+   *  this × their slope (2) + this (0.5) depth units. Raise for acne
+   *  (stripes on lit surfaces), lower for detached shadows. */
+  shadowNormalBias?: number;
+  shadowSlopeBias?: number;
+  shadowConstantBias?: number;
 }
 
 /** A camera. It looks down its entity's −Z, +Y up. */

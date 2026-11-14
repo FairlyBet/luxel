@@ -35,7 +35,8 @@ low-level WebGL2 layer that owns all GL state.
   model; glTF materials keep glTF's meaning under OpenPBR (converted in one
   place, `openpbr_gltf.glsl`), or take OpenPBR's per material
   (`setMaterialSemantics`); image-based light from `.hdr` environments (prefiltered on the
-  GPU); punctual lights; transmission with depth-peeled glass layers;
+  GPU); punctual lights, directional and spot ones with shadow maps
+  (`castShadow`); transmission with depth-peeled glass layers;
   specular antialiasing (off by default).
 - **Output**: HDR target, tone mapping (PBR Neutral, ACES, AgX), exposure,
   auto exposure, dither, MSAA, FXAA or temporal antialiasing (motion

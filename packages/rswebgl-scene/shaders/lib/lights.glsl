@@ -2,6 +2,7 @@
 // 0). Light type: 0 directional, 1 point, 2 spot (KHR_lights_punctual).
 
 #define MAX_LIGHTS 8
+#define MAX_SHADOWS 4
 struct Light {
     vec4 position;  // xyz world position (point, spot)
     vec4 direction; // xyz world direction the light points (directional, spot)
@@ -20,6 +21,10 @@ layout(std140) uniform Lighting {
                         // scene copy for transmission, w its last mip
     vec4 u_shading;     // x specular antialiasing variance, y its threshold,
                         // z depth-peeling mode, w 1 under reverse-Z
+    // Light i's shadow: x its shadow map's layer (< 0: none), y normal bias
+    // (world units; per unit of depth with z = 1, a spot's perspective).
+    vec4 u_light_shadows[MAX_LIGHTS];
+    mat4 u_shadow_matrices[MAX_SHADOWS]; // world → shadow map [0, 1]³
 };
 
 // Direction from a surface point toward light `light` (unnormalized for
@@ -54,3 +59,4 @@ vec3 light_radiance(Light light, vec3 position, out vec3 l) {
     l = normalize(to_light);
     return light.color.rgb * light.color.w * light_attenuation(light, to_light);
 }
+

@@ -96,8 +96,8 @@ const FEATURES: [(u64, &str); 19] = [
 // The layer a map belongs to (0: always used): an extension's maps only
 // count while its layer is on, so a texture without its factor costs nothing.
 // Samplers every scene shader binds: environment diffuse, specular, the BRDF
-// table, the scene copy, the peeled depth.
-const FRAME_SAMPLERS: u32 = 5;
+// table, the scene copy, the peeled depth, the shadow maps.
+const FRAME_SAMPLERS: u32 = 6;
 
 // Maps left out first when a variant would need more texture units than
 // the device has: the subtlest effects first, the base color last.
@@ -241,6 +241,20 @@ impl PbrKey {
         self.0
     }
 
+    /// What a shadow map needs of this variant: the geometry and its
+    /// deformers, and for alpha-masked materials what makes the alpha (the
+    /// base color map, vertex colors, texture transforms).
+    pub fn shadow_key(self) -> Self {
+        let k = self.0;
+        let mut keep =
+            ATTR_NORMAL as u64 | ATTR_UV0 as u64 | ATTR_UV1 as u64 | SKIN | SKIN8 | MORPH;
+        if (k >> ALPHA_SHIFT) & 3 == AlphaMode::Mask as u64 {
+            keep |= 3 << ALPHA_SHIFT | ATTR_COLOR as u64 | TEXTURE_TRANSFORM;
+            keep |= 1 << MAP_SHIFT | 1 << UV1_SHIFT; // the base color map (slot 0)
+        }
+        Self(k & keep)
+    }
+
     /// This variant shaded by `model`.
     pub fn with_model(self, model: ShadingModel) -> Self {
         match model {
@@ -322,6 +336,8 @@ pub enum ShadingModel {
 pub struct PbrShaders {
     programs: HashMap<PbrKey, ProgramId>,
     model: ShadingModel,
+    // Depth-only variants for shadow maps, by `PbrKey::shadow_key`.
+    shadow_programs: HashMap<PbrKey, ProgramId>,
 }
 
 impl PbrShaders {
@@ -368,6 +384,22 @@ impl PbrShaders {
         self.program(ctx, key)
     }
 
+    /// The depth-only program that draws `key`'s mesh into shadow maps
+    /// (`DEPTH_ONLY`: deformed as the mesh is, alpha-masked holes cut),
+    /// compiled on first use. Variants that differ only in shading share
+    /// one.
+    pub fn shadow_program(&mut self, ctx: &Context, key: PbrKey) -> Result<ProgramId, Error> {
+        let key = key.shadow_key();
+        if let Some(&p) = self.shadow_programs.get(&key) {
+            return Ok(p);
+        }
+        let defines = format!("{}#define DEPTH_ONLY\n", key.defines());
+        let (vert, frag) = shader_sources(VERT, FRAG, &defines)?;
+        let p = ctx.create_program_from(&vert, &frag)?;
+        self.shadow_programs.insert(key, p);
+        Ok(p)
+    }
+
     /// Whether `program` is one of these variants.
     pub fn is_pbr(&self, program: ProgramId) -> bool {
         self.programs.values().any(|&p| p == program)
@@ -383,6 +415,9 @@ impl PbrShaders {
     }
 
     pub fn destroy(self, ctx: &Context) {
+        for p in self.shadow_programs.into_values() {
+            ctx.destroy_program(p);
+        }
         for p in self.programs.into_values() {
             ctx.destroy_program(p);
         }
@@ -397,12 +432,12 @@ mod tests {
     fn too_many_maps_drop_the_subtlest_first() {
         let mask = (1u64 << MAP_COUNT) - 1;
         let all = PbrKey::from_bits(mask << MAP_SHIFT | mask << UV1_SHIFT);
-        // 19 maps + the frame's 5 on 16 units: 8 go.
+        // 19 maps + the frame's 6 on 16 units: 9 go.
         let (fit, dropped) = all.within_texture_units(16);
-        assert_eq!(dropped, [16, 15, 14, 13, 18, 7, 6, 10]);
+        assert_eq!(dropped, [16, 15, 14, 13, 18, 7, 6, 10, 11]);
         let maps = |k: PbrKey| (k.0 >> MAP_SHIFT) & mask;
         assert_eq!(maps(fit).count_ones() + FRAME_SAMPLERS, 16);
-        for gone in [16, 15, 14, 13, 18, 7, 6, 10] {
+        for gone in [16, 15, 14, 13, 18, 7, 6, 10, 11] {
             assert_eq!(maps(fit) & 1 << gone, 0, "{}", MAP_SLOTS[gone].name);
             assert_eq!(fit.0 & 1 << (UV1_SHIFT + gone as u64), 0, "its UV bit too");
         }

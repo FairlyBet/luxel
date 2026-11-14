@@ -26,11 +26,14 @@ format itself: the GPU's conversion truncated, a 1.5% warm shift). The HDR
 scene target stays RGBA16F: its alpha carries coverage (premultiplied
 blending, the display's divide, TAA, the glass copy).
 
-1. **Shadows** (next): directional and spot shadow maps (depth texture,
-   `sampler2DShadow` hardware PCF, Castaño's optimized PCF as in Filament /
-   Bevy, normal-offset bias, the shadow camera fitted to the scene bounds;
-   cascades for large scenes; point lights later). Then screen-space contact
-   shadows (a short march toward the light through the depth buffer; MSAA
+1. **More shadows** (next): directional and spot shadow maps are in
+   (`castShadow`, `shadows.rs` / `shadows.glsl`: a depth layer per light,
+   hardware PCF filtered 3×3 as Filament's PCF_Low, normal and polygon-offset
+   biases, the light's camera fitted to the casters). Left: cascades for
+   large scenes (the fit is to all casters, so a big scene gets coarse
+   shadows); point lights (a cube map); not redrawing maps whose light and
+   casters didn't move; batching casters into instanced draws. Then
+   screen-space contact shadows (a short march toward the light through the depth buffer; MSAA
    needs a resolved depth). For environment-only scenes: GTAO (XeGTAO, as
    Godot / Bevy) and a ground shadow (three.js' contact-shadows example).
 2. **Runtime texture compression**: glTF images that came uncompressed,

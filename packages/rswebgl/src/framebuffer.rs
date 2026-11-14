@@ -523,6 +523,8 @@ enum DepthAttachment {
         tex: TextureId,
         level: i32,
         stencil: bool,
+        // A layer of a 2D-array texture (else a 2D texture).
+        layer: Option<i32>,
     },
     Renderbuffer {
         rb: RenderbufferId,
@@ -691,6 +693,18 @@ fn apply_depth(
 ) {
     let point = depth.attachment_point();
     match *depth {
+        DepthAttachment::Texture {
+            tex,
+            level,
+            layer: Some(layer),
+            ..
+        } => gl.framebuffer_texture_layer(
+            WebGl2RenderingContext::FRAMEBUFFER,
+            point,
+            textures.get(tex.0).map(|o| &o.raw),
+            level,
+            layer,
+        ),
         DepthAttachment::Texture { tex, level, .. } => gl.framebuffer_texture_2d(
             WebGl2RenderingContext::FRAMEBUFFER,
             point,
@@ -1132,8 +1146,31 @@ impl Context {
                 tex,
                 level,
                 stencil: false,
+                layer: None,
             }),
             "framebuffer_attach_depth_texture",
+        );
+    }
+
+    /// Layer `layer` of a depth 2D-array texture as the depth attachment
+    /// (a shadow map per layer, say).
+    #[wasm_bindgen(js_name = framebufferAttachDepthLayer)]
+    pub fn framebuffer_attach_depth_layer(
+        &self,
+        fb: FramebufferId,
+        tex: TextureId,
+        level: i32,
+        layer: i32,
+    ) {
+        self.set_depth_slot(
+            fb,
+            Some(DepthAttachment::Texture {
+                tex,
+                level,
+                stencil: false,
+                layer: Some(layer),
+            }),
+            "framebuffer_attach_depth_layer",
         );
     }
 
@@ -1150,6 +1187,7 @@ impl Context {
                 tex,
                 level,
                 stencil: true,
+                layer: None,
             }),
             "framebuffer_attach_depth_stencil_texture",
         );

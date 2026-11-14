@@ -533,6 +533,9 @@ impl Scene {
                 .ok()
         });
         self.register_materials(&model);
+        for e in crate::hierarchy::descendants(&self.world, root) {
+            self.refresh_shadow_caster(e);
+        }
         self.keep_model(root, model);
         root
     }
@@ -1104,6 +1107,10 @@ impl Scene {
             glass,
             see_through,
         );
+        {
+            let _s = tracing::info_span!("scene.shadows").entered();
+            self.renderer.render_shadows(&self.ctx);
+        }
         self.world.clear_trackers();
         self.stats.drawn
     }

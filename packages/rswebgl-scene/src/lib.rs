@@ -46,6 +46,7 @@ mod pbr;
 mod pick;
 mod render;
 mod shader;
+mod shadows;
 mod transform;
 
 pub use animation::{ModelAnimations, MorphWeights, Playback};
@@ -68,4 +69,5 @@ pub use render::{
     Visible,
 };
 pub use shader::{CHUNKS, FRAG_PRELUDE, VERT_PRELUDE, chunk, create_scene_program, shader_sources};
+pub use shadows::{LightShadow, MAX_SHADOWS, ShadowCaster};
 pub use transform::{Parent, Transform, WorldMatrix};

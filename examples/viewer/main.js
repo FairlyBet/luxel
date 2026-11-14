@@ -184,8 +184,19 @@ function placeCamera() {
 }
 const light = scene.spawn();
 let lightIntensity = 2;
-const setLight = () => scene.setLight(light, { type: "directional", intensity: lightIntensity });
+// Shadows from the key light: on desktops; phones keep the frame cheaper
+// (and a smaller map when turned on).
+const coarse = matchMedia("(pointer: coarse)").matches;
+let castShadow = !coarse;
+if (coarse) scene.setShadowMapSize(1024);
+const setLight = () =>
+  scene.setLight(light, { type: "directional", intensity: lightIntensity, castShadow });
 setLight();
+$("shadows").checked = castShadow;
+$("shadows").addEventListener("change", () => {
+  castShadow = $("shadows").checked;
+  setLight();
+});
 
 // Orbit with one pointer, zoom with the wheel or two; a tap picks.
 const pointers = new Map();

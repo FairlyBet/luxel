@@ -6,7 +6,7 @@
 // comes first.
 //
 // Defines (`PbrShaders` adds the ones that apply):
-//   model      MODEL_GLTF (else OpenPBR)
+//   model      MODEL_GLTF (else OpenPBR); DEPTH_ONLY: into a shadow map
 //   geometry   HAS_NORMAL HAS_UV0 HAS_TANGENT HAS_COLOR HAS_UV1
 //   maps       HAS_BASE_COLOR_MAP HAS_METALLIC_ROUGHNESS_MAP HAS_NORMAL_MAP
 //              HAS_OCCLUSION_MAP HAS_EMISSIVE_MAP, each with <MAP>_UV set to
@@ -304,6 +304,14 @@ ShadingFrame shading_frame() {
 }
 
 void main() {
+#ifdef DEPTH_ONLY
+    // Into a shadow map: depth only; an alpha-masked material cuts its holes.
+#ifdef ALPHAMODE_MASK
+    if (base_color().a < u_alpha_cutoff) discard;
+#endif
+    frag_color = vec4(0.0);
+    return;
+#endif
     peel_discard();
     vec4 base = base_color();
 #ifdef ALPHAMODE_MASK
@@ -323,6 +331,7 @@ void main() {
     ShadingFrame frame = shading_frame();
     s.n = frame.n;
     s.n_coat = frame.ng;
+    s.ng = frame.ng;
     s.base_color = base.rgb;
     s.opacity = base.a;
     s.base_weight = u_base_weight;
@@ -499,6 +508,7 @@ void main() {
 #else
     vec3 color = shade_openpbr(s);
 #endif
+
     frag_color = vec4(scene_output(color), base.a);
 #endif
 }

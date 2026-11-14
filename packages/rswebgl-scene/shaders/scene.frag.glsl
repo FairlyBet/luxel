@@ -15,6 +15,7 @@ precision highp samplerCube;
 #include "frame.glsl"
 #include "lights.glsl"
 #include "environment.glsl"
+#include "shadows.glsl"
 #include "object.glsl"
 #include "tonemap.glsl"
 

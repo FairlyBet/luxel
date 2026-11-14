@@ -136,6 +136,7 @@ impl Scene {
             if let (Some(new), Some(mut m)) = (new, self.world.get_mut::<MeshRenderer>(e)) {
                 m.program = new;
             }
+            self.refresh_shadow_caster(e);
         }
     }
 
