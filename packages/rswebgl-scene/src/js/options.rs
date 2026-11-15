@@ -42,6 +42,12 @@ export interface LightOptions {
   /** Directional: no shadows farther along the view (0, the default: as
    *  far as the casters reach). */
   shadowMaxDistance?: number;
+  /** The side of this light's shadow maps in texels (a point light's
+   *  faces): a power of two up to the scene's `setShadowMapSize`, packed
+   *  with the other lights' maps into its layers. Default (0): the scene's
+   *  size, half of it for a point light's faces. A small spot light can
+   *  take 512 and leave the rest of a layer to others. */
+  shadowMapSize?: number;
 }
 
 /** A camera. It looks down its entity's −Z, +Y up. */

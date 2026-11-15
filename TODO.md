@@ -43,8 +43,10 @@ blending, the display's divide, TAA, the glass copy).
    count them). Point lights: six faces a little wider than 90°, a
    quarter of a layer each (`Pass::set_clear_rect` clears just its tile),
    the shader picking the face by the largest axis. Identical casters draw
-   as one instanced draw per map (`shadowDrawCalls`). Left:
-   a per-light map size (an atlas). Then screen-space contact shadows (a
+   as one instanced draw per map (`shadowDrawCalls`). Each light can take
+   its own map size (`shadowMapSize`), packed with the others' into the
+   layers largest first (`lighting/atlas.rs`, a buddy allocator). Left:
+   screen-space contact shadows (a
    short march toward the light through the depth buffer; MSAA needs a
    resolved depth). For environment-only scenes: GTAO (XeGTAO, as Godot /
    Bevy) and a ground shadow (three.js' contact-shadows example).

@@ -8,11 +8,13 @@
 //! - `settings` — what the app sets: `LightShadow` per light,
 //!   `ShadowCaster` per mesh, `ShadowOptions` for the maps.
 //! - `views` — each shadowing light's camera (math only).
-//! - `maps` — the depth-texture array, a layer and pass per light.
+//! - `atlas` — where each map goes in the array's layers.
+//! - `maps` — the depth-texture array, a pass per map.
 //! - `casters` — which casters each map draws.
 //! - `cache` — which maps changed and are drawn again.
 //! - `pack` — the `Lights` block the lit shaders read (lights.glsl).
 
+mod atlas;
 mod cache;
 mod casters;
 mod light;
@@ -352,8 +354,11 @@ impl LightingSystem {
         // Each shadowing light's views, placed; the most layers the lights
         // could ask for (a directional light's every cascade).
         let mut planned: Vec<(Entity, ShadowSlot, Vec<ShadowView>)> = Vec::new();
-        let mut layout = Layout::default();
-        let (mut views_used, mut could) = (0, 0);
+        let mut views_used = 0;
+        // The layers' worth of maps the lights could ask for (a directional
+        // light's every cascade), in layer areas.
+        let mut could = 0.0;
+        let area = |side: u32| (side as f32 / map_size as f32).powi(2);
         for (e, light) in lights.iter() {
             let Some(&s) = settings.get(e) else {
                 continue;
@@ -364,45 +369,40 @@ impl LightingSystem {
             if any_hidden && hidden(world, e) {
                 continue;
             }
-            let (mut views, splits, kind) = match (light.kind, camera) {
+            let (mut views, splits, kind, side) = match (light.kind, camera) {
                 (LightKind::Point, _) => {
-                    could += 2;
-                    let faces = point_views(light, &m.0, bounds, map_size / 2, reverse, s);
-                    (faces.unwrap_or_default(), vec![f32::MAX], 2.0)
+                    let side = s.side(map_size / 2, map_size);
+                    could += 6.0 * area(side);
+                    let faces = point_views(light, &m.0, bounds, side, reverse, s);
+                    (faces.unwrap_or_default(), vec![f32::MAX], 2.0, side)
                 }
                 (LightKind::Directional, Some(camera)) => {
-                    let c = cascade_views(&m.0, camera, bounds, map_size, reverse, s);
-                    could += (s.cascades as usize).clamp(1, MAX_CASCADES);
-                    (c.views, c.far_bounds, 0.0)
+                    let side = s.side(map_size, map_size);
+                    could += (s.cascades as usize).clamp(1, MAX_CASCADES) as f32 * area(side);
+                    let c = cascade_views(&m.0, camera, bounds, side, reverse, s);
+                    (c.views, c.far_bounds, 0.0, side)
                 }
                 (kind, _) => {
-                    could += 1;
-                    let view = shadow_view(light, &m.0, bounds, map_size, reverse, s);
+                    let side = s.side(map_size, map_size);
+                    could += area(side);
+                    let view = shadow_view(light, &m.0, bounds, side, reverse, s);
                     let kind = if matches!(kind, LightKind::Spot { .. }) {
                         1.0
                     } else {
                         0.0
                     };
-                    (view.into_iter().collect(), vec![f32::MAX], kind)
+                    (view.into_iter().collect(), vec![f32::MAX], kind, side)
                 }
             };
             if views.is_empty() {
                 continue;
             }
-            // Laid out on a copy: a light that doesn't fit leaves it as it was.
-            let mut next = layout;
-            let places: Vec<(usize, [f32; 4])> =
-                views.iter().map(|v| next.place(v.quarter)).collect();
-            if views_used + views.len() > MAX_SHADOW_VIEWS || next.layers > MAX_SHADOW_LAYERS {
-                console::warn_once(&format!(
-                    "[rswebgl-scene] shadows need more than {MAX_SHADOW_LAYERS} map layers \
-                     ({MAX_SHADOW_VIEWS} maps); the rest of the lights shine unshadowed"
-                ));
+            if views_used + views.len() > MAX_SHADOW_VIEWS {
+                warn_too_many();
                 break;
             }
-            layout = next;
-            for (v, (layer, tile)) in views.iter_mut().zip(places) {
-                v.place(layer, tile);
+            for v in &mut views {
+                v.size = side;
             }
             let mut far = [f32::MAX; 4];
             for (f, s) in far.iter_mut().zip(&splits) {
@@ -417,13 +417,36 @@ impl LightingSystem {
             views_used += views.len();
             planned.push((e, slot, views));
         }
+        // Laid out in the atlas; lights from the last dropped while they
+        // need more layers than there are.
+        let used = loop {
+            let sides: Vec<u32> = planned
+                .iter()
+                .flat_map(|(_, _, v)| v.iter().map(|v| v.size))
+                .collect();
+            let (places, layers) = atlas::lay_out(&sides, map_size);
+            if layers <= MAX_SHADOW_LAYERS {
+                let mut places = places.into_iter();
+                for (_, _, views) in &mut planned {
+                    for v in views {
+                        if let Some((layer, tile)) = places.next() {
+                            v.place(layer, tile);
+                        }
+                    }
+                }
+                break layers;
+            }
+            warn_too_many();
+            if let Some((_, slot, _)) = planned.pop() {
+                views_used -= slot.count;
+            }
+        };
         if views_used == 0 {
             return;
         }
         // Grown to this frame's layers; shrunk only below what the lights
         // could ask for, so a cascade coming and going doesn't reallocate.
-        let used = layout.layers;
-        let could = could.clamp(used, MAX_SHADOW_LAYERS);
+        let could = (could.ceil() as usize).clamp(used, MAX_SHADOW_LAYERS);
         let layers = self.maps.layers().clamp(used, could);
         let stale = self.maps.size() != map_size
             || self.maps.layers() != layers
@@ -446,33 +469,12 @@ impl LightingSystem {
     }
 }
 
-/// How this frame's views fill the layers: a whole layer each, or a
-/// quarter (a point light's face) of a layer shared with up to three more.
-#[derive(Debug, Clone, Copy, Default)]
-struct Layout {
-    layers: usize,
-    // The layer quarters go into, and how many it holds.
-    quarters: Option<(usize, usize)>,
-}
-
-impl Layout {
-    // Where the next view goes: its layer and tile.
-    fn place(&mut self, quarter: bool) -> (usize, [f32; 4]) {
-        if !quarter {
-            self.layers += 1;
-            return (self.layers - 1, [0.0, 0.0, 1.0, 1.0]);
-        }
-        let (layer, n) = match self.quarters {
-            Some((layer, n)) if n < 4 => (layer, n),
-            _ => {
-                self.layers += 1;
-                (self.layers - 1, 0)
-            }
-        };
-        self.quarters = Some((layer, n + 1));
-        let (x, y) = ((n % 2) as f32 * 0.5, (n / 2) as f32 * 0.5);
-        (layer, [x, y, x + 0.5, y + 0.5])
-    }
+// Lights past what the maps hold shine unshadowed: said once.
+fn warn_too_many() {
+    console::warn_once(&format!(
+        "[rswebgl-scene] shadows need more than {MAX_SHADOW_LAYERS} map layers \
+         ({MAX_SHADOW_VIEWS} maps); the rest of the lights shine unshadowed"
+    ));
 }
 
 /// Where a shadowing light's maps are this frame: `count` views from
@@ -485,23 +487,4 @@ pub(crate) struct ShadowSlot {
     pub count: usize,
     pub splits: [f32; 4],
     pub kind: f32,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Layout;
-
-    #[test]
-    fn quarters_share_layers_and_whole_views_take_their_own() {
-        let mut l = Layout::default();
-        assert_eq!(l.place(false), (0, [0.0, 0.0, 1.0, 1.0]));
-        let faces: Vec<_> = (0..6).map(|_| l.place(true)).collect();
-        assert_eq!(faces[0], (1, [0.0, 0.0, 0.5, 0.5]));
-        assert_eq!(faces[3], (1, [0.5, 0.5, 1.0, 1.0]));
-        assert_eq!(faces[4], (2, [0.0, 0.0, 0.5, 0.5]));
-        assert_eq!(l.place(false).0, 3);
-        // The next point light fills the second quarter layer first.
-        assert_eq!(l.place(true), (2, [0.0, 0.5, 0.5, 1.0]));
-        assert_eq!(l.layers, 4);
-    }
 }

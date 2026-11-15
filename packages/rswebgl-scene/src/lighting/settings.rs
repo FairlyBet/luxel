@@ -15,6 +15,11 @@ use rswebgl::ids::ProgramId;
 /// `split_lambda` between uniform slices (0) and logarithmic ones (1,
 /// more of the map near the eye); `max_distance` (> 0) ends shadows that
 /// far along the view.
+///
+/// `map_size` (> 0): the side of this light's maps in texels (a point
+/// light's faces; a power of two, at most the scene's `ShadowOptions`
+/// size), laid out with the others' in the atlas; 0, the default: the
+/// scene's size (half of it for a point light's faces).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LightShadow {
     pub normal_bias: f32,
@@ -23,6 +28,7 @@ pub struct LightShadow {
     pub cascades: u32,
     pub split_lambda: f32,
     pub max_distance: f32,
+    pub map_size: u32,
 }
 
 impl Default for LightShadow {
@@ -34,6 +40,7 @@ impl Default for LightShadow {
             cascades: 3,
             split_lambda: 0.5,
             max_distance: 0.0,
+            map_size: 0,
         }
     }
 }
@@ -63,6 +70,21 @@ impl Default for ShadowOptions {
             map_size: 2048,
             depth16: false,
         }
+    }
+}
+
+impl LightShadow {
+    /// The side of this light's maps in a `layer`-sided atlas: its own
+    /// size, else `default`; a power of two in 64..=layer.
+    pub fn side(&self, default: u32, layer: u32) -> u32 {
+        let want = if self.map_size > 0 {
+            self.map_size
+        } else {
+            default
+        };
+        want.clamp(64, layer.max(64))
+            .next_power_of_two()
+            .min(layer.max(64))
     }
 }
 

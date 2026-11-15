@@ -42,8 +42,9 @@ pub(crate) struct ShadowView {
     pub state: LightShadow,
     /// An orthographic map's side in world units (0 for a spot's).
     pub extent: f32,
-    /// A point light's face: drawn into a quarter of a layer (`tile`).
-    pub quarter: bool,
+    /// Its side in texels (a power of two, at most a layer's): what the
+    /// atlas lays out.
+    pub size: u32,
     /// Where it is drawn: the layer, and the part of it (texture
     /// coordinates: x0, y0, x1, y1) — set when the maps are laid out.
     pub layer: usize,
@@ -122,7 +123,7 @@ pub(crate) fn point_views(
             .map(|&(dir, up)| {
                 let view = Mat4::look_at_rh(eye, eye + dir, up);
                 let mut v = finish(proj * view, bias, settings, 0.0, reverse_z);
-                v.quarter = true;
+                v.size = size;
                 v
             })
             .collect(),
@@ -436,7 +437,7 @@ fn finish(
         normal_bias,
         state,
         extent,
-        quarter: false,
+        size: 0,
         layer: 0,
         tile: [0.0, 0.0, 1.0, 1.0],
     }

@@ -421,3 +421,76 @@ async fn point_and_spot_lights_cast_shadows() {
     }
     scene.destroy();
 }
+
+// The atlas: a point light's six faces (a quarter layer each) and a spot
+// light's 512² map share two layers, each light still shadowing.
+#[wasm_bindgen_test]
+async fn lights_share_the_atlas() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    // The point light right of the square shades the left; the spot left
+    // of it shades the right. Each side is lit by both: losing one light
+    // takes a part of it (about 40% for the point light's on the left).
+    let point = scene.spawn();
+    scene.look_at(point, &[0.6, 0.0, 2.0], &[0.6, 0.0, 0.0]);
+    let spot = scene.spawn();
+    scene.look_at(spot, &[-0.6, 0.0, 2.0], &[-0.6, 0.0, 0.0]);
+    let set = |scene: &mut Scene, cast: bool| {
+        let p = format!(r#"{{ "type": "point", "intensity": 4, "castShadow": {cast} }}"#);
+        let s = format!(
+            r#"{{ "type": "spot", "intensity": 4, "outerConeAngle": 1.2, "castShadow": {cast},
+                 "shadowMapSize": 512 }}"#
+        );
+        scene
+            .set_light(point, js_sys::JSON::parse(&p).unwrap())
+            .unwrap();
+        scene
+            .set_light(spot, js_sys::JSON::parse(&s).unwrap())
+            .unwrap();
+    };
+    set(&mut scene, false);
+    let (left, right) = sides(&gl, &mut scene, camera).await;
+    set(&mut scene, true);
+    let (l, r) = sides(&gl, &mut scene, camera).await;
+    assert_eq!(scene.shadow_maps(), 7);
+    assert!(
+        (l as u32) < left as u32 * 9 / 10,
+        "the point light's shadow: {l} (was {left})"
+    );
+    assert!(
+        (r as u32) < right as u32 * 9 / 10,
+        "the spot light's shadow: {r} (was {right})"
+    );
+    // Two 2048² layers of 24-bit depth (4 bytes a texel).
+    assert_eq!(scene.shadow_memory(), (2048.0 * 2048.0 * 4.0) * 2.0);
+    scene.destroy();
+}

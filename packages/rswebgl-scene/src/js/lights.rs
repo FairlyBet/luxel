@@ -109,6 +109,7 @@ impl Scene {
                 cascades: options::u32_or(&light, "shadowCascades", d.cascades)?,
                 split_lambda: options::f32_or(&light, "shadowSplitLambda", d.split_lambda)?,
                 max_distance: options::f32_or(&light, "shadowMaxDistance", d.max_distance)?,
+                map_size: options::u32_or(&light, "shadowMapSize", d.map_size)?,
             };
             if !(1..=crate::lighting::MAX_CASCADES as u32).contains(&shadow.cascades) {
                 return Err("setLight: shadowCascades is 1 to 4".into());
