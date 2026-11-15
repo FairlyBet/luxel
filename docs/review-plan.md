@@ -31,6 +31,16 @@ loss), stale handles, off-by-one in sizes / mips / layers, caches that
 don't invalidate, async races (programs linking, images loading,
 compression finishing), what happens on context loss and restore.
 
+**Especially** (the user's priority): races, async and ordering — the
+scenarios easy not to think of. Work that finishes later than expected
+(image loads, shader links, compression, environment bakes, fenced reads,
+queries) after what it belongs to was destroyed, replaced, or the context
+lost and restored; two of them in flight on the same object; mutation
+while iterating; destroy-then-recreate reusing a handle's slot; caches
+holding a handle across such changes; callbacks or promises firing twice,
+never, or after drop. Each agent is asked to trace these paths in its
+chunk.
+
 | # | Chunk | Files | ~lines |
 |---|-------|-------|--------|
 | 1 | Foundation and ECS | `rswebgl-foundation/src/*`, `rswebgl-ecs/src/*` | 2.2k |
