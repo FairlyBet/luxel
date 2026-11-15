@@ -50,6 +50,23 @@ export interface LightOptions {
   shadowMapSize?: number;
 }
 
+/** The ground shadow (`setGroundShadow`): a soft dark patch under the
+ *  shadow casters, on the ground at their lowest point. */
+export interface GroundShadowOptions {
+  /** How dark where a caster touches the ground; default 1 (above 1
+   *  darkens higher parts too). */
+  darkness?: number;
+  /** The blur's radius, in 256ths of the patch; default 3.5. */
+  blur?: number;
+  /** The patch's opacity, 0..1; default 1. */
+  opacity?: number;
+  /** How far above the ground a caster still darkens it, in world units;
+   *  default 0: half the casters' height. */
+  reach?: number;
+  /** The darkness texture's side in texels; default 512. */
+  size?: number;
+}
+
 /** A camera. It looks down its entity's −Z, +Y up. */
 export type CameraOptions =
   | { type: "perspective"; /** radians; default π/4 */ yfov?: number; znear?: number; zfar?: number }

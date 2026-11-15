@@ -897,7 +897,33 @@ impl SceneRenderer {
         self.batches = batches;
         self.batches.clear();
         self.stats.moving = self.motion.as_ref().map_or(0, MotionVectors::count);
-        self.collect_shadows(world, ctx, batch_groups_used);
+        let batch_groups_used =
+            batch_groups_used + self.collect_shadows(world, ctx, batch_groups_used);
+        // The ground shadow's plane: blended after the opaque scene.
+        if let Some(plane) = self.lights.ground_plane(ctx)
+            && let Some(group) = self.batch_group(ctx, batch_groups_used)
+        {
+            let base = self.instances.push(&plane.model);
+            ctx.param_set_i32(group, self.f_instance_base, base);
+            let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
+            groups[FRAME_SLOT] = self.frame_group;
+            groups[MATERIAL_SLOT] = plane.material;
+            groups[OBJECT_SLOT] = group;
+            let distance = (-view.transform_point3(plane.model.w_axis.truncate()).z).max(0.0);
+            let key = KEY_LAST | u64::from(u32::MAX - distance.to_bits());
+            let pass: &mut Pass = match &mut late {
+                Some(late) => late,
+                None => &mut *opaque,
+            };
+            pass.push_groups_with_key(
+                key,
+                plane.program,
+                plane.state,
+                plane.vao,
+                groups,
+                &plane.command,
+            );
+        }
         _span.record("meshes", self.stats.drawn);
         let _upload = tracing::info_span!("scene.uploadInstances").entered();
         if let Err(err) = self
@@ -952,6 +978,20 @@ impl SceneRenderer {
         self.lights.draw_calls()
     }
 
+    /// The ground shadow on (with these settings) or off (None).
+    pub fn set_ground_shadow(&mut self, settings: Option<crate::lighting::GroundShadow>) {
+        self.lights.set_ground_shadow(settings);
+    }
+
+    pub fn ground_shadow(&self) -> Option<crate::lighting::GroundShadow> {
+        self.lights.ground_shadow()
+    }
+
+    /// Whether the ground shadow was drawn again this frame.
+    pub fn ground_shadow_drawn(&self) -> bool {
+        self.lights.ground_drawn()
+    }
+
     /// Shadow maps drawn again this frame (their light or casters changed).
     pub fn shadow_views_drawn(&self) -> usize {
         self.lights.shadow_views_drawn()
@@ -990,11 +1030,12 @@ impl SceneRenderer {
     // (after the camera's `batch_groups_used`) for where they start. Any
     // other caster draws alone, with the instance the camera's pass wrote,
     // or one written now.
-    fn collect_shadows(&mut self, world: &World, ctx: &Context, batch_groups_used: usize) {
+    // Returns the batch groups it used.
+    fn collect_shadows(&mut self, world: &World, ctx: &Context, batch_groups_used: usize) -> usize {
         let draws = self.lights.take_caster_draws();
         let Some(worlds) = world.storage::<WorldMatrix>() else {
             self.lights.push_casters(draws, &[]);
-            return;
+            return 0;
         };
         let mut out = Vec::with_capacity(draws.len());
         let mut objects = Vec::with_capacity(draws.len());
@@ -1067,6 +1108,7 @@ impl SceneRenderer {
         self.shadow_batches = batches;
         self.shadow_batch_index = index;
         self.lights.push_casters(out, &objects);
+        used
     }
 
     // How `program` gets its object: uniforms (a shader of its own), or the

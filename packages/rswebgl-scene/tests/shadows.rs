@@ -5,7 +5,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use base64::Engine;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
 use web_sys::{HtmlCanvasElement, WebGl2RenderingContext as Gl};
 
@@ -20,6 +20,11 @@ const SIZE: i32 = 32;
 // A 2×2 floor at z = 0 and a 0.4×0.4 square at z = 1 over its center, both
 // facing +Z (white, rough, dielectric).
 fn asset_url() -> String {
+    asset_url_with("[0, 1]")
+}
+
+// The same, with the scene's root nodes `nodes` (a JSON array).
+fn asset_url_with(nodes: &str) -> String {
     let mut bin = Vec::new();
     #[rustfmt::skip]
     let floats = [
@@ -58,7 +63,7 @@ fn asset_url() -> String {
     {{ "mesh": 0, "scale": [2, 2, 1] }},
     {{ "mesh": 0, "translation": [0, 0, 1], "scale": [0.4, 0.4, 1] }}
   ],
-  "scenes": [{{ "nodes": [0, 1] }}],
+  "scenes": [{{ "nodes": {nodes} }}],
   "scene": 0
 }}"#,
         len = bin.len(),
@@ -492,5 +497,103 @@ async fn lights_share_the_atlas() {
     );
     // Two 2048² layers of 24-bit depth (4 bytes a texel).
     assert_eq!(scene.shadow_memory(), (2048.0 * 2048.0 * 4.0) * 2.0);
+    scene.destroy();
+}
+
+// The ground shadow: the floor and square turned to lie in XZ (the floor
+// at y = 0, the square at y = 1), seen from below through the floor (its
+// back face, culled) against a gray background. With the ground shadow,
+// the patch under the floor darkens what is seen; outside the footprint's
+// padding it doesn't; off, nothing does.
+#[wasm_bindgen_test]
+async fn the_ground_shadow_darkens_under_the_casters() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.5, 0.5, 0.5);
+    scene.set_background(0.0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 2, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, -5.0, 0.0], &[0.0, 0.0, 0.0]);
+    let root = scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    scene.set_rotation_euler(root, -std::f32::consts::FRAC_PI_2, 0.0, 0.0);
+    let read = |gl: &Gl, x: i32| {
+        let mut px = [0u8; 4];
+        gl.read_pixels_with_opt_u8_array(
+            x,
+            SIZE / 2,
+            1,
+            1,
+            Gl::RGBA,
+            Gl::UNSIGNED_BYTE,
+            Some(&mut px),
+        )
+        .unwrap();
+        px[0]
+    };
+    let frames = |scene: &mut Scene| {
+        scene.render_frame(camera);
+        scene.render_frame(camera);
+    };
+    wasm_bindgen_futures::JsFuture::from(scene.when_ready())
+        .await
+        .unwrap();
+    frames(&mut scene);
+    // x = 0 (under the floor) and x ≈ 1.9 (past the patch: 1.5 × the 2-wide
+    // footprint ends at 1.5) in a [−2, 2] view 32 pixels wide.
+    let (center, edge) = (read(&gl, 16), read(&gl, 31));
+    assert!(
+        center > 60 && (center as i32 - edge as i32).abs() <= 2,
+        "off: {center} {edge}"
+    );
+
+    scene
+        .set_ground_shadow(js_sys::JSON::parse("{}").unwrap())
+        .unwrap();
+    wasm_bindgen_futures::JsFuture::from(scene.when_ready())
+        .await
+        .unwrap();
+    scene.render_frame(camera);
+    assert!(scene.ground_shadow_drawn(), "drawn the first frame");
+    scene.render_frame(camera);
+    assert!(!scene.ground_shadow_drawn(), "kept while nothing moves");
+    let (shadowed, outside) = (read(&gl, 16), read(&gl, 31));
+    assert!(
+        (shadowed as u32) < center as u32 / 3,
+        "under the floor: {shadowed} (was {center})"
+    );
+    assert!(
+        (outside as i32 - edge as i32).abs() <= 2,
+        "outside the patch: {outside} (was {edge})"
+    );
+    scene.set_ground_shadow(JsValue::NULL).unwrap();
+    frames(&mut scene);
+    assert!(
+        (read(&gl, 16) as i32 - center as i32).abs() <= 2,
+        "off again"
+    );
     scene.destroy();
 }

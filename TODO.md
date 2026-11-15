@@ -45,11 +45,13 @@ blending, the display's divide, TAA, the glass copy).
    the shader picking the face by the largest axis. Identical casters draw
    as one instanced draw per map (`shadowDrawCalls`). Each light can take
    its own map size (`shadowMapSize`), packed with the others' into the
-   layers largest first (`lighting/atlas.rs`, a buddy allocator). Left:
+   layers largest first (`lighting/atlas.rs`, a buddy allocator). A ground
+   shadow (`setGroundShadow`, three.js' contact shadows: the casters seen
+   from below, blurred, on a plane under them; cached like the maps). Left:
    screen-space contact shadows (a
    short march toward the light through the depth buffer; MSAA needs a
    resolved depth). For environment-only scenes: GTAO (XeGTAO, as Godot /
-   Bevy) and a ground shadow (three.js' contact-shadows example).
+   Bevy).
 2. **Runtime texture compression**: done (`TextureCompressor`,
    `setTextureCompression`, on by default; fragment-shader encoders, PBO to
    compressed storage on the GPU). BC1 / BC3 / BC5 on desktops (Betsy), ETC2

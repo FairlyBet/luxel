@@ -59,8 +59,8 @@ pub use hierarchy::{
 };
 pub use js::Scene;
 pub use lighting::{
-    LIGHTS_BLOCK, Light, LightKind, LightShadow, MAX_CASCADES, MAX_LIGHTS, MAX_SHADOW_LAYERS,
-    SHADOW_MAP, ShadowCaster,
+    GroundShadow, LIGHTS_BLOCK, Light, LightKind, LightShadow, MAX_CASCADES, MAX_LIGHTS,
+    MAX_SHADOW_LAYERS, SHADOW_MAP, ShadowCaster,
 };
 pub use model::{Morph, Name, Primitive, Skin, find_by_name, spawn_model};
 pub use output::{HdrOutput, ToneMapping};

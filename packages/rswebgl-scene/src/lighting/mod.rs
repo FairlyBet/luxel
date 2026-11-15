@@ -12,11 +12,13 @@
 //! - `maps` — the depth-texture array, a pass per map.
 //! - `casters` — which casters each map draws.
 //! - `cache` — which maps changed and are drawn again.
+//! - `ground` — the soft shadow on the ground under the casters.
 //! - `pack` — the `Lights` block the lit shaders read (lights.glsl).
 
 mod atlas;
 mod cache;
 mod casters;
+mod ground;
 mod light;
 mod maps;
 mod pack;
@@ -33,17 +35,21 @@ use rswebgl::param::GROUP_SLOTS;
 use rswebgl_ecs::{Entity, World};
 
 pub(crate) use casters::CasterDraw;
+pub(crate) use ground::GroundPlane;
+pub use ground::GroundShadow;
 pub use light::{Light, LightKind};
 pub use maps::{MAX_SHADOW_LAYERS, MAX_SHADOW_VIEWS};
 pub use pack::MAX_LIGHTS;
 pub use settings::{LightShadow, ShadowCaster};
 pub use views::MAX_CASCADES;
 
+use ground::Ground;
 use maps::ShadowMaps;
 use pack::LightsBlock;
 use settings::ShadowOptions;
 use views::{
-    CASCADE_OVERLAP, ShadowView, ViewCamera, cascade_views, caster_bounds, point_views, shadow_view,
+    CASCADE_OVERLAP, ShadowView, ViewCamera, cascade_views, caster_bounds, ground_view,
+    point_views, shadow_view,
 };
 
 use crate::camera::Camera;
@@ -95,7 +101,13 @@ pub(crate) struct LightingSystem {
     states: Vec<StateId>,
     // Draw calls pushed into this frame's maps.
     draw_calls: usize,
+    // The ground shadow, while on.
+    ground: Ground,
+    ground_on: bool,
 }
+
+/// A caster draw's view index for the ground shadow's pass.
+const GROUND_VIEW: usize = usize::MAX;
 
 impl LightingSystem {
     /// Its block and maps bound into `frame_group` (of `frame_layout`);
@@ -115,6 +127,14 @@ impl LightingSystem {
                 return Err(e);
             }
         };
+        let ground = match Ground::new(ctx, frame_layout, &shared) {
+            Ok(g) => g,
+            Err(e) => {
+                maps.destroy(ctx, false);
+                block.destroy(ctx, false);
+                return Err(e);
+            }
+        };
         ctx.param_set_block_by_name(frame_group, LIGHTS_BLOCK, block.ubo());
         ctx.param_set_texture_by_name(frame_group, SHADOW_MAP, maps.texture());
         Ok(Self {
@@ -129,6 +149,8 @@ impl LightingSystem {
             draws: Vec::new(),
             states: Vec::new(),
             draw_calls: 0,
+            ground,
+            ground_on: false,
         })
     }
 
@@ -182,6 +204,36 @@ impl LightingSystem {
     pub fn invalidate(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.baked = false;
+        self.ground.invalidate();
+    }
+
+    /// The ground shadow on (with these settings) or off.
+    pub fn set_ground_shadow(&mut self, settings: Option<GroundShadow>) {
+        self.ground_on = settings.is_some();
+        if let Some(s) = settings
+            && s != self.ground.settings
+        {
+            self.ground.settings = s;
+            self.ground.invalidate();
+        }
+        self.baked = false;
+    }
+
+    pub fn ground_shadow(&self) -> Option<GroundShadow> {
+        self.ground_on.then_some(self.ground.settings)
+    }
+
+    /// The ground shadow's plane to draw this frame, if any.
+    pub fn ground_plane(&self, ctx: &Context) -> Option<GroundPlane> {
+        if !self.ground_on {
+            return None;
+        }
+        self.ground.plane(ctx)
+    }
+
+    /// Whether the ground shadow is drawn again this frame.
+    pub fn ground_drawn(&self) -> bool {
+        self.ground_on && self.ground.is_dirty()
     }
 
     /// Bakes frozen maps again next frame (unfrozen ones follow their
@@ -230,6 +282,7 @@ impl LightingSystem {
             // The maps, their cameras and the lights' layers as baked; the
             // lights themselves may still change color or intensity.
             self.maps.hold();
+            self.ground.hold();
             self.draws.clear();
             self.block.write(
                 world,
@@ -260,15 +313,47 @@ impl LightingSystem {
         // Only the maps drawn again need their casters.
         let maps = &self.maps;
         self.draws.retain(|d| maps.is_dirty(d.view));
+        let ground_waiting = self.prepare_ground(world, ctx);
         // Baked once every caster could draw (none still linking or
         // reloading) into some map.
         if self.frozen {
-            self.baked = waiting == 0 && !self.maps.views.is_empty();
+            let any = !self.maps.views.is_empty() || self.ground.view.is_some();
+            self.baked = waiting == 0 && ground_waiting == 0 && any;
         }
         self.states.clear();
         for view in &self.maps.views {
             self.states.push(ShadowMaps::state(ctx, &view.state));
         }
+    }
+
+    // The ground shadow's view under the casters and, if it changed, its
+    // casters (added to this frame's draws). Returns the casters it waits
+    // for (still linking or reloading).
+    fn prepare_ground(&mut self, world: &World, ctx: &Context) -> usize {
+        let view = if self.ground_on {
+            let s = self.ground.settings;
+            caster_bounds(world).and_then(|b| ground_view(b, s.reach, s.size, ctx.reverse_z()))
+        } else {
+            None
+        };
+        let Some((v, plane)) = view else {
+            self.ground.prepare(ctx, None, 0);
+            return 0;
+        };
+        let mut draws = Vec::new();
+        let waiting = casters::cull(world, ctx, std::slice::from_ref(&v), &mut draws);
+        // Its signature: the casters', and what the darkness depends on.
+        let s = self.ground.settings;
+        let tweak = (u64::from(s.darkness.to_bits()) << 32) | u64::from(s.blur.to_bits());
+        let sig = cache::signatures(world, std::slice::from_ref(&v), &draws, self.epoch)[0] ^ tweak;
+        self.ground.prepare(ctx, Some((v, plane)), sig);
+        if self.ground.is_dirty() {
+            self.draws.extend(draws.into_iter().map(|mut d| {
+                d.view = GROUND_VIEW;
+                d
+            }));
+        }
+        waiting
     }
 
     /// This frame's caster draws, for the renderer to give each its object
@@ -286,9 +371,18 @@ impl LightingSystem {
                 continue;
             }
             let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-            groups[FRAME_SLOT] = self.maps.group(d.view);
             groups[MATERIAL_SLOT] = d.mesh.material;
             groups[OBJECT_SLOT] = object;
+            if d.view == GROUND_VIEW {
+                groups[FRAME_SLOT] = self.ground.group();
+                let state = self.ground.caster_state;
+                self.ground
+                    .pass
+                    .push_groups(d.program, state, d.mesh.vao, groups, &d.mesh.command);
+                self.draw_calls += 1;
+                continue;
+            }
+            groups[FRAME_SLOT] = self.maps.group(d.view);
             self.maps.passes[d.view].push_groups(
                 d.program,
                 self.states[d.view],
@@ -306,16 +400,23 @@ impl LightingSystem {
         for i in 0..self.maps.views.len() {
             ctx.param_set_texture_by_name(self.maps.group(i), name, texture);
         }
+        if self.ground.is_dirty() {
+            ctx.param_set_texture_by_name(self.ground.group(), name, texture);
+        }
     }
 
     /// Renders this frame's shadow maps (before the passes that shade with
     /// them).
     pub fn render_shadows(&self, ctx: &Context) {
         self.maps.render(ctx);
+        if self.ground_on {
+            self.ground.render(ctx);
+        }
     }
 
     /// Frees it all; after a context loss (`lost`) only the CPU side.
     pub fn destroy(self, ctx: &Context, lost: bool) {
+        self.ground.destroy(ctx, lost);
         self.maps.destroy(ctx, lost);
         self.block.destroy(ctx, lost);
     }

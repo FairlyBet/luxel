@@ -188,6 +188,53 @@ impl Scene {
         self.renderer.shadow_draw_calls() as u32
     }
 
+    /// A soft shadow on an invisible ground under the shadow casters, for
+    /// scenes lit by their environment alone (three.js' contact shadows):
+    /// `GroundShadowOptions`, or null to turn it off (off by default). The
+    /// casters are seen from below and their nearness to the ground blurred
+    /// into a dark patch, redrawn only when they move.
+    #[wasm_bindgen(js_name = setGroundShadow)]
+    pub fn set_ground_shadow(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "GroundShadowOptions | null")] options: JsValue,
+    ) -> Result<(), Error> {
+        self.renderer.rebake_shadows();
+        if options.is_null() || options.is_undefined() {
+            self.renderer.set_ground_shadow(None);
+            return Ok(());
+        }
+        let d = crate::lighting::GroundShadow::default();
+        let s = crate::lighting::GroundShadow {
+            darkness: options::f32_or(&options, "darkness", d.darkness)?,
+            blur: options::f32_or(&options, "blur", d.blur)?,
+            opacity: options::f32_or(&options, "opacity", d.opacity)?,
+            reach: options::f32_or(&options, "reach", d.reach)?,
+            size: options::u32_or(&options, "size", d.size)?,
+        };
+        if !(s.darkness >= 0.0
+            && s.blur >= 0.0
+            && (0.0..=1.0).contains(&s.opacity)
+            && s.reach >= 0.0)
+        {
+            return Err("setGroundShadow: darkness, blur, reach ≥ 0, opacity in 0..1".into());
+        }
+        self.renderer.set_ground_shadow(Some(s));
+        Ok(())
+    }
+
+    /// Whether the ground shadow is on.
+    #[wasm_bindgen(js_name = groundShadow)]
+    pub fn ground_shadow(&self) -> bool {
+        self.renderer.ground_shadow().is_some()
+    }
+
+    /// Whether the last frame drew the ground shadow again (its casters
+    /// moved; kept otherwise).
+    #[wasm_bindgen(js_name = groundShadowDrawn)]
+    pub fn ground_shadow_drawn(&self) -> bool {
+        self.renderer.ground_shadow_drawn()
+    }
+
     /// Frozen shadows, for a scene that won't move: drawn once — a
     /// directional light's fitted to every caster rather than split along
     /// the view, so they hold wherever the camera goes — then kept, with

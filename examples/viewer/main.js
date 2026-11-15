@@ -230,6 +230,12 @@ $("shadows").addEventListener("change", () => {
   castShadow = $("shadows").checked;
   setLight();
 });
+const setGround = () => scene.setGroundShadow($("ground-shadow").checked ? {} : null);
+setGround();
+$("ground-shadow").addEventListener("change", () => {
+  setGround();
+  invalidate();
+});
 $("shadow-freeze").addEventListener("change", () => {
   scene.setShadowsFrozen($("shadow-freeze").checked);
   invalidate();

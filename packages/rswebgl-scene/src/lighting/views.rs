@@ -313,6 +313,44 @@ pub(crate) fn cascade_views(
     out
 }
 
+/// The ground shadow's camera: under the casters' box `bounds`, looking
+/// up (+Y) over a square of their footprint padded for the blur, reaching
+/// `reach` up (0: half their height, at least a twentieth of their
+/// footprint) — as three.js' contact-shadows example's camera under its
+/// plane. With the plane's world matrix: that square just under the box's
+/// bottom (a unit square in XZ scaled to it).
+pub(crate) fn ground_view(
+    bounds: (Vec3, Vec3),
+    reach: f32,
+    size: u32,
+    reverse_z: bool,
+) -> Option<(ShadowView, Mat4)> {
+    let (min, max) = bounds;
+    if !(min.is_finite() && max.is_finite()) || min.cmpgt(max).any() {
+        return None;
+    }
+    let height = max.y - min.y;
+    let footprint = (max.x - min.x).max(max.z - min.z).max(1e-4);
+    let reach = if reach > 0.0 {
+        reach
+    } else {
+        (height * 0.5).max(footprint * 0.05)
+    };
+    // Room around the footprint for the blur to fade out in.
+    let side = footprint * 1.5;
+    let center = Vec3::new((min.x + max.x) * 0.5, min.y, (min.z + max.z) * 0.5);
+    let view = Mat4::look_at_rh(center, center + Vec3::Y, Vec3::Z);
+    let h = side * 0.5;
+    let proj = ortho(-h, h, -h, h, 0.0, reach, reverse_z);
+    let mut v = finish(proj * view, 0.0, LightShadow::default(), side, reverse_z);
+    v.size = size;
+    // The plane a little below the lowest point: a model's own floor there
+    // hides it rather than fighting it for depth.
+    let below = center - Vec3::Y * (footprint * 0.01);
+    let plane = Mat4::from_translation(below) * Mat4::from_scale(Vec3::new(side, 1.0, side));
+    Some((v, plane))
+}
+
 // The far bounds of `count` slices of [near, far]: the practical split,
 // λ of the logarithmic one plus 1 − λ of the uniform.
 fn split_depths(near: f32, far: f32, count: usize, lambda: f32) -> Vec<f32> {
@@ -643,6 +681,36 @@ mod tests {
             worst >= spare * 0.99,
             "closest to a tile's edge: {} texels",
             worst * map as f32
+        );
+    }
+
+    // The ground view looks up from the box's bottom: a point on the
+    // ground under the box's center maps to the map's center at depth 0
+    // (the ground), one at the reach's top to depth 1.
+    #[test]
+    fn the_ground_view_looks_up_from_under_the_casters() {
+        let b = (Vec3::new(-1.0, 2.0, -0.5), Vec3::new(1.0, 4.0, 0.5));
+        let (v, plane) = ground_view(b, 0.0, 512, false).unwrap();
+        let p = v.to_map.project_point3(Vec3::new(0.0, 2.0, 0.0));
+        assert!(
+            (p - Vec3::new(0.5, 0.5, 0.0)).abs().max_element() < 1e-4,
+            "{p}"
+        );
+        let top = v.to_map.project_point3(Vec3::new(0.0, 3.0, 0.0));
+        assert!((top.z - 1.0).abs() < 1e-4, "reach: half the height: {top}");
+        // The plane: 1.5 × the footprint, a hundredth of it under the bottom.
+        let corner = plane.transform_point3(Vec3::new(0.5, 0.0, 0.5));
+        assert!(
+            (corner - Vec3::new(1.5, 1.98, 1.5)).abs().max_element() < 1e-5,
+            "{corner}"
+        );
+        // Its corners land at the map's corners.
+        let c = v
+            .to_map
+            .project_point3(plane.transform_point3(Vec3::new(-0.5, 0.0, -0.5)));
+        assert!(
+            c.x.min(1.0 - c.x).abs() < 1e-4 && c.y.min(1.0 - c.y).abs() < 1e-4,
+            "{c}"
         );
     }
 }
