@@ -376,7 +376,9 @@ impl TextureObj {
                 TextureTarget::Texture3D => (depth >> level).max(1),
                 _ => depth,
             };
-            let inside = |o: i32, n: i32, size: i32| o >= 0 && n >= 0 && o + n <= size;
+            let inside = |o: i32, n: i32, size: i32| {
+                o >= 0 && n >= 0 && i64::from(o) + i64::from(n) <= i64::from(size)
+            };
             (!(inside(x, w, lw) && inside(y, h, lh) && inside(z, d, ld))).then(|| {
                 format!(
                     "region {w}x{h}x{d} at ({x}, {y}, {z}) is outside level {level} \n                     ({lw}x{lh}x{ld})"
@@ -613,6 +615,9 @@ impl Context {
             obj.extent.set(extent);
             std::mem::replace(&mut obj.raw, raw)
         };
+        // Framebuffers it's attached to follow it to the new storage
+        // before the old is deleted.
+        self.reattach_texture(tex);
         self.gl().delete_texture(Some(&old));
         self.gl_state().forget_texture(tex);
     }

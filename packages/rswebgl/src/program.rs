@@ -185,7 +185,18 @@ fn reflect(gl: &Gl, raw: &WebGlProgram) -> Reflection {
                     console::warn_once(&format!(
                         "[rswebgl] sampler arrays aren't supported yet: \"{name}\""
                     ));
+                    // Every element parked: the ones past the first would
+                    // otherwise stay on unit 0, beside another sampler.
                     samplers.push(parked);
+                    for k in 1..info.size() {
+                        if let Some(loc) = gl.get_uniform_location(raw, &format!("{name}[{k}]")) {
+                            samplers.push(ReflSampler {
+                                name: "".into(),
+                                unit: limits::max_combined_texture_units().saturating_sub(1),
+                                loc,
+                            });
+                        }
+                    }
                     continue;
                 }
                 let unit = samplers.len() as u32;
@@ -539,7 +550,7 @@ impl ProgramObj {
         let b = &mut refl.blocks[i as usize];
         if check && !b.size_checked {
             b.size_checked = true;
-            if buffer_size != b.size {
+            if buffer_size < b.size {
                 console::error(&format!(
                     "[rswebgl] uniform block \"{}\" layout mismatch: shader needs {} bytes, \
                      the buffer has {buffer_size}. Check field order/types/counts against the \
@@ -719,6 +730,22 @@ impl Context {
             p.ensure_linked(gl);
         }
         p.ready
+    }
+
+    // Waits for the link (if still running) and says whether it worked: for
+    // one-shot passes whose output is kept (a bake, a pack, an encode) — a
+    // failed program's draws are skipped, leaving their target blank.
+    pub(crate) fn program_linked(&self, program: ProgramId) -> bool {
+        let gl = self.gl();
+        let mut res = self.res();
+        let Some(p) = res.programs.get_mut(program.0) else {
+            return false;
+        };
+        if gl.is_context_lost() {
+            return false;
+        }
+        // Blocks on a link still running (as the renderer does at a draw).
+        p.ensure_linked(gl)
     }
 
     /// Whether the program linked successfully (false while still linking, or

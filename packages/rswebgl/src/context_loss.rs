@@ -95,9 +95,18 @@ pub(crate) fn install(core: &Rc<Core>) {
         console::log("[rswebgl] WebGL context restored");
         if let Some(core) = weak.upgrade() {
             core.invalidate_state();
-            for ext in core.loss.extensions.borrow().iter() {
-                let _ = core.gl.get_extension(ext.name());
-            }
+            // The extensions back on the new context; one the device no
+            // longer offers is dropped (and reported), not assumed back.
+            core.loss.extensions.borrow_mut().retain(|ext| {
+                let back = matches!(core.gl.get_extension(ext.name()), Ok(Some(_)));
+                if !back {
+                    console::warn(&format!(
+                        "[rswebgl] {} is gone after the context was restored",
+                        ext.name()
+                    ));
+                }
+                back
+            });
             if core.reverse_z.get() {
                 crate::depth_range::apply(&core);
             }

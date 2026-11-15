@@ -365,6 +365,11 @@ impl VaoBuilder {
     /// by it and destroyed with it. Consumes the builder, like `build`.
     #[wasm_bindgen(js_name = buildInto)]
     pub fn build_into(self, vao: VertexArrayId) -> Result<(), Error> {
+        // A stale vertex array: an error before any buffer is made (they
+        // would leak, owned by nothing).
+        if !self.ctx.vertex_array_is_valid(vao) {
+            return Err(err!("VaoBuilder: the vertex array is stale or destroyed"));
+        }
         // 1. Source type matches declared kind
         for e in &self.attrs {
             let expected = e.kind.desc().gl_type;

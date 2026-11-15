@@ -62,6 +62,28 @@ pub struct PackSpec {
     consts: [f32; 4],   // per output channel: constant value (used when mode == 0)
 }
 
+impl PackSpec {
+    // Drops the sources no channel reads any more, renumbering the slots.
+    fn compact(&mut self) {
+        let mut kept: Vec<TextureId> = Vec::with_capacity(4);
+        for o in 0..4 {
+            if self.mode[o] != 1 {
+                continue;
+            }
+            let tex = self.sources[self.src_slot[o] as usize];
+            let slot = match kept.iter().position(|t| *t == tex) {
+                Some(i) => i,
+                None => {
+                    kept.push(tex);
+                    kept.len() - 1
+                }
+            };
+            self.src_slot[o] = slot as i32;
+        }
+        self.sources = kept;
+    }
+}
+
 impl Default for PackSpec {
     fn default() -> Self {
         Self::new()
@@ -87,6 +109,9 @@ impl PackSpec {
     /// rejected with a logged error (the channel is left at its previous setting).
     #[wasm_bindgen(js_name = setSource)]
     pub fn set_source(&mut self, out: Channel, tex: TextureId, channel: Channel) {
+        // What this channel referenced is no longer: free its slot first.
+        self.mode[out as usize] = 0;
+        self.compact();
         let slot = match self.sources.iter().position(|t| *t == tex) {
             Some(i) => i,
             None => {
@@ -114,6 +139,7 @@ impl PackSpec {
         let o = out as usize;
         self.mode[o] = 0;
         self.consts[o] = value;
+        self.compact();
     }
 
     /// Number of distinct source textures referenced so far.
@@ -348,6 +374,21 @@ impl TexturePacker {
             TextureFormat::rgba8()
         };
         let ctx = &self.ctx;
+        // A failed program would draw nothing into the storage made below.
+        if !ctx.program_linked(self.program) {
+            return Err(err!("packInto: the packing shader failed to link"));
+        }
+        // Storage is one-shot: a texture that has some already (packed
+        // into before) would be drawn into at the wrong size and format.
+        match ctx.res().textures.get(output.0).map(|t| t.internal.get()) {
+            None => return Err(err!("packInto: the output texture is stale or destroyed")),
+            Some(0) => {}
+            Some(_) => {
+                return Err(err!(
+                    "packInto: the output texture already has storage; pack into a new one"
+                ));
+            }
+        }
         ctx.texture_storage_2d(output, levels, &format, width, height);
 
         ctx.framebuffer_attach_color_texture_2d(self.fbo, 0, output, 0);
@@ -415,6 +456,28 @@ mod tests {
         assert_eq!(s.mode, [0, 0, 0, 0]); // all constant
         assert_eq!(s.consts, [0.0, 0.0, 0.0, 1.0]); // RGB 0, A 1
         assert_eq!(s.source_count(), 0);
+    }
+
+    // A channel set again lets go of the source it read: four overwrites
+    // of one channel don't use up the four slots.
+    #[test]
+    fn overwritten_sources_free_their_slots() {
+        let t = |i: u32| TextureId::from_raw((1 << 12) | i);
+        let mut s = PackSpec::new();
+        for i in 1..=4 {
+            s.set_source(Channel::R, t(i), Channel::R);
+        }
+        assert_eq!(s.source_count(), 1);
+        s.set_source(Channel::G, t(5), Channel::G);
+        assert_eq!(s.source_count(), 2);
+        assert_eq!(s.mode[Channel::G as usize], 1);
+        // Its slot points at t(5), R's at t(4).
+        assert_eq!(s.sources[s.src_slot[1] as usize], t(5));
+        assert_eq!(s.sources[s.src_slot[0] as usize], t(4));
+        // A constant frees R's source too.
+        s.set_constant(Channel::R, 0.0);
+        assert_eq!(s.source_count(), 1);
+        assert_eq!(s.sources[s.src_slot[1] as usize], t(5));
     }
 
     #[test]

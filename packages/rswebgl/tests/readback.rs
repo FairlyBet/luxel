@@ -13,6 +13,7 @@ use rswebgl::pass::Pass;
 use rswebgl::readback::ReadFormat;
 use rswebgl::render_state::RenderState;
 use rswebgl::renderbuffer::RenderbufferFormat;
+use rswebgl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget};
 
 use common::*;
 
@@ -310,4 +311,43 @@ fn a_clear_rect_clears_only_its_rectangle() {
         .read_pixels(CANVAS, 0, MID.0, MID.1, 1, 1, ReadFormat::Rgba8)
         .unwrap();
     assert_eq!(px, RED);
+}
+
+// An integer color attachment whose clear value was never set is cleared
+// (to 0, 0, 0, 1) like any other: a float clear of it is INVALID_OPERATION,
+// which used to leave it as it was.
+#[wasm_bindgen_test]
+fn an_integer_attachment_clears_without_a_set_value() {
+    let f = fixture();
+    let format = TextureFormat {
+        internal: 0x8D70,  // RGBA32UI
+        format: 0x8D99,    // RGBA_INTEGER
+        data_type: 0x1405, // UNSIGNED_INT
+    };
+    let tex = f
+        .ctx
+        .create_texture(
+            TextureTarget::Texture2D,
+            TextureMinFilter::Nearest,
+            TextureMagFilter::Nearest,
+        )
+        .unwrap();
+    f.ctx.texture_storage_2d(tex, 1, &format, 2, 2);
+    let sevens: Vec<u8> = [7u32; 16].iter().flat_map(|v| v.to_le_bytes()).collect();
+    f.ctx
+        .texture_sub_image_2d(tex, 0, 0, 0, 2, 2, &format, &sevens);
+    let fb = f.ctx.create_framebuffer(2, 2).unwrap();
+    f.ctx.framebuffer_attach_color_texture_2d(fb, 0, tex, 0);
+    let mut pass = Pass::new(fb);
+    pass.set_clear(&ClearMask::color());
+    f.ctx.render(&pass);
+    let px = f
+        .ctx
+        .read_pixels(fb, 0, 0, 0, 1, 1, ReadFormat::RgbaU32)
+        .unwrap();
+    let v: Vec<u32> = px
+        .chunks(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    assert_eq!(v, [0, 0, 0, 1]);
 }

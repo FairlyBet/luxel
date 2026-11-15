@@ -443,6 +443,21 @@ impl TextureCompressor {
             Ok(comp)
         })
     }
+
+    /// Lets go of `ctx`'s shared compressor (its encoders, and the context
+    /// it holds): when what compressed on it is torn down. The next
+    /// `shared` makes one again.
+    pub fn release_shared(ctx: &Context) {
+        let taken = SHARED.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            match slot.as_ref() {
+                Some((c, _, _)) if c.is_same_context(ctx) => slot.take(),
+                _ => None,
+            }
+        });
+        // Dropped outside the borrow: its destroy may call back into shared().
+        drop(taken);
+    }
 }
 
 impl Drop for TextureCompressor {
@@ -626,6 +641,11 @@ impl TextureCompressor {
         self.encoder(format, cube)?;
         let encoders = self.encoders.borrow();
         let encoder = &encoders[&(format.internal, format.kind, cube)];
+        // A failed encoder would draw nothing: all-zero blocks (black, or
+        // transparent black) swapped in as if compressed.
+        if !ctx.program_linked(encoder.program) {
+            return Err("a texture encoder shader failed to link".into());
+        }
         ctx.param_set_texture(encoder.params, encoder.f_source, tex);
         ctx.param_set_i32(encoder.params, encoder.f_level, l.level);
         if let Some(f) = encoder.f_face {

@@ -545,6 +545,22 @@ impl ColorAttachment {
     }
 }
 
+// Whether a sized internal format is an integer one: Some(true) signed,
+// Some(false) unsigned, None not integer.
+fn integer_kind(internal: u32) -> Option<bool> {
+    match internal {
+        // R8I R16I R32I RG8I RG16I RG32I RGBA8I RGBA16I RGBA32I
+        0x8231 | 0x8233 | 0x8235 | 0x8237 | 0x8239 | 0x823B | 0x8D8E | 0x8D88 | 0x8D82 => {
+            Some(true)
+        }
+        // R8UI R16UI R32UI RG8UI RG16UI RG32UI RGBA8UI RGBA16UI RGBA32UI RGB10_A2UI
+        0x8232 | 0x8234 | 0x8236 | 0x8238 | 0x823A | 0x823C | 0x8D7C | 0x8D76 | 0x8D70 | 0x906F => {
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
 // `stencil` flags a combined depth-stencil attachment (DEPTH_STENCIL_ATTACHMENT)
 // vs depth-only (DEPTH_ATTACHMENT).
 #[derive(Clone, Copy)]
@@ -675,7 +691,9 @@ fn apply_color(
     textures: &Pool<TextureObj>,
     renderbuffers: &Pool<RenderbufferObj>,
 ) {
-    let tex = |t: TextureId| textures.get(t.0).map(|o| &o.raw);
+    // In use, not only live: a texture destroyed while attached is still
+    // what the framebuffer draws into.
+    let tex = |t: TextureId| textures.get_in_use(t.0).map(|o| &o.raw);
     match *att {
         ColorAttachment::Texture2D { tex: t, level } => gl.framebuffer_texture_2d(
             WebGl2RenderingContext::FRAMEBUFFER,
@@ -710,7 +728,7 @@ fn apply_color(
             WebGl2RenderingContext::FRAMEBUFFER,
             point,
             WebGl2RenderingContext::RENDERBUFFER,
-            renderbuffers.get(rb.0).map(|o| &o.raw),
+            renderbuffers.get_in_use(rb.0).map(|o| &o.raw),
         ),
     }
 }
@@ -731,7 +749,7 @@ fn apply_depth(
         } => gl.framebuffer_texture_layer(
             WebGl2RenderingContext::FRAMEBUFFER,
             point,
-            textures.get(tex.0).map(|o| &o.raw),
+            textures.get_in_use(tex.0).map(|o| &o.raw),
             level,
             layer,
         ),
@@ -739,14 +757,14 @@ fn apply_depth(
             WebGl2RenderingContext::FRAMEBUFFER,
             point,
             WebGl2RenderingContext::TEXTURE_2D,
-            textures.get(tex.0).map(|o| &o.raw),
+            textures.get_in_use(tex.0).map(|o| &o.raw),
             level,
         ),
         DepthAttachment::Renderbuffer { rb, .. } => gl.framebuffer_renderbuffer(
             WebGl2RenderingContext::FRAMEBUFFER,
             point,
             WebGl2RenderingContext::RENDERBUFFER,
-            renderbuffers.get(rb.0).map(|o| &o.raw),
+            renderbuffers.get_in_use(rb.0).map(|o| &o.raw),
         ),
     }
 }
@@ -797,10 +815,10 @@ impl FramebufferObj {
     ) -> bool {
         self.color.iter().flatten().any(|a| match a.source() {
             Source::Texture(t) => textures
-                .get(t.0)
+                .get_in_use(t.0)
                 .is_some_and(|t| crate::float_targets::is_float32(t.internal.get())),
             Source::Renderbuffer(r) => renderbuffers
-                .get(r.0)
+                .get_in_use(r.0)
                 .is_some_and(|r| crate::float_targets::is_float32(r.format.as_gl())),
         })
     }
@@ -829,15 +847,39 @@ impl FramebufferObj {
 
     // Clears this FBO's attachments per the mask, using each attachment's typed
     // clear value. The FBO must already be bound (the renderer ensures this).
-    pub(crate) fn clear(&self, gl: &WebGl2RenderingContext, mask: ClearMask, reverse_z: bool) {
+    pub(crate) fn clear(
+        &self,
+        gl: &WebGl2RenderingContext,
+        mask: ClearMask,
+        reverse_z: bool,
+        textures: &Pool<TextureObj>,
+        renderbuffers: &Pool<RenderbufferObj>,
+    ) {
         let depth = crate::renderer::depth_clear_value(self.clear_depth, reverse_z);
         if mask.color {
             for (i, slot) in self.color.iter().enumerate() {
-                if slot.is_none() {
+                let Some(att) = slot else {
                     continue;
-                }
+                };
                 let drawbuffer = i as i32;
-                match self.color_clear.get(i).copied().unwrap_or_default() {
+                let internal = match att.source() {
+                    Source::Texture(t) => textures.get_in_use(t.0).map(|o| o.internal.get()),
+                    Source::Renderbuffer(r) => renderbuffers.get_in_use(r.0).map(|o| o.internal()),
+                };
+                let value = self.color_clear.get(i).copied().unwrap_or_default();
+                // An integer attachment takes only an integer clear (a float
+                // one is INVALID_OPERATION, leaving it uncleared): a float
+                // value (the default, never set) as that integer type.
+                let value = match (value, internal.map(integer_kind)) {
+                    (ColorClearValue::Float(v), Some(Some(true))) => {
+                        ColorClearValue::Int(v.map(|c| c as i32))
+                    }
+                    (ColorClearValue::Float(v), Some(Some(false))) => {
+                        ColorClearValue::Uint(v.map(|c| c.max(0.0) as u32))
+                    }
+                    (v, _) => v,
+                };
+                match value {
                     ColorClearValue::Float(v) => gl.clear_bufferfv_with_f32_array(
                         WebGl2RenderingContext::COLOR,
                         drawbuffer,
@@ -1004,6 +1046,49 @@ impl Context {
 
         if let Some(p) = prev {
             release(p.source(), textures, renderbuffers, gl);
+        }
+    }
+
+    // Attaches `tex` again wherever a framebuffer has it (its GL texture
+    // was replaced): a framebuffer keeps the GL texture it was given, so it
+    // would go on drawing into (and holding) the old one.
+    pub(crate) fn reattach_texture(&self, tex: TextureId) {
+        let gl = self.gl();
+        let res = &mut *self.res();
+        let Resources {
+            framebuffers,
+            textures,
+            renderbuffers,
+            ..
+        } = res;
+        let is_tex = |s: Source| matches!(s, Source::Texture(t) if t == tex);
+        let mut bound = false;
+        for (_, f) in framebuffers.iter() {
+            let colors: Vec<usize> = f
+                .color
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| a.is_some_and(|a| is_tex(a.source())))
+                .map(|(i, _)| i)
+                .collect();
+            let depth = f.depth.filter(|d| is_tex(d.source()));
+            if colors.is_empty() && depth.is_none() {
+                continue;
+            }
+            gl.bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, Some(&f.raw));
+            bound = true;
+            for i in colors {
+                if let Some(a) = &f.color[i] {
+                    let point = WebGl2RenderingContext::COLOR_ATTACHMENT0 + i as u32;
+                    apply_color(gl, point, a, textures, renderbuffers);
+                }
+            }
+            if let Some(d) = &depth {
+                apply_depth(gl, d, textures, renderbuffers);
+            }
+        }
+        if bound {
+            self.gl_state().forget_target();
         }
     }
 

@@ -111,7 +111,9 @@ struct State {
     metadata: Vec<(String, String)>,
     // GPU progress probes (`gpu_fence`): a fence per frame and when it was
     // set (µs since start), oldest first.
-    fences: Vec<(WebGlSync, f64)>,
+    // Fences in flight: each with the context (and its generation) it was
+    // set on — only that context can wait on or delete it.
+    fences: Vec<Fence>,
 }
 
 thread_local! {
@@ -310,6 +312,9 @@ pub fn start(max_events: usize) {
         s.events.clear();
         s.stack.clear();
         s.pending_args.clear();
+        // Names interned for the last recording's events go with them.
+        s.names.clear();
+        s.name_index.clear();
         s.full = false;
         s.max_events = max_events.max(1);
         s.origin = performance_now();
@@ -340,22 +345,37 @@ pub fn gpu_fence(ctx: &Context) {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         let gl = ctx.gl();
+        let generation = ctx.generation();
+        let mine = |f: &Fence| js_sys::Object::is(&f.gl, gl);
+        // This context's fences from before a loss are gone with it: dropped,
+        // not waited on (that would fail for ever) nor deleted.
+        s.fences.retain(|f| !mine(f) || f.generation == generation);
         if !s.recording || gl.is_context_lost() {
-            for (sync, _) in s.fences.drain(..) {
-                gl.delete_sync(Some(&sync));
+            let (own, others): (Vec<Fence>, Vec<Fence>) = s.fences.drain(..).partition(|f| mine(f));
+            if !gl.is_context_lost() {
+                for f in own {
+                    gl.delete_sync(Some(&f.sync));
+                }
             }
+            s.fences = others;
             return;
         }
         let now = s.now_us();
-        let mut passed = 0;
-        for (sync, _) in &s.fences {
-            match gl.client_wait_sync_with_u32(sync, 0, 0) {
-                Gl::ALREADY_SIGNALED | Gl::CONDITION_SATISFIED => passed += 1,
+        // This context's fences, oldest first, up to the first not passed
+        // (another context's are its own to check).
+        let mut done = Vec::new();
+        let mut i = 0;
+        while i < s.fences.len() {
+            if !mine(&s.fences[i]) {
+                i += 1;
+                continue;
+            }
+            match gl.client_wait_sync_with_u32(&s.fences[i].sync, 0, 0) {
+                Gl::ALREADY_SIGNALED | Gl::CONDITION_SATISFIED => done.push(s.fences.remove(i)),
                 _ => break,
             }
         }
-        let done: Vec<_> = s.fences.drain(..passed).collect();
-        for (sync, set) in done {
+        for Fence { sync, set, .. } in done {
             gl.delete_sync(Some(&sync));
             s.push(Rec {
                 name: Name::Static("gpu frame"),
@@ -365,7 +385,7 @@ pub fn gpu_fence(ctx: &Context) {
                 args: Vec::new(),
             });
         }
-        let in_flight = s.fences.len() as f64;
+        let in_flight = s.fences.iter().filter(|f| mine(f)).count() as f64;
         s.push(Rec {
             name: Name::Static("gpu frames in flight"),
             phase: Phase::Counter(in_flight),
@@ -375,9 +395,22 @@ pub fn gpu_fence(ctx: &Context) {
         });
         if let Some(sync) = gl.fence_sync(Gl::SYNC_GPU_COMMANDS_COMPLETE, 0) {
             gl.flush();
-            s.fences.push((sync, now));
+            s.fences.push(Fence {
+                sync,
+                set: now,
+                gl: gl.clone(),
+                generation,
+            });
         }
     });
+}
+
+// A fence set by `gpu_fence`: when, and on which context.
+struct Fence {
+    sync: WebGlSync,
+    set: f64,
+    gl: web_sys::WebGl2RenderingContext,
+    generation: u32,
 }
 
 pub fn is_recording() -> bool {

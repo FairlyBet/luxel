@@ -234,7 +234,7 @@ fn run_pass(
             gl.scissor(r.x, r.y, r.width, r.height);
         }
         match target {
-            Some(f) => f.clear(gl, pass.clear, st.reverse_z),
+            Some(f) => f.clear(gl, pass.clear, st.reverse_z, textures, renderbuffers),
             None => clear_default(default_fb, gl, pass.clear, st.reverse_z),
         }
         match cur {
@@ -269,6 +269,8 @@ fn run_pass(
             st.stats.skipped += 1;
             continue;
         }
+        // Checked before its program is bound (switching programs while
+        // recording is an error); counted only once issued (`start`).
         if let Some(r) = &mut recording
             && !r.admit(d, program)
         {
@@ -352,6 +354,8 @@ fn run_pass(
             continue;
         }
         program.check_covered(&used[..n_used]);
+        // The admitted draw is counted toward the recording here, now that
+        // nothing can skip it.
         if let Some(r) = &mut recording {
             r.start(gl, queries);
         }
@@ -562,6 +566,9 @@ impl GlState {
             stats: self.stats,
             ..Self::default()
         };
+        // Unknown, not empty: GL's units still hold what was bound (after
+        // raw GL or set_reverse_z), so a unit left unset must be unbound.
+        self.bindings.beyond = UnitBinding::Unknown;
     }
 
     /// Something bound a framebuffer.

@@ -210,8 +210,8 @@ impl Context {
             || r.height < 1
             || r.x < 0
             || r.y < 0
-            || r.x + r.width > w
-            || r.y + r.height > h
+            || i64::from(r.x) + i64::from(r.width) > i64::from(w)
+            || i64::from(r.y) + i64::from(r.height) > i64::from(h)
         {
             return Err(err!(
                 "read: region {}x{} at ({}, {}) is outside the {w}x{h} target",

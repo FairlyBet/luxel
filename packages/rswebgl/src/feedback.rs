@@ -128,6 +128,9 @@ pub(crate) struct Recording<'a> {
     program: Option<ProgramId>,
     // Bytes written into each binding so far.
     written: [u64; MAX_FEEDBACK_BUFFERS as usize],
+    // What the draw admitted last would make `written`: counted (with its
+    // program pinned) by `start`, once nothing can skip the draw any more.
+    admitted: Option<(ProgramId, [u64; MAX_FEEDBACK_BUFFERS as usize])>,
     active: bool,
     query_target: Option<u32>,
 }
@@ -144,6 +147,7 @@ impl<'a> Recording<'a> {
             want,
             program: None,
             written: [0; MAX_FEEDBACK_BUFFERS as usize],
+            admitted: None,
             active: false,
             query_target: None,
         })
@@ -204,14 +208,18 @@ impl<'a> Recording<'a> {
                 ));
             }
         }
-        self.written = after;
-        self.program = Some(d.program);
+        self.admitted = Some((d.program, after));
         Ok(())
     }
 
     /// Starts recording if not yet started; call after the admitted draw's
     /// program is in use.
     pub(crate) fn start(&mut self, gl: &Gl, queries: &mut Pool<QueryObj>) {
+        // The admitted draw is issued: it counts now.
+        if let Some((program, after)) = self.admitted.take() {
+            self.program = Some(program);
+            self.written = after;
+        }
         if self.active {
             return;
         }

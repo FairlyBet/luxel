@@ -1098,6 +1098,9 @@ impl Scene {
     /// the textures `loadTexture` made.
     /// Handles you passed in (`setMesh`) stay yours.
     pub fn destroy(mut self) {
+        // The context's shared texture compressor (models' maps, the
+        // environment) goes with the scene that compressed on it.
+        rswebgl::texture_compressor::TextureCompressor::release_shared(&self.ctx);
         if let Some(mut p) = self.profiler.take() {
             p.destroy();
         }

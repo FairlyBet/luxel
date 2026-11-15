@@ -147,12 +147,18 @@ impl Context {
                  a blit can't write into it; ignored"
             ));
         }
-        if !src.is_null()
-            && samples(src) > 0
-            && (src_rect.width != dst_rect.width || src_rect.height != dst_rect.height)
-        {
+        // A multisampled source (a framebuffer's, or the antialiased
+        // canvas) resolves only into the same rectangle: no scaling, no
+        // offset (GLES 3.0 blitFramebuffer).
+        let multisampled = if src.is_null() {
+            canvas_multisampled(gl)
+        } else {
+            samples(src) > 0
+        };
+        if multisampled && src_rect != dst_rect {
             return console::error(&format!(
-                "[rswebgl] {OP}: a multisampled source copies 1:1 only (no scaling); ignored"
+                "[rswebgl] {OP}: a multisampled source copies into the same rectangle only \
+                 (no scaling or offset); ignored"
             ));
         }
         self.gl_state().forget_target();
@@ -238,6 +244,21 @@ impl Context {
             width,
             height,
         };
+        let multisampled = if src.is_null() {
+            canvas_multisampled(self.gl())
+        } else {
+            let res = self.res();
+            res.framebuffers
+                .get(src.0)
+                .and_then(|f| f.color_format(&res, attachment))
+                .is_some_and(|(_, n)| n > 0)
+        };
+        if multisampled {
+            return console::error(&format!(
+                "[rswebgl] {OP}: the source is multisampled (resolve it with a blit first); \
+                 ignored"
+            ));
+        }
         if let Err(e) = self.bind_read_source(src, attachment, r) {
             return console::error(&format!("[rswebgl] {OP}: {e}; ignored"));
         }
