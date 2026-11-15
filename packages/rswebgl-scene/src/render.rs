@@ -25,13 +25,12 @@ use crate::culling::{Bounds, Frustum};
 use crate::environment::{Environment, FULLSCREEN_VERT, brdf_lut_texture};
 use crate::gpu_pick::{GpuPicker, PickView};
 use crate::instances::{Batches, Dest, Instances, ProgramKind};
-use crate::light::Light;
+use crate::lighting::{LIGHTS_BLOCK, LightingSystem};
 use crate::model::{Morph, Skin};
 use crate::motion::MotionVectors;
 use crate::output::ToneMapping;
 use crate::pick::Hit;
 use crate::shader::create_scene_program;
-use crate::shadows::{LightShadow, MAX_SHADOWS, ShadowCaster, ShadowMaps, shadow_view};
 use crate::transform::{Parent, WorldMatrix};
 
 /// Name of the per-frame uniform block. Shaders declare it as
@@ -72,20 +71,15 @@ pub const MORPH_BASE_UNIFORM: &str = "u_morph_base";
 /// The frame's instance texture (slot 0): three RGBA32F texels per instance.
 pub const INSTANCES_TEXTURE: &str = "u_instances";
 
-/// Name of the lights block, bound next to the frame block in slot 0:
+/// Name of the lighting block, bound next to the frame block in slot 0
+/// (the lights themselves are in `LIGHTS_BLOCK`):
 ///
 /// ```glsl
-/// struct Light {
-///     vec4 position;  // xyz world position
-///     vec4 direction; // xyz world direction the light points
-///     vec4 color;     // rgb color, w intensity
-///     vec4 params;    // x range, y spot scale, z spot offset, w type (0 dir, 1 point, 2 spot)
-/// };
 /// layout(std140) uniform Lighting {
-///     Light u_lights[8];  // MAX_LIGHTS
-///     vec4 u_environment; // rgb intensity of the environment light
-///     vec4 u_lighting;    // x light count, y exposure, z environment
-///                         // rotation (radians about +Y), w last specular mip
+///     vec4 u_environment; // rgb intensity of the environment light, w the
+///                         // material maps' LOD bias
+///     vec4 u_lighting;    // x unused, y exposure, z environment rotation
+///                         // (radians about +Y), w last specular mip
 ///     vec4 u_output;      // x shows (1) or leaves linear radiance (0), y tone
 ///                         // mapper, z 1 with a scene copy, w its last mip
 ///     vec4 u_shading;     // x specular AA variance, y its threshold
@@ -94,11 +88,8 @@ pub const INSTANCES_TEXTURE: &str = "u_instances";
 /// uniform samplerCube u_env_specular; // prefiltered: mip = roughness × w
 /// uniform sampler2D u_env_brdf;       // split-sum (scale, bias) by (n·v, roughness)
 /// uniform float u_background_blur;    // the background's mip, 0..1 of w
-/// };
 /// ```
 pub const LIGHTING_BLOCK: &str = "Lighting";
-/// Lights the lighting block holds; more are left out (reported once).
-pub const MAX_LIGHTS: usize = 8;
 
 // Intensity of the default (white, constant) environment: a dim ambient light,
 // enough to see a scene with no lights.
@@ -266,13 +257,10 @@ pub struct SceneRenderer {
     frame_view: Mat4,
     frame_proj: Mat4,
     stats: RenderStats,
-    // Shadow maps of the directional and spot lights with a `LightShadow`;
-    // the side their layers get once a light needs them.
-    shadows: ShadowMaps,
-    shadow_size: u32,
-    // This frame: each shadowing light's layer, and the entities whose
-    // instance (and deformers) is written, where it starts.
-    shadow_layers: HashMap<Entity, usize>,
+    // The punctual lights and their shadow maps.
+    lights: LightingSystem,
+    // This frame: the entities whose instance (and deformers) is written,
+    // where it starts.
     frame_bases: HashMap<Entity, i32>,
 }
 
@@ -289,20 +277,12 @@ impl SceneRenderer {
             BufferUsage::DynamicDraw,
         )?;
         undo.push(move |c| c.destroy_uniform_buffer(frame_ubo));
-        let light = UboLayout::new()
-            .field("position", UniformType::Vec4)
-            .field("direction", UniformType::Vec4)
-            .field("color", UniformType::Vec4)
-            .field("params", UniformType::Vec4);
         let lighting_ubo = ctx.create_uniform_buffer(
             &UboLayout::new()
-                .struct_array("u_lights", &light, MAX_LIGHTS as u32)
                 .field("u_environment", UniformType::Vec4)
                 .field("u_lighting", UniformType::Vec4)
                 .field("u_output", UniformType::Vec4)
-                .field("u_shading", UniformType::Vec4)
-                .array("u_light_shadows", UniformType::Vec4, MAX_LIGHTS as u32)
-                .array("u_shadow_matrices", UniformType::Mat4, MAX_SHADOWS as u32),
+                .field("u_shading", UniformType::Vec4),
             BufferUsage::DynamicDraw,
         )?;
         undo.push(move |c| c.destroy_uniform_buffer(lighting_ubo));
@@ -310,13 +290,14 @@ impl SceneRenderer {
             &ParamLayoutBuilder::new()
                 .block(FRAME_BLOCK)
                 .block(LIGHTING_BLOCK)
+                .block(LIGHTS_BLOCK)
                 .texture("u_env_diffuse")
                 .texture("u_env_specular")
                 .texture("u_env_brdf")
                 .texture("u_scene_color")
                 .texture(INSTANCES_TEXTURE)
                 .texture("u_peel_depth")
-                .texture("u_shadow_map")
+                .texture(crate::lighting::SHADOW_MAP)
                 .uniform("u_background_blur", UniformType::F32),
         )?;
         undo.push(move |c| c.destroy_param_layout(frame_layout));
@@ -353,8 +334,7 @@ impl SceneRenderer {
         ctx.param_set_texture_by_name(frame_group, "u_scene_color", brdf_lut);
         ctx.param_set_texture_by_name(frame_group, "u_peel_depth", brdf_lut);
         // Made last: nothing after it can fail.
-        let shadows = ShadowMaps::new(ctx, frame_layout, lighting_ubo)?;
-        ctx.param_set_texture_by_name(frame_group, "u_shadow_map", shadows.texture());
+        let lights = LightingSystem::new(ctx, frame_layout, frame_group, lighting_ubo)?;
         let mut skybox_state = RenderState::new();
         skybox_state.depth_mask = false;
         let renderer = Self {
@@ -407,9 +387,7 @@ impl SceneRenderer {
             frame_view: Mat4::IDENTITY,
             frame_proj: Mat4::IDENTITY,
             stats: RenderStats::default(),
-            shadows,
-            shadow_size: 2048,
-            shadow_layers: HashMap::new(),
+            lights,
             frame_bases: HashMap::new(),
         };
         renderer.bind_environment(ctx);
@@ -596,8 +574,7 @@ impl SceneRenderer {
             &(proj * view).to_cols_array(),
         );
         // The cached block too, so the next frame's bias rewrites it.
-        if let Some(i) = self.lighting.len().checked_sub(4) {
-            let env = &mut self.lighting[i];
+        if let Some(env) = self.lighting.first_mut() {
             env.w = 0.0;
             let e = *env;
             ctx.ubo_set_vec4(self.lighting_ubo, "u_environment", e.x, e.y, e.z, e.w);
@@ -741,8 +718,8 @@ impl SceneRenderer {
             return self.stats;
         };
         self.frame_bases.clear();
-        self.plan_shadows(world, ctx);
-        self.write_lighting(world, ctx);
+        self.lights.prepare(world, ctx, self.frame_group);
+        self.write_lighting(ctx);
         self.push_background(ctx, opaque);
         let frustum = Frustum::from_view_proj_depth(&view_proj, ctx.reverse_z());
 
@@ -915,174 +892,72 @@ impl SceneRenderer {
         {
             console::error_once(&format!("[rswebgl-scene] instance data: {err}"));
         }
-        for i in 0..self.shadows.views.len() {
-            let texture = self.instances.texture();
-            ctx.param_set_texture_by_name(self.shadows.group(i), INSTANCES_TEXTURE, texture);
-        }
+        let texture = self.instances.texture();
+        self.lights.bind_instances(ctx, INSTANCES_TEXTURE, texture);
         self.stats
     }
 
     /// Renders this frame's shadow maps (after `render` / `render_split`,
     /// before the passes that shade with them).
     pub fn render_shadows(&self, ctx: &Context) {
-        self.shadows.render(ctx);
+        self.lights.render_shadows(ctx);
     }
 
     /// The side of each shadow map, in texels (default 2048; rounded to a
     /// power of two in 256..=8192, within the device's texture size).
     pub fn set_shadow_map_size(&mut self, size: u32) {
-        let max = rswebgl::limits::max_texture_size().max(256) as u32;
-        self.shadow_size = size.clamp(256, 8192).next_power_of_two().min(max);
+        self.lights.set_shadow_map_size(size);
     }
 
     pub fn shadow_map_size(&self) -> u32 {
-        self.shadow_size
+        self.lights.shadow_map_size()
     }
 
-    // This frame's shadowing lights (the first MAX_SHADOWS with a
-    // `LightShadow`): their cameras, fitted to the casters' bounds.
-    fn plan_shadows(&mut self, world: &World, ctx: &Context) {
-        self.shadows.begin(ctx);
-        self.shadow_layers.clear();
-        let (Some(settings), Some(lights), Some(worlds)) = (
-            world.storage::<LightShadow>(),
-            world.storage::<Light>(),
-            world.storage::<WorldMatrix>(),
-        ) else {
-            return;
-        };
-        if settings.is_empty() {
-            return;
-        }
-        let Some(bounds) = caster_bounds(world) else {
-            return;
-        };
-        // A layer for each shadowing directional or spot light.
-        let wanted = settings
-            .iter()
-            .filter(|(e, _)| {
-                lights
-                    .get(*e)
-                    .is_some_and(|l| !matches!(l.kind, crate::light::LightKind::Point))
-            })
-            .count()
-            .min(MAX_SHADOWS);
-        if wanted == 0 {
-            return;
-        }
-        if self.shadows.size() != self.shadow_size || self.shadows.layers() != wanted {
-            if let Err(e) = self.shadows.resize(ctx, self.shadow_size, wanted) {
-                console::error_once(&format!("[rswebgl-scene] shadow maps: {e}"));
-                return;
-            }
-            ctx.param_set_texture_by_name(self.frame_group, "u_shadow_map", self.shadows.texture());
-        }
-        let any_hidden = world
-            .storage::<Visible>()
-            .is_some_and(|v| v.data().iter().any(|v| !v.0));
-        for (e, light) in lights.iter() {
-            let Some(&s) = settings.get(e) else {
-                continue;
-            };
-            let Some(m) = worlds.get(e) else {
-                continue;
-            };
-            if any_hidden && hidden(world, e) {
-                continue;
-            }
-            if self.shadows.views.len() == MAX_SHADOWS {
-                console::warn_once(&format!(
-                    "[rswebgl-scene] more than {MAX_SHADOWS} shadow-casting lights; the rest \n                     shine unshadowed"
-                ));
-                break;
-            }
-            let size = self.shadows.size();
-            if let Some(view) = shadow_view(light, &m.0, bounds, size, ctx.reverse_z(), s) {
-                let i = self.shadows.views.len();
-                self.shadows.prepare(ctx, i, &view);
-                self.shadows.views.push(view);
-                self.shadow_layers.insert(e, i);
-            }
-        }
+    /// 16-bit shadow maps instead of 24-bit: half the memory, coarser
+    /// depth steps (fine for a model or a room). Default off.
+    pub fn set_shadow_depth16(&mut self, on: bool) {
+        self.lights.set_shadow_depth16(on);
     }
 
-    // Every visible shadow caster into the passes of the lights whose
-    // shadow camera sees it — culled or not by the camera's (a mesh out of
-    // view still shadows what is in it). Its instance is the one the
-    // camera's pass wrote, or written now.
+    pub fn shadow_depth16(&self) -> bool {
+        self.lights.shadow_depth16()
+    }
+
+    /// The shadow maps' memory, in bytes.
+    pub fn shadow_bytes(&self) -> usize {
+        self.lights.shadow_bytes()
+    }
+
+    // The shadow casters' objects: the instance the camera's pass wrote,
+    // or written now.
     fn collect_shadows(&mut self, world: &World, ctx: &Context) {
-        let n = self.shadows.views.len();
-        let (Some(casters), Some(meshes), Some(worlds)) = (
-            world.storage::<ShadowCaster>(),
-            world.storage::<MeshRenderer>(),
-            world.storage::<WorldMatrix>(),
-        ) else {
+        let draws = self.lights.take_caster_draws();
+        let Some(worlds) = world.storage::<WorldMatrix>() else {
+            self.lights.push_casters(draws, &[]);
             return;
         };
-        if n == 0 {
-            return;
-        }
-        let bounds = world.storage::<Bounds>();
-        let reloading = world.storage::<Reloading>().filter(|r| !r.is_empty());
-        let any_hidden = world
-            .storage::<Visible>()
-            .is_some_and(|v| v.data().iter().any(|v| !v.0));
-        let reverse = ctx.reverse_z();
-        for i in 0..n {
-            let view = self.shadows.views[i];
-            let frustum = Frustum::from_view_proj_depth(&view.view_proj, reverse);
-            let state = ShadowMaps::state(ctx, &view.state);
-            let frame = self.shadows.group(i);
-            for (e, caster) in casters.iter() {
-                let Some(mesh) = meshes.get(e) else {
-                    continue;
-                };
-                if mesh.transparent
-                    || caster.program.is_null()
-                    || ctx.program_link_pending(caster.program)
-                    || reloading.is_some_and(|r| r.contains(e))
-                    || (any_hidden && hidden(world, e))
-                {
-                    continue;
-                }
-                let Some(row) = worlds.row(e) else {
-                    continue;
-                };
-                let m = worlds.data()[row as usize].0;
-                if let Some(b) = bounds.and_then(|b| b.get(e)) {
-                    let (c, h) = b.transformed(&m);
-                    if !frustum.intersects(c, h) {
-                        continue;
+        let mut objects = Vec::with_capacity(draws.len());
+        for d in &draws {
+            let (e, row) = (d.entity, d.row);
+            let m = worlds.data()[row as usize].0;
+            let Some(group) = self.ensure_object_group(ctx, e, &m, worlds.changed_tick(row)) else {
+                objects.push(ParamGroupId::NULL);
+                continue;
+            };
+            if !self.frame_bases.contains_key(&e) {
+                let base = self.instances.push(&m);
+                if d.mesh.command.is_instanceable() {
+                    for _ in 1..d.mesh.command.instance_count.clamp(1, 4096) {
+                        self.instances.push(&m);
                     }
                 }
-                let Some(group) = self.ensure_object_group(ctx, e, &m, worlds.changed_tick(row))
-                else {
-                    continue;
-                };
-                if !self.frame_bases.contains_key(&e) {
-                    let base = self.instances.push(&m);
-                    if mesh.command.is_instanceable() {
-                        for _ in 1..mesh.command.instance_count.clamp(1, 4096) {
-                            self.instances.push(&m);
-                        }
-                    }
-                    ctx.param_set_i32(group, self.f_instance_base, base);
-                    self.write_deformers(world, ctx, e, group);
-                    self.frame_bases.insert(e, base);
-                }
-                let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-                groups[FRAME_SLOT] = frame;
-                groups[MATERIAL_SLOT] = mesh.material;
-                groups[OBJECT_SLOT] = group;
-                self.shadows.passes[i].push_groups(
-                    caster.program,
-                    state,
-                    mesh.vao,
-                    groups,
-                    &mesh.command,
-                );
+                ctx.param_set_i32(group, self.f_instance_base, base);
+                self.write_deformers(world, ctx, e, group);
+                self.frame_bases.insert(e, base);
             }
+            objects.push(group);
         }
+        self.lights.push_casters(draws, &objects);
     }
 
     // How `program` gets its object: uniforms (a shader of its own), or the
@@ -1212,7 +1087,7 @@ impl SceneRenderer {
         if let Some(m) = self.motion {
             m.destroy(ctx, self.generation != ctx.generation());
         }
-        self.shadows
+        self.lights
             .destroy(ctx, self.generation != ctx.generation());
         ctx.destroy_param_group(self.frame_group);
         ctx.destroy_param_layout(self.frame_layout);
@@ -1236,108 +1111,38 @@ impl SceneRenderer {
         }
     }
 
-    // Lights, environment intensity, exposure and rotation into the lighting block, if anything in it
-    // changed since the last frame.
-    fn write_lighting(&mut self, world: &World, ctx: &Context) {
-        let mut data: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS * 5 + 4 + MAX_SHADOWS * 4);
-        let mut shadows: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS);
-        let mut count = 0;
-        if let (Some(lights), Some(worlds)) =
-            (world.storage::<Light>(), world.storage::<WorldMatrix>())
-        {
-            let any_hidden = world
-                .storage::<Visible>()
-                .is_some_and(|v| v.data().iter().any(|v| !v.0));
-            for (e, light) in lights.iter() {
-                let Some(m) = worlds.get(e) else {
-                    continue;
-                };
-                if any_hidden && hidden(world, e) {
-                    continue;
-                }
-                if count == MAX_LIGHTS {
-                    console::warn_once(&format!(
-                        "[rswebgl-scene] more than {MAX_LIGHTS} lights; the rest are ignored"
-                    ));
-                    break;
-                }
-                data.extend(light.packed(&m.0));
-                // x its shadow map's layer (−1: none), y the normal bias, z 1 for
-                // a perspective (spot) one.
-                shadows.push(match self.shadow_layers.get(&e) {
-                    Some(&i) => {
-                        let v = &self.shadows.views[i];
-                        let persp = if v.perspective { 1.0 } else { 0.0 };
-                        Vec4::new(i as f32, v.normal_bias, persp, 0.0)
-                    }
-                    None => Vec4::new(-1.0, 0.0, 0.0, 0.0),
-                });
-                count += 1;
-            }
-        }
-        // Each light's shadow (none past the last), then the shadow maps'
-        // world → map matrices (identity unused) — before the last four:
-        // `drop_jitter` and `set_peel` patch those from the end.
-        shadows.resize(MAX_LIGHTS, Vec4::new(-1.0, 0.0, 0.0, 0.0));
-        data.extend(shadows);
-        for i in 0..MAX_SHADOWS {
-            let m = self
-                .shadows
-                .views
-                .get(i)
-                .map_or(Mat4::IDENTITY, |v| v.to_map);
-            data.extend([m.x_axis, m.y_axis, m.z_axis, m.w_axis]);
-        }
-        // w: the material maps' LOD bias (TAA sharpens them back).
-        data.push(self.env_intensity.extend(self.mip_bias));
+    // Environment intensity, exposure, rotation, output and shading into
+    // the lighting block, if anything in it changed since the last frame.
+    fn write_lighting(&mut self, ctx: &Context) {
         let last_mip = (self.environment().specular_mips() - 1) as f32;
-        data.push(Vec4::new(
-            count as f32,
-            self.exposure,
-            self.env_rotation,
-            last_mip,
-        ));
-        data.push(Vec4::new(
-            if self.display_output { 1.0 } else { 0.0 },
-            self.tone_mapping as u32 as f32,
-            // z: 1 + the least mip when there is a scene copy (0: none).
-            if self.scene_color.is_some() {
-                1.0 + self.scene_color_min_lod
-            } else {
-                0.0
-            },
-            self.scene_color.map_or(0.0, |(_, mip)| mip as f32),
-        ));
         let reverse = if ctx.reverse_z() { 1.0 } else { 0.0 };
-        data.push(Vec4::new(
-            self.specular_aa.0,
-            self.specular_aa.1,
-            self.peel as f32,
-            reverse,
-        ));
+        let data = vec![
+            // w: the material maps' LOD bias (TAA sharpens them back).
+            self.env_intensity.extend(self.mip_bias),
+            Vec4::new(0.0, self.exposure, self.env_rotation, last_mip),
+            Vec4::new(
+                if self.display_output { 1.0 } else { 0.0 },
+                self.tone_mapping as u32 as f32,
+                // z: 1 + the least mip when there is a scene copy (0: none).
+                if self.scene_color.is_some() {
+                    1.0 + self.scene_color_min_lod
+                } else {
+                    0.0
+                },
+                self.scene_color.map_or(0.0, |(_, mip)| mip as f32),
+            ),
+            Vec4::new(
+                self.specular_aa.0,
+                self.specular_aa.1,
+                self.peel as f32,
+                reverse,
+            ),
+        ];
         if data == self.lighting {
             return;
         }
         let ubo = self.lighting_ubo;
-        const MEMBERS: [&str; 4] = ["position", "direction", "color", "params"];
-        for (i, light) in data[..count * 4].chunks(4).enumerate() {
-            for (member, v) in MEMBERS.iter().zip(light) {
-                let path = format!("u_lights[{i}].{member}");
-                ctx.ubo_set_vec4(ubo, &path, v.x, v.y, v.z, v.w);
-            }
-        }
-        let shadows_at = count * 4;
-        for i in 0..MAX_LIGHTS {
-            let v = data[shadows_at + i];
-            ctx.ubo_set_vec4(ubo, &format!("u_light_shadows[{i}]"), v.x, v.y, v.z, v.w);
-        }
-        for i in 0..MAX_SHADOWS {
-            let at = shadows_at + MAX_LIGHTS + i * 4;
-            let cols: Vec<f32> = data[at..at + 4].iter().flat_map(|c| c.to_array()).collect();
-            ctx.ubo_set_mat(ubo, &format!("u_shadow_matrices[{i}]"), &cols);
-        }
-        let n = data.len();
-        let [env, params, output, shading] = [data[n - 4], data[n - 3], data[n - 2], data[n - 1]];
+        let [env, params, output, shading] = [data[0], data[1], data[2], data[3]];
         ctx.ubo_set_vec4(ubo, "u_environment", env.x, env.y, env.z, env.w);
         ctx.ubo_set_vec4(ubo, "u_lighting", params.x, params.y, params.z, params.w);
         ctx.ubo_set_vec4(ubo, "u_output", output.x, output.y, output.z, output.w);
@@ -1550,52 +1355,4 @@ pub(crate) fn hidden(world: &World, mut e: Entity) -> bool {
         }
     }
     false
-}
-
-// The world box around every visible shadow caster: its bounds, or for a
-// skinned mesh (its rest bounds don't hold) its joints' box, padded by a
-// third of its size for the skin around them.
-fn caster_bounds(world: &World) -> Option<(Vec3, Vec3)> {
-    let casters = world.storage::<ShadowCaster>()?;
-    let worlds = world.storage::<WorldMatrix>()?;
-    let bounds = world.storage::<Bounds>();
-    let skins = world.storage::<Skin>();
-    let any_hidden = world
-        .storage::<Visible>()
-        .is_some_and(|v| v.data().iter().any(|v| !v.0));
-    let mut lo = Vec3::splat(f32::INFINITY);
-    let mut hi = Vec3::splat(f32::NEG_INFINITY);
-    for (e, _) in casters.iter() {
-        if any_hidden && hidden(world, e) {
-            continue;
-        }
-        let Some(m) = worlds.get(e) else {
-            continue;
-        };
-        if let Some(b) = bounds.and_then(|b| b.get(e)) {
-            let (c, h) = b.transformed(&m.0);
-            lo = lo.min(c - h);
-            hi = hi.max(c + h);
-        } else if let Some(skin) = skins.and_then(|s| s.get(e)) {
-            let mut a = Vec3::splat(f32::INFINITY);
-            let mut b = Vec3::splat(f32::NEG_INFINITY);
-            for &j in skin.joints.iter() {
-                if let Some(w) = worlds.get(j) {
-                    let p = w.0.w_axis.truncate();
-                    a = a.min(p);
-                    b = b.max(p);
-                }
-            }
-            if a.x <= b.x {
-                let pad = Vec3::splat((b - a).max_element() / 3.0);
-                lo = lo.min(a - pad);
-                hi = hi.max(b + pad);
-            }
-        } else {
-            let p = m.0.w_axis.truncate();
-            lo = lo.min(p);
-            hi = hi.max(p);
-        }
-    }
-    (lo.x <= hi.x).then_some((lo, hi))
 }

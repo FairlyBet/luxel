@@ -1,5 +1,6 @@
-// Punctual lights and the environment's strength (the lighting block, slot
-// 0). Light type: 0 directional, 1 point, 2 spot (KHR_lights_punctual).
+// Punctual lights (the Lights block) and the environment's strength (the
+// Lighting block), both in slot 0. Light type: 0 directional, 1 point, 2
+// spot (KHR_lights_punctual).
 
 #define MAX_LIGHTS 8
 #define MAX_SHADOWS 4
@@ -9,11 +10,20 @@ struct Light {
     vec4 color;     // rgb color, w intensity (lux for directional, candela else)
     vec4 params;    // x range (0 = infinite), y spot scale, z spot offset, w type
 };
-layout(std140) uniform Lighting {
+// The punctual lights and their shadows (the lighting system's block).
+layout(std140) uniform Lights {
     Light u_lights[MAX_LIGHTS];
+    vec4 u_light_count; // x lights in u_lights
+    // Light i's shadow: x its shadow map's layer (< 0: none), y normal bias
+    // (world units; per unit of depth with z = 1, a spot's perspective).
+    vec4 u_light_shadows[MAX_LIGHTS];
+    mat4 u_shadow_matrices[MAX_SHADOWS]; // world → shadow map [0, 1]³
+};
+// The environment and the output (the renderer's block).
+layout(std140) uniform Lighting {
     vec4 u_environment; // rgb intensity of the environment light, w the
                         // material maps' LOD bias (TAA)
-    vec4 u_lighting;    // x light count, y exposure, z environment rotation,
+    vec4 u_lighting;    // x unused, y exposure, z environment rotation,
                         // w last mip of the specular cube
     vec4 u_output;      // x 1: scene_output shows (exposure, tone map, sRGB),
                         //   0: it leaves linear radiance (HDR target);
@@ -21,11 +31,8 @@ layout(std140) uniform Lighting {
                         // scene copy for transmission, w its last mip
     vec4 u_shading;     // x specular antialiasing variance, y its threshold,
                         // z depth-peeling mode, w 1 under reverse-Z
-    // Light i's shadow: x its shadow map's layer (< 0: none), y normal bias
-    // (world units; per unit of depth with z = 1, a spot's perspective).
-    vec4 u_light_shadows[MAX_LIGHTS];
-    mat4 u_shadow_matrices[MAX_SHADOWS]; // world → shadow map [0, 1]³
 };
+
 
 // Direction from a surface point toward light `light` (unnormalized for
 // point and spot lights: the distance is in it).

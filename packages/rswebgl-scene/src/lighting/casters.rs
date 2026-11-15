@@ -1,0 +1,80 @@
+//! Which casters each shadow map draws: every visible `ShadowCaster` the
+//! light's camera sees — culled or not by the scene camera's (a mesh out of
+//! view still shadows what is in it). The renderer gives each its object
+//! (matrices, instance, deformers) and pushes it with `push`.
+
+use rswebgl::context::Context;
+use rswebgl::ids::ProgramId;
+use rswebgl_ecs::{Entity, World};
+
+use super::settings::ShadowCaster;
+use super::views::ShadowView;
+use crate::culling::{Bounds, Frustum};
+use crate::render::{MeshRenderer, Reloading, Visible, hidden};
+use crate::transform::WorldMatrix;
+
+/// A caster to draw into shadow map `view`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CasterDraw {
+    pub view: usize,
+    pub entity: Entity,
+    pub program: ProgramId,
+    pub mesh: MeshRenderer,
+    /// Its row in the `WorldMatrix` storage.
+    pub row: u32,
+}
+
+/// This frame's caster draws for `views`, into `out` (cleared first).
+/// Blended meshes cast none; neither do those whose shader still links or
+/// whose model reloads.
+pub(crate) fn cull(world: &World, ctx: &Context, views: &[ShadowView], out: &mut Vec<CasterDraw>) {
+    out.clear();
+    let (Some(casters), Some(meshes), Some(worlds)) = (
+        world.storage::<ShadowCaster>(),
+        world.storage::<MeshRenderer>(),
+        world.storage::<WorldMatrix>(),
+    ) else {
+        return;
+    };
+    if views.is_empty() {
+        return;
+    }
+    let bounds = world.storage::<Bounds>();
+    let reloading = world.storage::<Reloading>().filter(|r| !r.is_empty());
+    let any_hidden = world
+        .storage::<Visible>()
+        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    let reverse = ctx.reverse_z();
+    for (i, view) in views.iter().enumerate() {
+        let frustum = Frustum::from_view_proj_depth(&view.view_proj, reverse);
+        for (e, caster) in casters.iter() {
+            let Some(mesh) = meshes.get(e) else {
+                continue;
+            };
+            if mesh.transparent
+                || caster.program.is_null()
+                || ctx.program_link_pending(caster.program)
+                || reloading.is_some_and(|r| r.contains(e))
+                || (any_hidden && hidden(world, e))
+            {
+                continue;
+            }
+            let Some(row) = worlds.row(e) else {
+                continue;
+            };
+            if let Some(b) = bounds.and_then(|b| b.get(e)) {
+                let (c, h) = b.transformed(&worlds.data()[row as usize].0);
+                if !frustum.intersects(c, h) {
+                    continue;
+                }
+            }
+            out.push(CasterDraw {
+                view: i,
+                entity: e,
+                program: caster.program,
+                mesh: *mesh,
+                row,
+            });
+        }
+    }
+}

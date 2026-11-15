@@ -30,10 +30,10 @@ use wasm_bindgen::prelude::*;
 
 use super::{Scene, openpbr, options};
 use crate::hierarchy::descendants;
+use crate::lighting::ShadowCaster;
 use crate::model::Primitive;
 use crate::pbr::PbrKey;
 use crate::render::MeshRenderer;
-use crate::shadows::ShadowCaster;
 
 /// What the scene knows about one material: its data (mirrored in the
 /// group's uniforms) and whether the scene made it (`cloneMaterial`) and so

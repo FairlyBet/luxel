@@ -10,8 +10,7 @@ use super::{Scene, options};
 use crate::camera::Camera;
 use crate::environment::{EnvBaker, PendingEnvironment};
 use crate::hdr::{RgbeImage, decode_hdr_rgbe};
-use crate::light::{Light, LightKind};
-use crate::shadows::LightShadow;
+use crate::lighting::{Light, LightKind, LightShadow};
 
 #[wasm_bindgen]
 impl Scene {
@@ -119,7 +118,8 @@ impl Scene {
 
     /// The side of each shadow map in texels: 2048 by default; rounded to
     /// a power of two in 256..=8192 (and the device's limit). One depth
-    /// layer per shadow-casting light, ~4 bytes a texel (2048: 16 MB each).
+    /// layer per shadow-casting light, 4 bytes a texel (2048: 16 MB each;
+    /// 2 bytes with `setShadowDepthBits(16)`).
     #[wasm_bindgen(js_name = setShadowMapSize)]
     pub fn set_shadow_map_size(&mut self, size: u32) {
         self.renderer.set_shadow_map_size(size);
@@ -128,6 +128,32 @@ impl Scene {
     #[wasm_bindgen(js_name = shadowMapSize)]
     pub fn shadow_map_size(&self) -> u32 {
         self.renderer.shadow_map_size()
+    }
+
+    /// The shadow maps' depth precision: 24 bits (the default) or 16 —
+    /// half the memory (a 2048 map: 8 MB instead of 16), coarser depth
+    /// steps: enough for a model or a room; over long distances shadow
+    /// acne comes sooner (raise the biases). Throws on other values.
+    #[wasm_bindgen(js_name = setShadowDepthBits)]
+    pub fn set_shadow_depth_bits(&mut self, bits: u32) -> Result<(), Error> {
+        match bits {
+            16 | 24 => {
+                self.renderer.set_shadow_depth16(bits == 16);
+                Ok(())
+            }
+            _ => Err("setShadowDepthBits: 16 or 24".into()),
+        }
+    }
+
+    #[wasm_bindgen(js_name = shadowDepthBits)]
+    pub fn shadow_depth_bits(&self) -> u32 {
+        if self.renderer.shadow_depth16() { 16 } else { 24 }
+    }
+
+    /// Bytes the shadow maps take now (all layers).
+    #[wasm_bindgen(js_name = shadowMemory)]
+    pub fn shadow_memory(&self) -> f64 {
+        self.renderer.shadow_bytes() as f64
     }
 
     #[wasm_bindgen(js_name = removeLight)]

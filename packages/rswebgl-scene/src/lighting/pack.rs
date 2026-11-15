@@ -1,0 +1,143 @@
+//! The `Lights` block: the punctual lights a frame shades with and their
+//! shadows, as lights.glsl declares it.
+
+use std::collections::HashMap;
+
+use glam::{Mat4, Vec4};
+use rswebgl::buffer::BufferUsage;
+use rswebgl::console;
+use rswebgl::context::Context;
+use rswebgl::error::Error;
+use rswebgl::ids::UniformBufferId;
+use rswebgl::uniform_buffer::{UboLayout, UniformType};
+use rswebgl_ecs::{Entity, World};
+
+use super::light::Light;
+use super::maps::MAX_SHADOWS;
+use super::views::ShadowView;
+use crate::render::{Visible, hidden};
+use crate::transform::WorldMatrix;
+
+/// Lights the block holds; more are left out (reported once).
+pub const MAX_LIGHTS: usize = 8;
+
+// A light's shadow when it has none: no layer.
+const NO_SHADOW: Vec4 = Vec4::new(-1.0, 0.0, 0.0, 0.0);
+
+/// The block's buffer, and what it holds (written only when that changes).
+pub(crate) struct LightsBlock {
+    ubo: UniformBufferId,
+    held: Vec<Vec4>,
+}
+
+impl LightsBlock {
+    pub fn new(ctx: &Context) -> Result<Self, Error> {
+        let light = UboLayout::new()
+            .field("position", UniformType::Vec4)
+            .field("direction", UniformType::Vec4)
+            .field("color", UniformType::Vec4)
+            .field("params", UniformType::Vec4);
+        let ubo = ctx.create_uniform_buffer(
+            &UboLayout::new()
+                .struct_array("u_lights", &light, MAX_LIGHTS as u32)
+                .field("u_light_count", UniformType::Vec4)
+                .array("u_light_shadows", UniformType::Vec4, MAX_LIGHTS as u32)
+                .array("u_shadow_matrices", UniformType::Mat4, MAX_SHADOWS as u32),
+            BufferUsage::DynamicDraw,
+        )?;
+        Ok(Self {
+            ubo,
+            held: Vec::new(),
+        })
+    }
+
+    pub fn ubo(&self) -> UniformBufferId {
+        self.ubo
+    }
+
+    /// The visible lights (the first `MAX_LIGHTS`), each with its shadow
+    /// map's layer from `layers` (into `views`), and the maps' world → map
+    /// matrices.
+    pub fn write(
+        &mut self,
+        world: &World,
+        ctx: &Context,
+        layers: &HashMap<Entity, usize>,
+        views: &[ShadowView],
+    ) {
+        let mut lights: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS * 4);
+        let mut shadows: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS);
+        if let (Some(storage), Some(worlds)) =
+            (world.storage::<Light>(), world.storage::<WorldMatrix>())
+        {
+            let any_hidden = world
+                .storage::<Visible>()
+                .is_some_and(|v| v.data().iter().any(|v| !v.0));
+            for (e, light) in storage.iter() {
+                let Some(m) = worlds.get(e) else {
+                    continue;
+                };
+                if any_hidden && hidden(world, e) {
+                    continue;
+                }
+                if shadows.len() == MAX_LIGHTS {
+                    console::warn_once(&format!(
+                        "[rswebgl-scene] more than {MAX_LIGHTS} lights; the rest are ignored"
+                    ));
+                    break;
+                }
+                lights.extend(light.packed(&m.0));
+                // x its shadow map's layer (−1: none), y the normal bias, z 1
+                // for a perspective (spot) one.
+                shadows.push(match layers.get(&e) {
+                    Some(&i) => {
+                        let v = &views[i];
+                        let persp = if v.perspective { 1.0 } else { 0.0 };
+                        Vec4::new(i as f32, v.normal_bias, persp, 0.0)
+                    }
+                    None => NO_SHADOW,
+                });
+            }
+        }
+        let count = shadows.len();
+        shadows.resize(MAX_LIGHTS, NO_SHADOW);
+        let mut data = lights;
+        data.push(Vec4::new(count as f32, 0.0, 0.0, 0.0));
+        data.extend(shadows);
+        for i in 0..MAX_SHADOWS {
+            let m = views.get(i).map_or(Mat4::IDENTITY, |v| v.to_map);
+            data.extend([m.x_axis, m.y_axis, m.z_axis, m.w_axis]);
+        }
+        if data == self.held {
+            return;
+        }
+        let ubo = self.ubo;
+        const MEMBERS: [&str; 4] = ["position", "direction", "color", "params"];
+        for (i, light) in data[..count * 4].chunks(4).enumerate() {
+            for (member, v) in MEMBERS.iter().zip(light) {
+                let path = format!("u_lights[{i}].{member}");
+                ctx.ubo_set_vec4(ubo, &path, v.x, v.y, v.z, v.w);
+            }
+        }
+        let c = data[count * 4];
+        ctx.ubo_set_vec4(ubo, "u_light_count", c.x, c.y, c.z, c.w);
+        let shadows_at = count * 4 + 1;
+        for i in 0..MAX_LIGHTS {
+            let v = data[shadows_at + i];
+            ctx.ubo_set_vec4(ubo, &format!("u_light_shadows[{i}]"), v.x, v.y, v.z, v.w);
+        }
+        for i in 0..MAX_SHADOWS {
+            let at = shadows_at + MAX_LIGHTS + i * 4;
+            let cols: Vec<f32> = data[at..at + 4].iter().flat_map(|c| c.to_array()).collect();
+            ctx.ubo_set_mat(ubo, &format!("u_shadow_matrices[{i}]"), &cols);
+        }
+        self.held = data;
+    }
+
+    /// Frees the buffer (nothing to free after a context loss).
+    pub fn destroy(self, ctx: &Context, lost: bool) {
+        if !lost {
+            ctx.destroy_uniform_buffer(self.ubo);
+        }
+    }
+}

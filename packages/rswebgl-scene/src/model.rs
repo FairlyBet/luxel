@@ -12,7 +12,7 @@ use rswebgl_gltf::{DrawItem, Model, NodeCamera, NodeLight, NodeLightKind};
 use crate::animation::{ModelAnimations, MorphWeights};
 use crate::camera::Camera;
 use crate::culling::Bounds;
-use crate::light::Light;
+use crate::lighting::Light;
 use crate::render::MeshRenderer;
 use crate::transform::{Parent, Transform};
 

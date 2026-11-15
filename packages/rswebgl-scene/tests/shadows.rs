@@ -162,5 +162,13 @@ async fn a_shadow_falls_where_the_light_is_blocked() {
             "reverse-Z: {shadowed} vs {lit}"
         );
     }
+
+    // 16-bit maps: the same shadow in half the memory.
+    let full = scene.shadow_memory();
+    scene.set_shadow_depth_bits(16).unwrap();
+    let (shadowed, lit) = sides(&gl, &mut scene, camera).await;
+    assert!(lit > 60 && shadowed < lit / 4, "16-bit: {shadowed} vs {lit}");
+    assert_eq!(scene.shadow_memory(), full / 2.0, "16-bit: half the memory");
+    assert!(scene.set_shadow_depth_bits(32).is_err());
     scene.destroy();
 }

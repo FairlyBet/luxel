@@ -438,7 +438,7 @@ impl Scene {
     /// `KHR_lights_punctual` lights, which light the scene once it is added.
     /// Turn one off with `setVisible(e, false)` or `removeLight`.
     pub fn lights(&self, root: Entity) -> Vec<u32> {
-        self.entities_with::<crate::light::Light>(root)
+        self.entities_with::<crate::lighting::Light>(root)
     }
 
     fn entities_with<C: 'static>(&self, root: Entity) -> Vec<u32> {

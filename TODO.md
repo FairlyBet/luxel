@@ -27,7 +27,9 @@ scene target stays RGBA16F: its alpha carries coverage (premultiplied
 blending, the display's divide, TAA, the glass copy).
 
 1. **More shadows** (next): directional and spot shadow maps are in
-   (`castShadow`, `shadows.rs` / `shadows.glsl`: a depth layer per light,
+   (`castShadow`, the `lighting` module — `LightingSystem` owns lights and
+   shadows: settings, views, maps, casters, the `Lights` block — and
+   `shadows.glsl`; `setShadowDepthBits(16)` halves their memory: a depth layer per light,
    hardware PCF filtered 3×3 as Filament's PCF_Low, normal and polygon-offset
    biases, the light's camera fitted to the casters). Left: cascades for
    large scenes (the fit is to all casters, so a big scene gets coarse

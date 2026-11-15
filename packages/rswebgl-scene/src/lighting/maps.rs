@@ -1,22 +1,18 @@
-//! Shadow maps for directional and spot lights: each shadow-casting light
-//! renders the casters' depth from its point of view into a layer of one
-//! depth-texture array, which the lit shaders compare against with hardware
-//! PCF filtered 3×3 (`light_shadow` in lights.glsl, after Filament).
-//!
-//! The shadow camera is fitted to the casters' bounds (all of them, not the
-//! view): stable as the camera moves, sharp for a model, coarse for a large
-//! scene (cascades are for later). Biases as Filament's: the casters'
-//! depth pushed back by a polygon offset (slope and constant), the
-//! receiver moved along its normal by a fraction of a shadow-map texel.
+//! The shadow maps' GPU side: one depth-texture array (a layer per
+//! shadowing light), a framebuffer, frame block and pass per layer. The
+//! lit shaders compare against it with hardware PCF filtered 3×3
+//! (`light_shadow` in shadows.glsl, after Filament). Biases as Filament's:
+//! the casters' depth pushed back by a polygon offset (slope and constant),
+//! the receiver moved along its normal by a fraction of a texel.
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::Mat4;
 use rswebgl::buffer::BufferUsage;
 use rswebgl::context::Context;
 use rswebgl::draw::Viewport;
 use rswebgl::error::Error;
 use rswebgl::framebuffer::ClearMask;
 use rswebgl::ids::{
-    FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, StateId, TextureId, UniformBufferId,
+    FramebufferId, ParamGroupId, ParamLayoutId, StateId, TextureId, UniformBufferId,
 };
 use rswebgl::pass::Pass;
 use rswebgl::render_state::{DepthFunc, RenderState};
@@ -26,157 +22,21 @@ use rswebgl::texture::{
 };
 use rswebgl::uniform_buffer::{UboLayout, UniformType};
 
-use crate::light::{Light, LightKind};
-use crate::render::{FRAME_BLOCK, LIGHTING_BLOCK};
+use super::settings::LightShadow;
+use super::views::ShadowView;
+use crate::render::FRAME_BLOCK;
 
 /// Shadow-casting lights a frame shades with (more are left unshadowed).
 pub const MAX_SHADOWS: usize = 4;
 
-/// Makes the light on the entity (directional or spot) cast shadows.
-/// Biases as Filament's `ShadowOptions` (their defaults): the casters'
-/// depth pushed back by `slope_bias` × its slope + `constant_bias` depth
-/// units (polygon offset), the receiver moved along its normal by
-/// `normal_bias` shadow-map texels. Raise them for shadow acne (stripes on
-/// lit surfaces), lower them for peter-panning (shadows coming loose).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LightShadow {
-    pub normal_bias: f32,
-    pub slope_bias: f32,
-    pub constant_bias: f32,
-}
-
-impl Default for LightShadow {
-    fn default() -> Self {
-        Self {
-            normal_bias: 1.0,
-            slope_bias: 2.0,
-            constant_bias: 0.5,
-        }
-    }
-}
-
-/// Draws the entity's mesh into shadow maps with `program`: a depth-only
-/// shader of the same vertex stage (the PBR's `DEPTH_ONLY` variant for
-/// models; the scene sets it). No component: the mesh casts no shadow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ShadowCaster {
-    pub program: ProgramId,
-}
-
-/// One shadowing light's camera this frame.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ShadowView {
-    /// Clip space of the shadow pass.
-    pub view_proj: Mat4,
-    /// World → the map's [0, 1]³ (texture coordinates, depth as stored).
-    pub to_map: Mat4,
-    /// The receiver's normal offset: world units, or per unit of depth
-    /// along the light (`perspective`).
-    pub normal_bias: f32,
-    pub perspective: bool,
-    pub state: LightShadow,
-}
-
-/// `light`'s shadow camera (its world matrix `world`), fitted around the
-/// casters' world box `bounds`, for a `size`² map. None when nothing can
-/// be in its shadow (no casters in front of a spot, a point light).
-pub(crate) fn shadow_view(
-    light: &Light,
-    world: &Mat4,
-    bounds: (Vec3, Vec3),
-    size: u32,
-    reverse_z: bool,
-    settings: LightShadow,
-) -> Option<ShadowView> {
-    let (min, max) = bounds;
-    if !(min.is_finite() && max.is_finite()) || min.cmpgt(max).any() {
-        return None;
-    }
-    let corners: [Vec3; 8] = std::array::from_fn(|i| {
-        Vec3::new(
-            if i & 1 == 0 { min.x } else { max.x },
-            if i & 2 == 0 { min.y } else { max.y },
-            if i & 4 == 0 { min.z } else { max.z },
-        )
-    });
-    let dir = (-world.z_axis.truncate()).normalize_or(Vec3::NEG_Z);
-    let up = if dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y };
-    let texels = size.max(1) as f32;
-    let (view, proj, normal_bias, perspective) = match light.kind {
-        LightKind::Directional => {
-            let center = (min + max) * 0.5;
-            let radius = ((max - min).length() * 0.5).max(1e-4);
-            let eye = center - dir * radius * 2.0;
-            let view = Mat4::look_at_rh(eye, center, up);
-            let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-            for c in corners {
-                let p = view.transform_point3(c);
-                lo = lo.min(p);
-                hi = hi.max(p);
-            }
-            // A margin so the outermost texels still filter inside.
-            let pad = (hi - lo).max_element() * 0.02 + 1e-4;
-            let (l, r, b, t) = (lo.x - pad, hi.x + pad, lo.y - pad, hi.y + pad);
-            let (near, far) = ((-hi.z - pad).max(1e-4), -lo.z + pad);
-            let proj = if reverse_z {
-                Mat4::orthographic_rh(l, r, b, t, far, near)
-            } else {
-                Mat4::orthographic_rh_gl(l, r, b, t, near, far)
-            };
-            let texel = (r - l).max(t - b) / texels;
-            (view, proj, settings.normal_bias * texel, false)
-        }
-        LightKind::Spot { outer_cone, .. } => {
-            let eye = world.w_axis.truncate();
-            let view = Mat4::look_at_rh(eye, eye + dir, up);
-            let depths = corners.map(|c| -view.transform_point3(c).z);
-            let mut far = depths.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            if far <= 0.0 {
-                return None; // every caster behind the light
-            }
-            if light.range > 0.0 {
-                far = far.min(light.range);
-            }
-            far *= 1.01;
-            let nearest = depths.iter().copied().fold(f32::INFINITY, f32::min);
-            let near = (nearest * 0.99).max(far * 1e-3);
-            let fov = (2.0 * outer_cone + 0.02).min(std::f32::consts::PI - 0.05);
-            let proj = if reverse_z {
-                Mat4::perspective_rh(fov, 1.0, far, near)
-            } else {
-                Mat4::perspective_rh_gl(fov, 1.0, near, far)
-            };
-            // A texel's width one unit of depth away.
-            let texel = 2.0 * (fov * 0.5).tan() / texels;
-            (view, proj, settings.normal_bias * texel, true)
-        }
-        LightKind::Point => return None,
-    };
-    let view_proj = proj * view;
-    // Clip → texture coordinates and stored depth: x, y from [−1, 1];
-    // z from [−1, 1] too, or as it is under reverse-Z (zero-to-one).
-    let z = if reverse_z { (1.0, 0.0) } else { (0.5, 0.5) };
-    let window = Mat4::from_cols(
-        Vec4::new(0.5, 0.0, 0.0, 0.0),
-        Vec4::new(0.0, 0.5, 0.0, 0.0),
-        Vec4::new(0.0, 0.0, z.0, 0.0),
-        Vec4::new(0.5, 0.5, z.1, 1.0),
-    );
-    Some(ShadowView {
-        view_proj,
-        to_map: window * view_proj,
-        normal_bias,
-        perspective,
-        state: settings,
-    })
-}
-
 /// The GPU side: the depth array (one layer per shadowing light), a
 /// framebuffer, frame block and pass per layer.
 pub(crate) struct ShadowMaps {
-    /// Side of each layer (1 until a light needs them), and how many.
+    /// Side of each layer (1 until a light needs them), how many, and
+    /// whether their depth is 16-bit (else 24).
     size: u32,
     layers: usize,
+    depth16: bool,
     texture: TextureId,
     fbs: Vec<FramebufferId>,
     ubos: Vec<UniformBufferId>,
@@ -189,12 +49,12 @@ pub(crate) struct ShadowMaps {
 }
 
 impl ShadowMaps {
-    /// Empty maps (a 1×1 layer) and `frame_layout` groups that share
-    /// the lighting block.
+    /// Empty maps (a 1×1 layer) and `frame_layout` groups: a frame block
+    /// of their own, `shared` blocks (name, buffer) as the scene's.
     pub fn new(
         ctx: &Context,
         frame_layout: ParamLayoutId,
-        lighting_ubo: UniformBufferId,
+        shared: &[(&str, UniformBufferId)],
     ) -> Result<Self, Error> {
         let mut undo = rswebgl::undo::Undo::new(ctx);
         let mut ubos = Vec::new();
@@ -212,13 +72,16 @@ impl ShadowMaps {
             let group = ctx.create_param_group(frame_layout)?;
             undo.push(move |c| c.destroy_param_group(group));
             ctx.param_set_block_by_name(group, FRAME_BLOCK, ubo);
-            ctx.param_set_block_by_name(group, LIGHTING_BLOCK, lighting_ubo);
+            for &(name, block) in shared {
+                ctx.param_set_block_by_name(group, name, block);
+            }
             ubos.push(ubo);
             groups.push(group);
         }
         let mut maps = Self {
             size: 0,
             layers: 0,
+            depth16: false,
             texture: TextureId::NULL,
             fbs: Vec::new(),
             ubos,
@@ -228,7 +91,7 @@ impl ShadowMaps {
             reverse_z: false,
         };
         // Until a light needs them: one 1×1 layer for the lit shaders to bind.
-        maps.resize(ctx, 1, 1)?;
+        maps.resize(ctx, 1, 1, false)?;
         undo.keep();
         Ok(maps)
     }
@@ -246,18 +109,33 @@ impl ShadowMaps {
         self.layers
     }
 
+    pub fn depth16(&self) -> bool {
+        self.depth16
+    }
+
     /// The frame group of layer `i`'s pass.
     pub fn group(&self, i: usize) -> ParamGroupId {
         self.groups[i]
     }
 
-    /// `layers` layers `size`² (a new texture: rebind it). Errors leave the
-    /// old.
-    pub fn resize(&mut self, ctx: &Context, size: u32, layers: usize) -> Result<(), Error> {
+    /// `layers` layers `size`², 16- or 24-bit (a new texture: rebind it).
+    /// Errors leave the old.
+    pub fn resize(
+        &mut self,
+        ctx: &Context,
+        size: u32,
+        layers: usize,
+        depth16: bool,
+    ) -> Result<(), Error> {
         let layers = layers.clamp(1, MAX_SHADOWS);
-        if size == self.size && layers == self.layers {
+        if size == self.size && layers == self.layers && depth16 == self.depth16 {
             return Ok(());
         }
+        let format = if depth16 {
+            TextureFormat::depth16()
+        } else {
+            TextureFormat::depth24()
+        };
         let side = size as i32;
         // Linear: the comparison is filtered over 2×2 texels (hardware PCF).
         let texture = ctx.create_texture(
@@ -265,14 +143,7 @@ impl ShadowMaps {
             TextureMinFilter::Linear,
             TextureMagFilter::Linear,
         )?;
-        ctx.texture_storage_3d(
-            texture,
-            1,
-            &TextureFormat::depth24(),
-            side,
-            side,
-            layers as i32,
-        );
+        ctx.texture_storage_3d(texture, 1, &format, side, side, layers as i32);
         ctx.texture_set_wrap_s(texture, TextureWrap::ClampToEdge);
         ctx.texture_set_wrap_t(texture, TextureWrap::ClampToEdge);
         ctx.texture_set_compare_mode(texture, TextureCompareMode::CompareRefToTexture);
@@ -297,6 +168,7 @@ impl ShadowMaps {
         self.texture = texture;
         self.fbs = fbs;
         self.size = size;
+        self.depth16 = depth16;
         self.layers = layers;
         self.reverse_z = ctx.reverse_z();
         // Every layer cleared to the far plane once: a layer no light draws

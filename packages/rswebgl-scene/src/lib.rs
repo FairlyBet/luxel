@@ -39,7 +39,7 @@ mod hdr;
 mod hierarchy;
 mod instances;
 mod js;
-mod light;
+mod lighting;
 mod model;
 mod motion;
 mod output;
@@ -47,7 +47,6 @@ mod pbr;
 mod pick;
 mod render;
 mod shader;
-mod shadows;
 mod transform;
 
 pub use animation::{ModelAnimations, MorphWeights, Playback};
@@ -59,16 +58,16 @@ pub use hierarchy::{
     HierarchyError, TransformSystem, children, descendants, despawn_recursive, set_parent,
 };
 pub use js::Scene;
-pub use light::{Light, LightKind};
+pub use lighting::{
+    LIGHTS_BLOCK, Light, LightKind, LightShadow, MAX_LIGHTS, MAX_SHADOWS, SHADOW_MAP, ShadowCaster,
+};
 pub use model::{Morph, Name, Primitive, Skin, find_by_name, spawn_model};
 pub use output::{HdrOutput, ToneMapping};
 pub use pbr::{PbrKey, PbrShaders, ShadingModel};
 pub use pick::{Hit, Ray, pick_bounds, ray_aabb};
 pub use render::{
-    FRAME_BLOCK, FRAME_SLOT, LIGHTING_BLOCK, MATERIAL_SLOT, MAX_LIGHTS, MODEL_UNIFORM,
-    MeshRenderer, NORMAL_MATRIX_UNIFORM, OBJECT_SLOT, Reloading, RenderStats, SceneRenderer,
-    Visible,
+    FRAME_BLOCK, FRAME_SLOT, LIGHTING_BLOCK, MATERIAL_SLOT, MODEL_UNIFORM, MeshRenderer,
+    NORMAL_MATRIX_UNIFORM, OBJECT_SLOT, Reloading, RenderStats, SceneRenderer, Visible,
 };
 pub use shader::{CHUNKS, FRAG_PRELUDE, VERT_PRELUDE, chunk, create_scene_program, shader_sources};
-pub use shadows::{LightShadow, MAX_SHADOWS, ShadowCaster};
 pub use transform::{Parent, Transform, WorldMatrix};

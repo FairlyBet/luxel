@@ -110,7 +110,7 @@ vec3 shade_gltf(Surface s) {
     color *= s.ao;
 
     // Punctual lights.
-    int count = int(u_lighting.x);
+    int count = int(u_light_count.x);
     for (int i = 0; i < MAX_LIGHTS; i++) {
         if (i >= count) break;
         Light light = u_lights[i];
