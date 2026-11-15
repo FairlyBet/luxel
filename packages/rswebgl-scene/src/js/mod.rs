@@ -103,6 +103,9 @@ pub struct Scene {
     profiler: Option<rswebgl::profiler::GpuProfiler>,
     // Models reloaded after a loss, applied at the next frame.
     reloads: Reloads,
+    // False once destroyed: background work finishing later frees what it
+    // made instead of handing it in.
+    alive: std::rc::Rc<std::cell::Cell<bool>>,
     // HDR output: wanted (and supported), its target once made, how it is
     // displayed.
     hdr_wanted: bool,
@@ -200,6 +203,7 @@ impl Scene {
             env_intensity_after_bake: None,
             profiler: None,
             reloads: Reloads::default(),
+            alive: std::rc::Rc::new(std::cell::Cell::new(true)),
             hdr_wanted: crate::output::HdrOutput::supported(ctx),
             hdr: None,
             ambient_occlusion: None,
@@ -1098,6 +1102,7 @@ impl Scene {
     /// the textures `loadTexture` made.
     /// Handles you passed in (`setMesh`) stay yours.
     pub fn destroy(mut self) {
+        self.alive.set(false);
         // The context's shared texture compressor (models' maps, the
         // environment) goes with the scene that compressed on it.
         rswebgl::texture_compressor::TextureCompressor::release_shared(&self.ctx);

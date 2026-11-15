@@ -70,12 +70,21 @@ pub(crate) fn read_floats(a: &gltf::Accessor, buffers: &[Vec<u8>]) -> Option<Vec
     let ty = a.data_type();
     let size = ty.size();
     let count = a.count();
-    let mut out = vec![0.0f32; count * n];
+    // A count the file can't back (or that overflows) is an error, not an
+    // allocation abort.
+    let total = count.checked_mul(n)?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(total).ok()?;
+    out.resize(total, 0.0f32);
     if let Some(view) = a.view() {
         let data = view_bytes(&view, buffers)?;
         let stride = view.stride().unwrap_or(n * size);
         let offset = a.offset();
-        if count > 0 && offset + (count - 1) * stride + n * size > data.len() {
+        let end = (count.max(1) - 1)
+            .checked_mul(stride)
+            .and_then(|v| v.checked_add(offset))
+            .and_then(|v| v.checked_add(n * size));
+        if count > 0 && end.is_none_or(|end| end > data.len()) {
             return None;
         }
         for i in 0..count {

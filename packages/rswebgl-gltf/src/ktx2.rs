@@ -132,6 +132,11 @@ fn upload(
     if ctx.is_lost() {
         return Err("the context was lost".into());
     }
+    // Its model removed (or the context lost and restored) while the
+    // worker transcoded: nothing to upload into.
+    if !ctx.texture_is_valid(out) {
+        return Ok((0, 0));
+    }
     let (width, height) = (number(r, "width")?, number(r, "height")?);
     let tf = number(r, "format")? as u32;
     let levels: js_sys::Array = Reflect::get(r, &"levels".into())?.dyn_into()?;

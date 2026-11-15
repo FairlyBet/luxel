@@ -26,7 +26,7 @@ use rswebgl::console;
 use rswebgl::error::Error;
 use rswebgl::ids::{ProgramId, SamplerId, TextureId};
 use rswebgl_ecs::Entity;
-use rswebgl_gltf::{Model, load_model};
+use rswebgl_gltf::Model;
 use wasm_bindgen::prelude::*;
 
 use super::Scene;
@@ -221,8 +221,16 @@ impl Scene {
                 }
             }
             let (ctx, url, inbox) = (self.ctx.clone(), model.source(), self.reloads.clone());
+            let (options, alive) = (model.load_options(), self.alive.clone());
             wasm_bindgen_futures::spawn_local(async move {
-                let result = load_model(&ctx, &url).await;
+                let result = rswebgl_gltf::load_model_with(&ctx, &url, options).await;
+                if !alive.get() {
+                    // The scene was destroyed meanwhile.
+                    if let Ok(model) = result {
+                        model.destroy(&ctx);
+                    }
+                    return;
+                }
                 inbox.borrow_mut().push((root, result));
             });
         }

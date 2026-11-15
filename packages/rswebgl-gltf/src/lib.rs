@@ -347,6 +347,8 @@ pub struct Model {
     pub(crate) generation: u32,
     // KHR_materials_variants: the variants' names, in index order.
     pub(crate) variants: Vec<String>,
+    // The settings it was built with.
+    pub(crate) options: LoadOptions,
 }
 
 #[wasm_bindgen]
@@ -577,6 +579,64 @@ pub fn load_model_js(ctx: &Context, url: String) -> js_sys::Promise {
 /// resolves; textures are created empty and fill in asynchronously as their
 /// images decode (sampling one before it arrives shows black, then it pops in).
 pub async fn load_model(ctx: &Context, url: &str) -> Result<Model, Error> {
+    load_model_with(ctx, url, LoadOptions::current()).await
+}
+
+/// The loader's settings a model is built with: taken when its load
+/// starts (a toggle flipped while it downloads doesn't change it), and kept
+/// with the model so a reload after a context loss builds it the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadOptions {
+    /// `setVertexCompression`.
+    pub vertex_compression: bool,
+    /// `setTextureCompression`.
+    pub texture_compression: bool,
+}
+
+impl LoadOptions {
+    /// The settings now.
+    pub fn current() -> Self {
+        Self {
+            vertex_compression: vertex_format::vertex_compression(),
+            texture_compression: compress::texture_compression(),
+        }
+    }
+}
+
+impl Model {
+    /// The settings it was built with (a reload builds it the same).
+    pub fn load_options(&self) -> LoadOptions {
+        self.options
+    }
+}
+
+// The settings in force while a model builds (synchronously), put back
+// after.
+struct WithOptions(LoadOptions);
+
+impl WithOptions {
+    fn set(o: LoadOptions) -> Self {
+        let before = LoadOptions::current();
+        vertex_format::set_vertex_compression(o.vertex_compression);
+        compress::set_texture_compression(o.texture_compression);
+        Self(before)
+    }
+}
+
+impl Drop for WithOptions {
+    fn drop(&mut self) {
+        vertex_format::set_vertex_compression(self.0.vertex_compression);
+        compress::set_texture_compression(self.0.texture_compression);
+    }
+}
+
+/// `load_model` with the given settings (a reload: the model's own,
+/// `Model::load_options`).
+pub async fn load_model_with(
+    ctx: &Context,
+    url: &str,
+    options: LoadOptions,
+) -> Result<Model, Error> {
     // The file itself goes as soon as it's parsed: a GLB's binary chunk is
     // copied out, and holding both would double the peak memory.
     let (mut json, blob) = {
@@ -627,8 +687,10 @@ pub async fn load_model(ctx: &Context, url: &str) -> Result<Model, Error> {
     if ctx.is_lost() {
         return Err("WebGL context lost while the model loaded".into());
     }
-    // Everything below is created synchronously, in this generation.
+    // Everything below is created synchronously, in this generation, with
+    // the settings the load started with.
     let generation = ctx.generation();
+    let _options = WithOptions::set(options);
     let _build = tracing::info_span!("gltf.build").entered();
     let set = pack::build_texture_set(ctx, &document, &buffers, &base)?;
     let mut materials: Vec<Material> = document
@@ -723,6 +785,7 @@ pub async fn load_model(ctx: &Context, url: &str) -> Result<Model, Error> {
         source: url.to_string(),
         generation,
         variants,
+        options,
     })
 }
 

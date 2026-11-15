@@ -78,6 +78,9 @@ self.onmessage = (e) => {
     } catch (err) {
       self.postMessage({ id: m.id, error: String(err && err.message || err) });
     }
+  }, (err) => {
+    // The transcoder never started: every job says so.
+    self.postMessage({ id: m.id, error: 'transcoder failed to start: ' + String(err && err.message || err) });
   });
 };
 `;
@@ -140,6 +143,8 @@ self.onmessage = (e) => {
     } finally {
       draco.destroy(decoder);
     }
+  }, (err) => {
+    self.postMessage({ id: m.id, error: 'decoder failed to start: ' + String(err && err.message || err) });
   });
 };
 `;
@@ -151,35 +156,59 @@ class Pool {
     this.url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
     this.wasm = wasm;
     this.limit = limit;
+    // { worker, load } each; a worker that failed is dropped from here.
     this.workers = [];
-    this.load = [];
+    // id → { resolve, reject, slot }
     this.jobs = new Map();
     this.nextId = 0;
   }
   run(message, transfer) {
-    let i = this.load.indexOf(Math.min(...this.load));
-    if (this.workers.length < this.limit && (i < 0 || this.load[i] > 0)) {
-      const w = new Worker(this.url);
-      w.postMessage({ type: 'init', wasm: this.wasm.slice(0) });
-      const index = this.workers.length;
-      w.onmessage = (e) => {
-        const job = this.jobs.get(e.data.id);
-        this.jobs.delete(e.data.id);
-        this.load[index]--;
-        if (e.data.error !== undefined) job.reject(new Error(e.data.error));
-        else job.resolve(e.data.data);
-      };
-      w.onerror = (e) => console.error('[rswebgl-gltf] decoder worker:', e.message);
-      this.workers.push(w);
-      this.load.push(0);
-      i = index;
-    }
+    let slot = null;
+    for (const s of this.workers) if (!slot || s.load < slot.load) slot = s;
+    if (this.workers.length < this.limit && (!slot || slot.load > 0)) slot = this.spawn();
     const id = this.nextId++;
-    this.load[i]++;
+    slot.load++;
     return new Promise((resolve, reject) => {
-      this.jobs.set(id, { resolve, reject });
-      this.workers[i].postMessage({ ...message, id }, transfer);
+      this.jobs.set(id, { resolve, reject, slot });
+      slot.worker.postMessage({ ...message, id }, transfer);
     });
+  }
+  spawn() {
+    const worker = new Worker(this.url);
+    const slot = { worker, load: 0 };
+    worker.postMessage({ type: 'init', wasm: this.wasm.slice(0) });
+    worker.onmessage = (e) => {
+      const job = this.jobs.get(e.data.id);
+      if (!job) return;
+      this.jobs.delete(e.data.id);
+      slot.load--;
+      if (e.data.error !== undefined) job.reject(new Error(e.data.error));
+      else job.resolve(e.data.data);
+    };
+    // Its script or wasm broke: its jobs fail (none hangs) and it goes;
+    // the next job starts a new one.
+    worker.onerror = (e) => {
+      console.error('[rswebgl-gltf] decoder worker:', e.message);
+      e.preventDefault?.();
+      this.fail(slot, new Error('decoder worker failed: ' + e.message));
+    };
+    this.workers.push(slot);
+    return slot;
+  }
+  fail(slot, err) {
+    for (const [id, job] of this.jobs) {
+      if (job.slot === slot) {
+        this.jobs.delete(id);
+        job.reject(err);
+      }
+    }
+    slot.worker.terminate();
+    this.workers = this.workers.filter((s) => s !== slot);
+  }
+  // Ends the workers (their jobs fail) and frees the script.
+  close() {
+    for (const slot of [...this.workers]) this.fail(slot, new Error('decoder pool closed'));
+    URL.revokeObjectURL(this.url);
   }
 }
 
@@ -197,7 +226,11 @@ function limit() {
 // Where the decoder's two files are (a directory URL, as three.js'
 // setTranscoderPath / setDecoderPath).
 export function setDecoderPath(kind, path) {
-  const base = path.endsWith('/') ? path : path + '/';
+  const dir = path.endsWith('/') ? path : path + '/';
+  // Relative paths ("./draco/") resolve against the page, as three.js'.
+  const base = new URL(dir, location.href).href;
+  const old = decoders[kind];
+  if (old && old.pool) old.pool.then((p) => p.close(), () => {});
   decoders[kind] = { base, pool: null };
 }
 
@@ -212,8 +245,8 @@ function pool(kind) {
     const k = KINDS[kind];
     const text = (r) => { if (!r.ok) throw new Error(r.url + ': ' + r.status); return r; };
     d.pool = Promise.all([
-      fetch(new URL(k.js, d.base, location.href)).then(text).then((r) => r.text()),
-      fetch(new URL(k.wasm, d.base, location.href)).then(text).then((r) => r.arrayBuffer()),
+      fetch(new URL(k.js, d.base)).then(text).then((r) => r.text()),
+      fetch(new URL(k.wasm, d.base)).then(text).then((r) => r.arrayBuffer()),
     ]).then(([js, wasm]) => new Pool(js + '\n' + k.body, wasm, limit()));
     d.pool.catch(() => { d.pool = null; });
   }

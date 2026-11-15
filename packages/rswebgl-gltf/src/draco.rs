@@ -152,6 +152,14 @@ pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<bool
             // pad as three.js' decodeAttribute does.
             let src = n * component_size(ct);
             let stride = src.div_ceil(4) * 4;
+            // The decoder must have produced what the accessor declares.
+            if data.len() != count * src {
+                return Err(format!(
+                    "Draco: an attribute decoded to {} bytes, its accessor wants {}",
+                    data.len(),
+                    count * src
+                ));
+            }
             let bytes = if src == stride || src == 0 {
                 data
             } else {

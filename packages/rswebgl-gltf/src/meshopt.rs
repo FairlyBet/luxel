@@ -37,10 +37,13 @@ pub fn decode(
     mode: Mode,
     filter: Filter,
 ) -> Result<(), String> {
-    if out.len() < count * stride {
+    let total = count
+        .checked_mul(stride)
+        .ok_or("meshopt: count × stride overflows")?;
+    if out.len() < total {
         return Err("meshopt: the target bufferView is too small".into());
     }
-    let out = &mut out[..count * stride];
+    let out = &mut out[..total];
     match mode {
         Mode::Attributes => decode_vertex_buffer(out, count, stride, source)?,
         Mode::Triangles => decode_index_buffer(out, count, stride, source)?,

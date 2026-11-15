@@ -959,7 +959,8 @@ pub fn default_material() -> Material {
         diffuse_roughness: 0.0,
         coat_ior: 1.5,
         coat_color: [1.0; 3],
-        coat_darkening: 1.0,
+        // As `translate`: glTF's clearcoat leaves the base as it is.
+        coat_darkening: 0.0,
         coat_anisotropy: 0.0,
         subsurface_weight: 0.0,
         subsurface_color: [0.8; 3],

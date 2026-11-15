@@ -172,6 +172,12 @@ impl GeometryCache {
             console::warn("[rswebgl-gltf] primitive has no POSITION; skipped");
             return None;
         };
+        // Types the spec forbids would trap the gltf crate's readers (its
+        // unreachable!): skipped with a reason instead.
+        if let Err(why) = spec_types(primitive) {
+            console::warn(&format!("[rswebgl-gltf] primitive skipped: {why}"));
+            return None;
+        }
         let vertex_count = pos_accessor.count() as i32;
         // Normalized integer positions (KHR_mesh_quantization) have their min
         // and max in integer units: computed from the data then.
@@ -281,6 +287,10 @@ impl GeometryCache {
                 }
                 None => {
                     ctx.destroy_vertex_array(vao);
+                    // Made already, and not cached with the primitive.
+                    if let Some((m, _)) = &morph {
+                        ctx.destroy_texture(m.texture);
+                    }
                     return None;
                 }
             },
@@ -735,6 +745,39 @@ fn bytes_of(v: &[f32]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr().cast(), std::mem::size_of_val(v)) }
 }
 
+// The component types and shapes glTF allows for what the gltf crate's
+// readers read (indices, colors, joints, weights): anything else is a
+// malformed file its readers don't handle (they panic).
+fn spec_types(primitive: &gltf::Primitive) -> Result<(), String> {
+    use gltf::Semantic;
+    use gltf::accessor::{DataType as T, Dimensions as D};
+    let check = |what: &str, a: &gltf::Accessor, dims: &[D], types: &[T]| {
+        if dims.contains(&a.dimensions()) && types.contains(&a.data_type()) {
+            Ok(())
+        } else {
+            Err(format!(
+                "{what} as {:?} {:?} isn't allowed by glTF",
+                a.dimensions(),
+                a.data_type()
+            ))
+        }
+    };
+    if let Some(a) = primitive.indices() {
+        check("indices", &a, &[D::Scalar], &[T::U8, T::U16, T::U32])?;
+    }
+    for (semantic, a) in primitive.attributes() {
+        match semantic {
+            Semantic::Colors(_) => {
+                check("COLOR", &a, &[D::Vec3, D::Vec4], &[T::F32, T::U8, T::U16])?
+            }
+            Semantic::Joints(_) => check("JOINTS", &a, &[D::Vec4], &[T::U8, T::U16])?,
+            Semantic::Weights(_) => check("WEIGHTS", &a, &[D::Vec4], &[T::F32, T::U8, T::U16])?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,6 +792,44 @@ mod tests {
         assert_eq!(draw_mode(Mode::Triangles), DrawMode::Triangles);
         assert_eq!(draw_mode(Mode::TriangleStrip), DrawMode::TriangleStrip);
         assert_eq!(draw_mode(Mode::TriangleFan), DrawMode::TriangleFan);
+    }
+
+    // Types glTF forbids (float indices, 2-component colors, float joints)
+    // are refused up front: the gltf crate's readers would panic on them.
+    #[test]
+    fn forbidden_types_are_refused() {
+        let doc = |indices: u32, color: &str, joints: u32| {
+            let json = format!(
+                r#"{{"asset":{{"version":"2.0"}},
+                "buffers":[{{"byteLength":64}}],
+                "bufferViews":[{{"buffer":0,"byteLength":64}}],
+                "accessors":[
+                  {{"bufferView":0,"componentType":5126,"count":1,"type":"VEC3","min":[0,0,0],"max":[0,0,0]}},
+                  {{"bufferView":0,"componentType":{indices},"count":3,"type":"SCALAR"}},
+                  {{"bufferView":0,"componentType":5126,"count":1,"type":"{color}"}},
+                  {{"bufferView":0,"componentType":{joints},"count":1,"type":"VEC4"}}],
+                "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"COLOR_0":2,"JOINTS_0":3}},"indices":1}}]}}]}}"#
+            );
+            gltf::Gltf::from_slice_without_validation(json.as_bytes()).unwrap()
+        };
+        let check =
+            |g: &gltf::Gltf| spec_types(&g.meshes().next().unwrap().primitives().next().unwrap());
+        assert!(check(&doc(5123, "VEC4", 5121)).is_ok());
+        assert!(
+            check(&doc(5126, "VEC4", 5121))
+                .unwrap_err()
+                .contains("indices")
+        );
+        assert!(
+            check(&doc(5123, "VEC2", 5121))
+                .unwrap_err()
+                .contains("COLOR")
+        );
+        assert!(
+            check(&doc(5123, "VEC4", 5126))
+                .unwrap_err()
+                .contains("JOINTS")
+        );
     }
 
     #[test]
