@@ -17,6 +17,7 @@ Each ported file says in its header what it took and from where. The originals' 
 | [meshoptimizer](https://github.com/zeux/meshoptimizer) | MIT | the `EXT_meshopt_compression` / `KHR_meshopt_compression` decoders (`rswebgl-gltf/src/meshopt.rs`, from `vertexcodec.cpp`, `indexcodec.cpp`, `vertexfilter.cpp`; its test vectors) |
 | [Betsy](https://github.com/darksylinc/betsy) (Matias N. Goldberg, as in Godot's `modules/betsy`), with [stb_dxt](https://github.com/nothings/stb) (Fabian Giesen, Sean Barrett) | MIT (stb_dxt: MIT / public domain) | GPU texture compression: the BC1 and BC4 encoders in `rswebgl/src/compress/bc.frag` (`bc1.glsl`, `bc4.glsl`), the ETC1 encoder in `compress/etc.frag` (`etc1.glsl`, after rg-etc1 by Rich Geldreich, zlib) and stb_dxt's endpoint tables (`compress/tables.rs`, from `betsy_bc1.h`) |
 | [etcpak](https://github.com/wolfpld/etcpak) (Bartosz Taudul) | BSD-3-Clause | the EAC encoder in `rswebgl/src/compress/etc.frag` (`ProcessRGB.cpp`, `ProcessAlpha_ETC2`) |
+| [astc_encoder](https://github.com/niepp/astc_encoder) (niepp), with [ARM astc-encoder](https://github.com/ARM-software/astc-encoder)'s tables | MIT (astc-encoder: Apache-2.0) | the ASTC 4×4 encoder in `rswebgl/src/compress/astc.frag` (`ASTC_Encode.hlsl`, `ASTC_IntegerSequenceEncoding.hlsl`, `ASTC_Table.hlsl`) |
 
 Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0.
 Changes from the originals: renamed and restructured into this project's

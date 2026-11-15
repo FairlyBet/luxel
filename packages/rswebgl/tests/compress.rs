@@ -363,7 +363,9 @@ async fn etc2_and_eac_blocks_decode_close_to_the_original() {
         assert!(mean <= 4.0, "{name}: off by {mean} on average");
     };
 
-    let rgb = compressor.encode_level(tex, 0x9274, 0).expect("ETC2 RGB");
+    let rgb = compressor
+        .encode_level(tex, 0x9274, CompressKind::Rgb, 0)
+        .expect("ETC2 RGB");
     check(
         "ETC2 RGB",
         &rgb,
@@ -377,7 +379,9 @@ async fn etc2_and_eac_blocks_decode_close_to_the_original() {
         &[0, 1, 2],
         16,
     );
-    let rgba = compressor.encode_level(tex, 0x9278, 0).expect("ETC2 RGBA");
+    let rgba = compressor
+        .encode_level(tex, 0x9278, CompressKind::Rgba, 0)
+        .expect("ETC2 RGBA");
     check(
         "ETC2 RGBA",
         &rgba,
@@ -393,7 +397,9 @@ async fn etc2_and_eac_blocks_decode_close_to_the_original() {
         &[0, 1, 2, 3],
         16,
     );
-    let rg = compressor.encode_level(tex, 0x9272, 0).expect("RG11");
+    let rg = compressor
+        .encode_level(tex, 0x9272, CompressKind::Rg, 0)
+        .expect("RG11");
     check(
         "RG11",
         &rg,
@@ -405,4 +411,173 @@ async fn etc2_and_eac_blocks_decode_close_to_the_original() {
         &[0, 1],
         6,
     );
+}
+
+// --- ASTC 4×4, the subset the encoder writes (one partition, LDR RGB / RGBA
+// direct, 8-bit endpoints, a 4×4 grid of trit-coded weights), decoded per
+// the Khronos Data Format spec's ASTC chapter ---
+
+// Five trits from their 8-bit packing (spec C.2.12, "Decoding trits").
+fn decode_trits(t: u32) -> [u32; 5] {
+    let bit = |v: u32, i: u32| (v >> i) & 1;
+    let (c, t4, t3);
+    if (t >> 2) & 7 == 7 {
+        c = (((t >> 5) & 7) << 2) | (t & 3);
+        t4 = 2;
+        t3 = 2;
+    } else {
+        c = t & 31;
+        if (t >> 5) & 3 == 3 {
+            t4 = 2;
+            t3 = bit(t, 7);
+        } else {
+            t4 = bit(t, 7);
+            t3 = (t >> 5) & 3;
+        }
+    }
+    let (t2, t1, t0);
+    if c & 3 == 3 {
+        t2 = 2;
+        t1 = bit(c, 4);
+        t0 = (bit(c, 3) << 1) | (bit(c, 2) & !bit(c, 3) & 1);
+    } else if (c >> 2) & 3 == 3 {
+        t2 = 2;
+        t1 = 2;
+        t0 = c & 3;
+    } else {
+        t2 = bit(c, 4);
+        t1 = (c >> 2) & 3;
+        t0 = (bit(c, 1) << 1) | (bit(c, 0) & !bit(c, 1) & 1);
+    }
+    [t0, t1, t2, t3, t4]
+}
+
+// A block's 16 texels (RGBA, 0..255), row by row.
+#[allow(clippy::needless_range_loop)]
+fn decode_astc(b: &[u8]) -> Vec<[i32; 4]> {
+    let bits = u128::from_le_bytes(b.try_into().unwrap());
+    let get = |v: u128, at: u32, n: u32| ((v >> at) & ((1u128 << n) - 1)) as u32;
+    let mode = get(bits, 0, 11);
+    // Table C.2.8, the row with bits [1:0] nonzero.
+    assert_ne!(mode & 3, 0, "block mode row");
+    let r = ((mode & 3) << 1) | ((mode >> 4) & 1);
+    let h = (mode >> 9) & 1;
+    let (grid_w, grid_h) = (((mode >> 7) & 3) + 4, ((mode >> 5) & 3) + 2);
+    assert_eq!((grid_w, grid_h), (4, 4), "weight grid");
+    assert_eq!((mode >> 10) & 1, 0, "one plane");
+    assert_eq!(get(bits, 11, 2), 0, "one partition");
+    // Weight ranges (Table C.2.7): H = 0 → 2, 3, 4, 5, 6, 8; H = 1 → 10, 12, …
+    let range = [[0, 0, 2, 3, 4, 5, 6, 8], [0, 0, 10, 12, 16, 20, 24, 32]][h as usize][r as usize];
+    let wbits = match range {
+        12 => 2,
+        6 => 1,
+        _ => panic!("weight range {range}"),
+    };
+    let cem = get(bits, 13, 4);
+    let channels = match cem {
+        8 => 3,
+        12 => 4,
+        _ => panic!("endpoint mode {cem}"),
+    };
+    let mut e = [[0i32; 4]; 2];
+    for c in 0..channels {
+        for k in 0..2 {
+            e[k][c] = get(bits, 17 + (c as u32 * 2 + k as u32) * 8, 8) as i32;
+        }
+    }
+    if channels == 3 {
+        e[0][3] = 255;
+        e[1][3] = 255;
+    }
+    // LDR RGB(A) direct: a second endpoint dimmer than the first means
+    // blue contraction — the encoder never writes that.
+    assert!(
+        e[1][0] + e[1][1] + e[1][2] >= e[0][0] + e[0][1] + e[0][2],
+        "blue contraction"
+    );
+    // Weights: from the top of the block down, bit-reversed.
+    let rev = bits.reverse_bits();
+    let mut weights = Vec::new();
+    let mut pos = 0;
+    while weights.len() < 16 {
+        let mut m = [0u32; 5];
+        let mut t = 0u32;
+        let mut tpos = 0;
+        for (i, tb) in [2u32, 2, 1, 2, 1].iter().enumerate() {
+            m[i] = get(rev, pos, wbits);
+            pos += wbits;
+            t |= get(rev, pos, *tb) << tpos;
+            pos += tb;
+            tpos += tb;
+        }
+        let trits = decode_trits(t);
+        for i in 0..5 {
+            weights.push((trits[i] << wbits) | m[i]);
+        }
+    }
+    weights.truncate(16);
+    // Unquantize (C.2.17): the trit ranges' 0..64 values, in ASTC's order
+    // (the trit is the high digit, the bits the low ones, bit-scrambled).
+    let unq = |q: u32| -> i32 {
+        let (scr12, scr6) = ([0, 4, 8, 2, 6, 10, 11, 7, 3, 9, 5, 1], [0, 2, 4, 5, 3, 1]);
+        let (pos, n) = match range {
+            12 => (scr12.iter().position(|&v| v == q).unwrap() as i32, 11),
+            _ => (scr6.iter().position(|&v| v == q).unwrap() as i32, 5),
+        };
+        (pos * 64 + n / 2) / n
+    };
+    (0..16)
+        .map(|i| {
+            let w = unq(weights[i]);
+            let mut t = [0; 4];
+            for c in 0..4 {
+                // 16-bit endpoints (×257), interpolated, back to 8 bits.
+                let (a, b) = (e[0][c] * 257, e[1][c] * 257);
+                t[c] = (((a * (64 - w) + b * w + 32) >> 6) + 128) / 257;
+            }
+            t
+        })
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn astc_blocks_decode_close_to_the_original() {
+    let e = env();
+    let compressor = TextureCompressor::new(&e.ctx).expect("compressor");
+    let tex = texture(&e.ctx, false);
+    let src = image();
+    let blocks = (SIZE / 4) as usize;
+    for (kind, channels, tolerance) in [
+        (CompressKind::Rgb, &[0usize, 1, 2][..], 8),
+        (CompressKind::Rgba, &[0, 1, 2, 3][..], 16),
+        (CompressKind::Rg, &[0, 1][..], 8),
+    ] {
+        let bytes = compressor.encode_level(tex, 0x93B0, kind, 0).expect("ASTC");
+        assert_eq!(bytes.len(), blocks * blocks * 16);
+        let (mut worst, mut sum, mut n) = (0, 0, 0);
+        for by in 0..blocks {
+            for bx in 0..blocks {
+                let texels = decode_astc(&bytes[(by * blocks + bx) * 16..][..16]);
+                for (i, t) in texels.iter().enumerate() {
+                    let (x, y) = (bx * 4 + i % 4, by * 4 + i / 4);
+                    let s = &src[(y * SIZE as usize + x) * 4..][..4];
+                    for &c in channels {
+                        let d = (t[c] - s[c] as i32).abs();
+                        worst = worst.max(d);
+                        sum += d;
+                        n += 1;
+                    }
+                    if kind == CompressKind::Rg {
+                        assert_eq!(t[2], 0, "a two-channel map reads blue 0");
+                    }
+                }
+            }
+        }
+        let mean = sum as f32 / n as f32;
+        web_sys::console::log_1(&format!("ASTC {kind:?}: worst {worst}, mean {mean:.2}").into());
+        assert!(
+            worst <= tolerance,
+            "ASTC {kind:?}: off by {worst} (≤ {tolerance})"
+        );
+    }
 }

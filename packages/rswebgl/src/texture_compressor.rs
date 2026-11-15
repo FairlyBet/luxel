@@ -1,8 +1,9 @@
 //! Compress a texture on the GPU, after it was uploaded uncompressed. On
 //! desktops BC (S3TC / RGTC): BC1 for opaque color, BC3 with alpha, BC5 for
 //! two channels (normal maps). Where those are missing — phones — ETC2 /
-//! EAC: ETC2 RGB, ETC2 RGBA, RG11. Encoded by fragment shaders
-//! (`compress/bc.frag`, `compress/etc.frag`).
+//! EAC: ETC2 RGB, ETC2 RGBA, RG11. ASTC 4×4 where a device has neither
+//! (see `preference`). Encoded by fragment shaders
+//! (`compress/bc.frag`, `compress/etc.frag`, `compress/astc.frag`).
 //!
 //! Each mip level is encoded into an RGBA32UI target whose texels are the
 //! level's blocks in order, read into a pixel-pack buffer, and uploaded from
@@ -42,6 +43,7 @@ use crate::uniform_buffer::UniformType;
 
 const BC_FRAG: &str = include_str!("compress/bc.frag");
 const ETC_FRAG: &str = include_str!("compress/etc.frag");
+const ASTC_FRAG: &str = include_str!("compress/astc.frag");
 const VERT: &str = "#version 300 es
 void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;
@@ -76,38 +78,51 @@ struct BlockFormat {
     block_bytes: i32,
     kind: CompressKind,
     srgb: bool,
-    etc: bool,
+    family: Family,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Family {
+    Bc,
+    Etc,
+    Astc,
 }
 
 // Every format the encoders write (BC first: preferred where both exist).
-const FORMATS: [BlockFormat; 10] = {
+const FORMATS: [BlockFormat; 15] = {
     const fn f(
         internal: u32,
         bytes: i32,
         kind: CompressKind,
         srgb: bool,
-        etc: bool,
+        family: Family,
     ) -> BlockFormat {
         BlockFormat {
             internal,
             block_bytes: bytes,
             kind,
             srgb,
-            etc,
+            family,
         }
     }
     use CompressKind::*;
+    use Family::*;
     [
-        f(0x83F0, 8, Rgb, false, false),   // RGB_S3TC_DXT1
-        f(0x8C4C, 8, Rgb, true, false),    // SRGB_S3TC_DXT1
-        f(0x83F3, 16, Rgba, false, false), // RGBA_S3TC_DXT5
-        f(0x8C4F, 16, Rgba, true, false),  // SRGB_ALPHA_S3TC_DXT5
-        f(0x8DBD, 16, Rg, false, false),   // RG_RGTC2
-        f(0x9274, 8, Rgb, false, true),    // RGB8_ETC2
-        f(0x9275, 8, Rgb, true, true),     // SRGB8_ETC2
-        f(0x9278, 16, Rgba, false, true),  // RGBA8_ETC2_EAC
-        f(0x9279, 16, Rgba, true, true),   // SRGB8_ALPHA8_ETC2_EAC
-        f(0x9272, 16, Rg, false, true),    // RG11_EAC
+        f(0x83F0, 8, Rgb, false, Bc),     // RGB_S3TC_DXT1
+        f(0x8C4C, 8, Rgb, true, Bc),      // SRGB_S3TC_DXT1
+        f(0x83F3, 16, Rgba, false, Bc),   // RGBA_S3TC_DXT5
+        f(0x8C4F, 16, Rgba, true, Bc),    // SRGB_ALPHA_S3TC_DXT5
+        f(0x8DBD, 16, Rg, false, Bc),     // RG_RGTC2
+        f(0x9274, 8, Rgb, false, Etc),    // RGB8_ETC2
+        f(0x9275, 8, Rgb, true, Etc),     // SRGB8_ETC2
+        f(0x9278, 16, Rgba, false, Etc),  // RGBA8_ETC2_EAC
+        f(0x9279, 16, Rgba, true, Etc),   // SRGB8_ALPHA8_ETC2_EAC
+        f(0x9272, 16, Rg, false, Etc),    // RG11_EAC
+        f(0x93B0, 16, Rgb, false, Astc),  // RGBA_ASTC_4x4
+        f(0x93D0, 16, Rgb, true, Astc),   // SRGB8_ALPHA8_ASTC_4x4
+        f(0x93B0, 16, Rgba, false, Astc), // RGBA_ASTC_4x4
+        f(0x93D0, 16, Rgba, true, Astc),  // SRGB8_ALPHA8_ASTC_4x4
+        f(0x93B0, 16, Rg, false, Astc),   // RGBA_ASTC_4x4
     ]
 };
 
@@ -131,12 +146,13 @@ pub struct TextureCompressor {
     bc_layout: ParamLayoutId,
     etc_layout: ParamLayoutId,
     tables: TextureId,
-    // By the format's GL enum.
-    encoders: RefCell<HashMap<u32, Encoder>>,
+    // By the format's GL enum and kind (ASTC writes all three into one).
+    encoders: RefCell<HashMap<(u32, CompressKind), Encoder>>,
     s3tc: bool,
     s3tc_srgb: bool,
     rgtc: bool,
     etc: bool,
+    astc: bool,
 }
 
 #[wasm_bindgen]
@@ -150,6 +166,7 @@ impl TextureCompressor {
         let s3tc_srgb = ctx.enable_extension_quietly(Extension::WebglCompressedTextureS3tcSrgb);
         let rgtc = ctx.enable_extension_quietly(Extension::ExtTextureCompressionRgtc);
         let etc = ctx.enable_extension_quietly(Extension::WebglCompressedTextureEtc);
+        let astc = ctx.enable_extension_quietly(Extension::WebglCompressedTextureAstc);
         let layout = |tables: bool| {
             let mut b = ParamLayoutBuilder::new().texture("u_source");
             if tables {
@@ -192,6 +209,7 @@ impl TextureCompressor {
             s3tc_srgb,
             rgtc,
             etc,
+            astc,
         };
         for kind in [CompressKind::Rgb, CompressKind::Rgba, CompressKind::Rg] {
             for srgb in [false, true] {
@@ -213,13 +231,14 @@ impl TextureCompressor {
     #[wasm_bindgen(js_name = formatName)]
     pub fn format_name(&self, kind: CompressKind) -> Option<String> {
         self.format(kind, false).map(|f| {
-            match (f.etc, f.kind) {
-                (false, CompressKind::Rgb) => "BC1",
-                (false, CompressKind::Rgba) => "BC3",
-                (false, CompressKind::Rg) => "BC5",
-                (true, CompressKind::Rgb) => "ETC2 RGB",
-                (true, CompressKind::Rgba) => "ETC2 RGBA",
-                (true, CompressKind::Rg) => "RG11 EAC",
+            match (f.family, f.kind) {
+                (Family::Bc, CompressKind::Rgb) => "BC1",
+                (Family::Bc, CompressKind::Rgba) => "BC3",
+                (Family::Bc, CompressKind::Rg) => "BC5",
+                (Family::Etc, CompressKind::Rgb) => "ETC2 RGB",
+                (Family::Etc, CompressKind::Rgba) => "ETC2 RGBA",
+                (Family::Etc, CompressKind::Rg) => "RG11 EAC",
+                (Family::Astc, _) => "ASTC 4x4",
             }
             .to_string()
         })
@@ -254,9 +273,9 @@ impl TextureCompressor {
         }
     }
 
-    /// Level `level` of `tex` encoded as `internal` (any format the
-    /// encoders write, whether or not the device samples it), its blocks'
-    /// bytes. For tests: a format the device lacks can still be decoded on
+    /// Level `level` of `tex` encoded as `internal` for `kind` (any format
+    /// the encoders write, whether or not the device samples it), its
+    /// blocks' bytes. For tests: a format the device lacks can still be decoded on
     /// the CPU.
     #[doc(hidden)]
     #[wasm_bindgen(js_name = encodeLevel)]
@@ -264,11 +283,12 @@ impl TextureCompressor {
         &self,
         tex: TextureId,
         internal: u32,
+        kind: CompressKind,
         level: i32,
     ) -> Result<Vec<u8>, Error> {
         let format = FORMATS
             .iter()
-            .find(|f| f.internal == internal)
+            .find(|f| f.internal == internal && f.kind == kind)
             .copied()
             .ok_or("encodeLevel: not a format the encoders write")?;
         let extent = self
@@ -380,37 +400,62 @@ impl TextureCompressor {
     // The format `kind` compresses to here: BC where the device has it, else
     // ETC2 / EAC.
     fn format(&self, kind: CompressKind, srgb: bool) -> Option<BlockFormat> {
-        FORMATS.iter().copied().find(|f| {
-            f.kind == kind
-                && f.srgb == srgb
-                && match (f.etc, f.kind, f.srgb) {
-                    (true, _, _) => self.etc,
-                    (false, CompressKind::Rg, _) => self.rgtc,
-                    (false, _, false) => self.s3tc,
-                    (false, _, true) => self.s3tc_srgb,
-                }
+        self.preference(kind).into_iter().find_map(|family| {
+            FORMATS
+                .iter()
+                .copied()
+                .find(|f| f.kind == kind && f.srgb == srgb && f.family == family && self.has(f))
         })
+    }
+
+    // Families in the order `kind` takes them. ASTC last: this encoder
+    // (one partition, one weight plane) loses to ETC2 / EAC of the same
+    // size on busy blocks — measured mean error on a block of independent
+    // waves: RG 28.6 vs RG11 5.2, RGBA 34.7 vs 26.5 — and its RGB is twice
+    // ETC2 RGB's size for little gain (29.9 vs 33.4). It is for devices
+    // with neither BC nor ETC.
+    fn preference(&self, _kind: CompressKind) -> [Family; 3] {
+        [Family::Bc, Family::Etc, Family::Astc]
+    }
+
+    // Whether the device samples `f`.
+    fn has(&self, f: &BlockFormat) -> bool {
+        match (f.family, f.kind, f.srgb) {
+            (Family::Etc, _, _) => self.etc,
+            (Family::Astc, _, _) => self.astc,
+            (Family::Bc, CompressKind::Rg, _) => self.rgtc,
+            (Family::Bc, _, false) => self.s3tc,
+            (Family::Bc, _, true) => self.s3tc_srgb,
+        }
     }
 
     // The encoder for `format` (made on first use).
     fn encoder(&self, format: BlockFormat) -> Result<(), Error> {
-        if self.encoders.borrow().contains_key(&format.internal) {
+        if self
+            .encoders
+            .borrow()
+            .contains_key(&(format.internal, format.kind))
+        {
             return Ok(());
         }
-        let (mode, source, layout) = match (format.etc, format.kind) {
-            (false, CompressKind::Rgb) => ("MODE_BC1", BC_FRAG, self.bc_layout),
-            (false, CompressKind::Rgba) => ("MODE_BC3", BC_FRAG, self.bc_layout),
-            (false, CompressKind::Rg) => ("MODE_BC5", BC_FRAG, self.bc_layout),
-            (true, CompressKind::Rgb) => ("MODE_ETC2_RGB", ETC_FRAG, self.etc_layout),
-            (true, CompressKind::Rgba) => ("MODE_ETC2_RGBA", ETC_FRAG, self.etc_layout),
-            (true, CompressKind::Rg) => ("MODE_EAC_RG", ETC_FRAG, self.etc_layout),
+        let (mode, source, layout) = match (format.family, format.kind) {
+            (Family::Bc, CompressKind::Rgb) => ("MODE_BC1", BC_FRAG, self.bc_layout),
+            (Family::Bc, CompressKind::Rgba) => ("MODE_BC3", BC_FRAG, self.bc_layout),
+            (Family::Bc, CompressKind::Rg) => ("MODE_BC5", BC_FRAG, self.bc_layout),
+            (Family::Etc, CompressKind::Rgb) => ("MODE_ETC2_RGB", ETC_FRAG, self.etc_layout),
+            (Family::Etc, CompressKind::Rgba) => ("MODE_ETC2_RGBA", ETC_FRAG, self.etc_layout),
+            (Family::Etc, CompressKind::Rg) => ("MODE_EAC_RG", ETC_FRAG, self.etc_layout),
+            // Same uniforms as ETC's (no tables).
+            (Family::Astc, CompressKind::Rgb) => ("MODE_ASTC_RGB", ASTC_FRAG, self.etc_layout),
+            (Family::Astc, CompressKind::Rgba) => ("MODE_ASTC_RGBA", ASTC_FRAG, self.etc_layout),
+            (Family::Astc, CompressKind::Rg) => ("MODE_ASTC_RG", ASTC_FRAG, self.etc_layout),
         };
         let srgb = if format.srgb { "#define SRGB\n" } else { "" };
         let frag = format!("#version 300 es\n#define {mode}\n{srgb}{source}");
         let program = self.ctx.create_program(VERT, &frag)?;
         let params = self.ctx.create_param_group(layout)?;
         let field = |name: &str| self.ctx.param_field(layout, name);
-        if !format.etc {
+        if format.family == Family::Bc {
             self.ctx
                 .param_set_texture(params, field("u_tables")?, self.tables);
         }
@@ -423,7 +468,9 @@ impl TextureCompressor {
             f_blocks: field("u_blocks")?,
             f_width: field("u_width")?,
         };
-        self.encoders.borrow_mut().insert(format.internal, encoder);
+        self.encoders
+            .borrow_mut()
+            .insert((format.internal, format.kind), encoder);
         Ok(())
     }
 
@@ -469,7 +516,7 @@ impl TextureCompressor {
         let ctx = &self.ctx;
         self.encoder(format)?;
         let encoders = self.encoders.borrow();
-        let encoder = &encoders[&format.internal];
+        let encoder = &encoders[&(format.internal, format.kind)];
         ctx.param_set_texture(encoder.params, encoder.f_source, tex);
         ctx.param_set_i32(encoder.params, encoder.f_level, level);
         ctx.param_set_i32(encoder.params, encoder.f_blocks_x, l.blocks_x);
