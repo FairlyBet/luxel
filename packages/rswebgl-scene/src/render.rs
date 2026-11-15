@@ -25,7 +25,7 @@ use crate::culling::{Bounds, Frustum};
 use crate::environment::{Environment, FULLSCREEN_VERT, brdf_lut_texture};
 use crate::gpu_pick::{GpuPicker, PickView};
 use crate::instances::{Batches, Dest, Instances, ProgramKind};
-use crate::lighting::{LIGHTS_BLOCK, LightingSystem};
+use crate::lighting::{CasterDraw, LIGHTS_BLOCK, LightingSystem};
 use crate::model::{Morph, Skin};
 use crate::motion::MotionVectors;
 use crate::output::ToneMapping;
@@ -259,6 +259,11 @@ pub struct SceneRenderer {
     stats: RenderStats,
     // The punctual lights and their shadow maps.
     lights: LightingSystem,
+    // This frame's batched shadow casters (a draw and its matrices), and
+    // their index by map, program, vertex array and material; kept across
+    // frames for their allocations.
+    shadow_batches: Vec<(CasterDraw, Vec<Mat4>)>,
+    shadow_batch_index: HashMap<(usize, u32, u32, u32), Vec<usize>>,
     // This frame: the entities whose instance (and deformers) is written,
     // where it starts.
     frame_bases: HashMap<Entity, i32>,
@@ -388,6 +393,8 @@ impl SceneRenderer {
             frame_proj: Mat4::IDENTITY,
             stats: RenderStats::default(),
             lights,
+            shadow_batches: Vec::new(),
+            shadow_batch_index: HashMap::new(),
             frame_bases: HashMap::new(),
         };
         renderer.bind_environment(ctx);
@@ -859,7 +866,9 @@ impl SceneRenderer {
         // The batches: their instances after the single ones, a pooled group
         // each for where they start.
         let batches = std::mem::take(&mut self.batches);
+        let mut batch_groups_used = 0;
         for (i, batch) in batches.iter().enumerate() {
+            batch_groups_used = i + 1;
             let base = self.instances.len();
             for m in &batch.matrices {
                 self.instances.push(m);
@@ -888,7 +897,7 @@ impl SceneRenderer {
         self.batches = batches;
         self.batches.clear();
         self.stats.moving = self.motion.as_ref().map_or(0, MotionVectors::count);
-        self.collect_shadows(world, ctx);
+        self.collect_shadows(world, ctx, batch_groups_used);
         _span.record("meshes", self.stats.drawn);
         let _upload = tracing::info_span!("scene.uploadInstances").entered();
         if let Err(err) = self
@@ -938,6 +947,11 @@ impl SceneRenderer {
         self.lights.shadow_views()
     }
 
+    /// Draw calls into this frame's shadow maps.
+    pub fn shadow_draw_calls(&self) -> usize {
+        self.lights.draw_calls()
+    }
+
     /// Shadow maps drawn again this frame (their light or casters changed).
     pub fn shadow_views_drawn(&self) -> usize {
         self.lights.shadow_views_drawn()
@@ -970,26 +984,62 @@ impl SceneRenderer {
         self.lights.shadow_bytes()
     }
 
-    // The shadow casters' objects: the instance the camera's pass wrote,
-    // or written now.
-    fn collect_shadows(&mut self, world: &World, ctx: &Context) {
+    // The shadow casters' objects. Identical meshes of a shader that reads
+    // its instance draw as one per map (as in the camera's pass): their
+    // matrices appended to the instance texture, a pooled batch group each
+    // (after the camera's `batch_groups_used`) for where they start. Any
+    // other caster draws alone, with the instance the camera's pass wrote,
+    // or one written now.
+    fn collect_shadows(&mut self, world: &World, ctx: &Context, batch_groups_used: usize) {
         let draws = self.lights.take_caster_draws();
         let Some(worlds) = world.storage::<WorldMatrix>() else {
             self.lights.push_casters(draws, &[]);
             return;
         };
+        let mut out = Vec::with_capacity(draws.len());
         let mut objects = Vec::with_capacity(draws.len());
+        let mut batches = std::mem::take(&mut self.shadow_batches);
+        let mut index = std::mem::take(&mut self.shadow_batch_index);
+        batches.iter_mut().for_each(|(_, m)| m.clear());
+        index.clear();
+        let mut used = 0;
         for d in &draws {
             let (e, row) = (d.entity, d.row);
             let m = worlds.data()[row as usize].0;
+            let command = &d.mesh.command;
+            let single = command.instance_count == 1 && command.is_instanceable();
+            if single && self.program_kind(ctx, d.program) == ProgramKind::Batched {
+                let key = (
+                    d.view,
+                    d.program.to_raw(),
+                    d.mesh.vao.to_raw(),
+                    d.mesh.material.to_raw(),
+                );
+                let slots = index.entry(key).or_default();
+                match slots
+                    .iter()
+                    .find(|&&i| batches[i].0.mesh.command == *command)
+                {
+                    Some(&i) => batches[i].1.push(m),
+                    None => {
+                        if used == batches.len() {
+                            batches.push((*d, Vec::new()));
+                        }
+                        batches[used].0 = *d;
+                        batches[used].1.push(m);
+                        slots.push(used);
+                        used += 1;
+                    }
+                }
+                continue;
+            }
             let Some(group) = self.ensure_object_group(ctx, e, &m, worlds.changed_tick(row)) else {
-                objects.push(ParamGroupId::NULL);
                 continue;
             };
             if !self.frame_bases.contains_key(&e) {
                 let base = self.instances.push(&m);
-                if d.mesh.command.is_instanceable() {
-                    for _ in 1..d.mesh.command.instance_count.clamp(1, 4096) {
+                if command.is_instanceable() {
+                    for _ in 1..command.instance_count.clamp(1, 4096) {
                         self.instances.push(&m);
                     }
                 }
@@ -997,9 +1047,26 @@ impl SceneRenderer {
                 self.write_deformers(world, ctx, e, group);
                 self.frame_bases.insert(e, base);
             }
+            out.push(*d);
             objects.push(group);
         }
-        self.lights.push_casters(draws, &objects);
+        for (i, (d, matrices)) in batches[..used].iter().enumerate() {
+            let base = self.instances.len();
+            for m in matrices {
+                self.instances.push(m);
+            }
+            let Some(group) = self.batch_group(ctx, batch_groups_used + i) else {
+                break;
+            };
+            ctx.param_set_i32(group, self.f_instance_base, base);
+            let mut d = *d;
+            d.mesh.command.instance_count = matrices.len() as i32;
+            out.push(d);
+            objects.push(group);
+        }
+        self.shadow_batches = batches;
+        self.shadow_batch_index = index;
+        self.lights.push_casters(out, &objects);
     }
 
     // How `program` gets its object: uniforms (a shader of its own), or the

@@ -234,7 +234,7 @@ $("shadow-freeze").addEventListener("change", () => {
 // The HUD's shadow maps: in use, their memory, how many the last frame drew.
 const shadowInfo = () =>
   castShadow
-    ? `  shadows ${scene.shadowMaps()} (${(scene.shadowMemory() / 1048576).toFixed(0)} MB) drew ${scene.shadowMapsDrawn()}${scene.shadowsFrozen() ? " frozen" : ""}`
+    ? `  shadows ${scene.shadowMaps()} (${(scene.shadowMemory() / 1048576).toFixed(0)} MB) drew ${scene.shadowMapsDrawn()} (${scene.shadowDrawCalls()} calls)${scene.shadowsFrozen() ? " frozen" : ""}`
     : "";
 $("shadow-cascades").addEventListener("change", () => {
   scene.setShadowCascadeDebug($("shadow-cascades").checked);

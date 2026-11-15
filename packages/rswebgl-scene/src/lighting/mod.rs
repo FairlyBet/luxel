@@ -91,6 +91,8 @@ pub(crate) struct LightingSystem {
     layers: HashMap<Entity, ShadowSlot>,
     draws: Vec<CasterDraw>,
     states: Vec<StateId>,
+    // Draw calls pushed into this frame's maps.
+    draw_calls: usize,
 }
 
 impl LightingSystem {
@@ -124,6 +126,7 @@ impl LightingSystem {
             layers: HashMap::new(),
             draws: Vec::new(),
             states: Vec::new(),
+            draw_calls: 0,
         })
     }
 
@@ -158,6 +161,12 @@ impl LightingSystem {
     /// Shadow maps in use this frame (all lights' layers).
     pub fn shadow_views(&self) -> usize {
         self.maps.views.len()
+    }
+
+    /// Draw calls into this frame's shadow maps (identical meshes drawn as
+    /// one).
+    pub fn draw_calls(&self) -> usize {
+        self.draw_calls
     }
 
     /// Shadow maps drawn this frame: those whose light or casters changed.
@@ -269,6 +278,7 @@ impl LightingSystem {
     /// Pushes `draws` into their maps' passes, each with the object group
     /// at its index in `objects` (NULL: skipped).
     pub fn push_casters(&mut self, draws: Vec<CasterDraw>, objects: &[ParamGroupId]) {
+        self.draw_calls = 0;
         for (d, &object) in draws.iter().zip(objects) {
             if object.is_null() {
                 continue;
@@ -284,6 +294,7 @@ impl LightingSystem {
                 groups,
                 &d.mesh.command,
             );
+            self.draw_calls += 1;
         }
         self.draws = draws;
     }

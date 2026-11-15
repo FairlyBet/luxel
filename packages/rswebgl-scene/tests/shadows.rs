@@ -153,6 +153,12 @@ async fn a_shadow_falls_where_the_light_is_blocked() {
         shadowed < lit / 4,
         "the shadowed side darkens: {shadowed} vs {lit}"
     );
+    // The floor and the square are one mesh and material: one instanced
+    // draw into the map (drawn again for the count: the last frame kept it).
+    scene.invalidate_shadows();
+    scene.render_frame(camera);
+    assert_eq!(scene.shadow_maps_drawn(), 1);
+    assert_eq!(scene.shadow_draw_calls(), 1);
 
     // Under reverse-Z (where the device has it): the same.
     if scene.set_reverse_z(true) {

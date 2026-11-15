@@ -180,6 +180,13 @@ impl Scene {
         self.renderer.shadow_views_drawn() as u32
     }
 
+    /// Draw calls into the shadow maps last frame: identical meshes (of a
+    /// shader that reads its instance) drawn as one per map.
+    #[wasm_bindgen(js_name = shadowDrawCalls)]
+    pub fn shadow_draw_calls(&self) -> u32 {
+        self.renderer.shadow_draw_calls() as u32
+    }
+
     /// Frozen shadows, for a scene that won't move: drawn once — a
     /// directional light's fitted to every caster rather than split along
     /// the view, so they hold wherever the camera goes — then kept, with
