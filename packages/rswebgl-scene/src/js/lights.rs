@@ -76,6 +76,8 @@ impl Scene {
         e: Entity,
         #[wasm_bindgen(unchecked_param_type = "LightOptions")] light: JsValue,
     ) -> Result<(), Error> {
+        // Frozen shadows are baked again with it.
+        self.renderer.rebake_shadows();
         let color = options::vec3_or(&light, "color", Vec3::ONE)?;
         let intensity = options::f32_or(&light, "intensity", 1.0)?;
         let range = options::f32_or(&light, "range", 0.0)?;
@@ -167,11 +169,42 @@ impl Scene {
         self.renderer.set_debug_cascades(on);
     }
 
-    /// Shadow maps drawn last frame: one per spot light, one per cascade
+    /// Shadow maps in use last frame: one per spot light, one per cascade
     /// of a directional light.
+    #[wasm_bindgen(js_name = shadowMaps)]
+    pub fn shadow_maps(&self) -> u32 {
+        self.renderer.shadow_views() as u32
+    }
+
+    /// Of those, the ones drawn last frame: a map whose light and casters
+    /// didn't move (nor deform, nor change mesh or material) is kept.
     #[wasm_bindgen(js_name = shadowMapsDrawn)]
     pub fn shadow_maps_drawn(&self) -> u32 {
-        self.renderer.shadow_views() as u32
+        self.renderer.shadow_views_drawn() as u32
+    }
+
+    /// Frozen shadows, for a scene that won't move: drawn once — a
+    /// directional light's fitted to every caster rather than split along
+    /// the view, so they hold wherever the camera goes — then kept, with
+    /// no shadow pass, until unfrozen, `invalidateShadows`, or an edit of
+    /// lights, materials, models or visibility through the scene. Default
+    /// off.
+    #[wasm_bindgen(js_name = setShadowsFrozen)]
+    pub fn set_shadows_frozen(&mut self, on: bool) {
+        self.renderer.set_shadows_frozen(on);
+    }
+
+    #[wasm_bindgen(js_name = shadowsFrozen)]
+    pub fn shadows_frozen(&self) -> bool {
+        self.renderer.shadows_frozen()
+    }
+
+    /// Draws the shadow maps again next frame (frozen ones too): after
+    /// changes the scene doesn't see, such as raw GL writes into a texture
+    /// an alpha-masked material reads.
+    #[wasm_bindgen(js_name = invalidateShadows)]
+    pub fn invalidate_shadows(&mut self) {
+        self.renderer.invalidate_shadows();
     }
 
     /// Bytes the shadow maps take now (all layers).
@@ -182,6 +215,8 @@ impl Scene {
 
     #[wasm_bindgen(js_name = removeLight)]
     pub fn remove_light(&mut self, e: Entity) {
+        // Frozen shadows are baked again with it.
+        self.renderer.rebake_shadows();
         self.world.remove::<Light>(e);
     }
 

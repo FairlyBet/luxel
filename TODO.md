@@ -35,9 +35,13 @@ blending, the display's divide, TAA, the glass copy).
    cascades along the view (`shadowCascades`, default 3; Bevy's stable fit,
    blended across their overlap, `setShadowCascadeDebug` tints them); a
    cascade wider than the map fitted to the casters is replaced by that
-   fit, so a model in view keeps one sharp map. Left: point lights (6
-   layers); not redrawing maps whose light and casters didn't move, and
-   freezing them for a static scene; batching casters into instanced draws;
+   fit, so a model in view keeps one sharp map. A map whose light and
+   casters didn't move (nor deform, nor change mesh) isn't drawn again
+   (`lighting/cache.rs`: a signature per map; material edits through the
+   scene invalidate them all); `setShadowsFrozen` bakes them once, fitted
+   to the whole scene, and keeps them (`shadowMaps` / `shadowMapsDrawn`
+   count them). Left: point lights (6 layers); batching casters into
+   instanced draws;
    a per-light map size (an atlas). Then screen-space contact shadows (a
    short march toward the light through the depth buffer; MSAA needs a
    resolved depth). For environment-only scenes: GTAO (XeGTAO, as Godot /

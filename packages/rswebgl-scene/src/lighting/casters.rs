@@ -26,19 +26,25 @@ pub(crate) struct CasterDraw {
 
 /// This frame's caster draws for `views`, into `out` (cleared first).
 /// Blended meshes cast none; neither do those whose shader still links or
-/// whose model reloads.
-pub(crate) fn cull(world: &World, ctx: &Context, views: &[ShadowView], out: &mut Vec<CasterDraw>) {
+/// whose model reloads: returns how many such waits there were.
+pub(crate) fn cull(
+    world: &World,
+    ctx: &Context,
+    views: &[ShadowView],
+    out: &mut Vec<CasterDraw>,
+) -> usize {
     out.clear();
     let (Some(casters), Some(meshes), Some(worlds)) = (
         world.storage::<ShadowCaster>(),
         world.storage::<MeshRenderer>(),
         world.storage::<WorldMatrix>(),
     ) else {
-        return;
+        return 0;
     };
     if views.is_empty() {
-        return;
+        return 0;
     }
+    let mut waiting = 0;
     let bounds = world.storage::<Bounds>();
     let reloading = world.storage::<Reloading>().filter(|r| !r.is_empty());
     let any_hidden = world
@@ -51,12 +57,12 @@ pub(crate) fn cull(world: &World, ctx: &Context, views: &[ShadowView], out: &mut
             let Some(mesh) = meshes.get(e) else {
                 continue;
             };
-            if mesh.transparent
-                || caster.program.is_null()
-                || ctx.program_link_pending(caster.program)
-                || reloading.is_some_and(|r| r.contains(e))
-                || (any_hidden && hidden(world, e))
+            if mesh.transparent || caster.program.is_null() || (any_hidden && hidden(world, e)) {
+                continue;
+            }
+            if ctx.program_link_pending(caster.program) || reloading.is_some_and(|r| r.contains(e))
             {
+                waiting += 1;
                 continue;
             }
             let Some(row) = worlds.row(e) else {
@@ -77,4 +83,5 @@ pub(crate) fn cull(world: &World, ctx: &Context, views: &[ShadowView], out: &mut
             });
         }
     }
+    waiting
 }

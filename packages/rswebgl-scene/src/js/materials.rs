@@ -94,6 +94,8 @@ impl Scene {
     /// scene's, or a group of your own for meshes with your own shader).
     #[wasm_bindgen(js_name = setMaterial)]
     pub fn set_material(&mut self, e: Entity, material: ParamGroupId) {
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
         if !self.world.is_alive(e) {
             super::dead("setMaterial");
             return;
@@ -126,6 +128,8 @@ impl Scene {
         root: Entity,
         name: Option<String>,
     ) -> Result<(), Error> {
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
         let model = self
             .models
             .get(&root)
@@ -201,6 +205,8 @@ impl Scene {
         name: &str,
         #[wasm_bindgen(unchecked_param_type = "number | ArrayLike<number>")] value: JsValue,
     ) -> Result<(), Error> {
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
         let values = options::numbers(&value)
             .ok_or_else(|| Error::from(format!("\"{name}\" takes a number or numbers")))?;
         // An OpenPBR name: the glTF-side properties that carry it.
@@ -358,6 +364,8 @@ impl Scene {
     /// drawing (reported): set another texture, or none, first.
     #[wasm_bindgen(js_name = destroyTexture)]
     pub fn destroy_texture(&mut self, texture: TextureId) {
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
         match self.textures.iter().position(|t| t.id == texture) {
             Some(i) => {
                 self.textures.swap_remove(i);
@@ -393,6 +401,8 @@ impl Scene {
         texture: TextureId,
         #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: JsValue,
     ) -> Result<(), Error> {
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
         let slot = MAP_NAMES
             .iter()
             .position(|&n| n == map)
@@ -711,6 +721,8 @@ impl Scene {
     /// switch as their new shaders finish compiling. Throws on another name.
     #[wasm_bindgen(js_name = setShadingModel)]
     pub fn set_shading_model(&mut self, name: &str) -> Result<(), Error> {
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
         let model = match name {
             "openpbr" => crate::pbr::ShadingModel::OpenPbr,
             "gltf" => crate::pbr::ShadingModel::Gltf,

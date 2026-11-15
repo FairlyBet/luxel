@@ -45,6 +45,10 @@ pub(crate) struct ShadowMaps {
     pub passes: Vec<Pass>,
     /// This frame's shadowing lights, by layer.
     pub views: Vec<ShadowView>,
+    // The signature (`cache`) of what each layer holds (None: nothing
+    // yet), and whether it is drawn again this frame.
+    drawn: Vec<Option<u64>>,
+    dirty: Vec<bool>,
     // Whether the comparison is set for reverse-Z.
     reverse_z: bool,
 }
@@ -89,6 +93,8 @@ impl ShadowMaps {
             groups,
             passes: (0..MAX_SHADOW_LAYERS).map(|_| Pass::to_default()).collect(),
             views: Vec::new(),
+            drawn: Vec::new(),
+            dirty: Vec::new(),
             reverse_z: false,
         };
         // Until a light needs them: one 1×1 layer for the lit shaders to bind.
@@ -172,6 +178,8 @@ impl ShadowMaps {
         self.depth16 = depth16;
         self.layers = layers;
         self.reverse_z = ctx.reverse_z();
+        self.drawn = vec![None; layers];
+        self.dirty.clear();
         // Every layer cleared to the far plane once: a layer no light draws
         // into this frame (the placeholder, a hidden light's) reads as lit.
         for &fb in &self.fbs {
@@ -192,9 +200,42 @@ impl ShadowMaps {
             self.reverse_z = reverse;
         }
         self.views.clear();
+        self.dirty.clear();
         for pass in &mut self.passes {
             pass.clear_draws();
         }
+    }
+
+    /// Which of this frame's layers to draw: those whose signature differs
+    /// from what they hold (which they then hold).
+    pub fn mark(&mut self, signatures: &[u64]) {
+        self.dirty.clear();
+        for (i, &sig) in signatures.iter().enumerate() {
+            let held = self.drawn.get_mut(i);
+            let stale = held.as_deref() != Some(&Some(sig));
+            if let Some(h) = held {
+                *h = Some(sig);
+            }
+            self.dirty.push(stale);
+        }
+    }
+
+    /// Keeps every layer as it is this frame (nothing drawn).
+    pub fn hold(&mut self) {
+        self.dirty.clear();
+        for pass in &mut self.passes {
+            pass.clear_draws();
+        }
+    }
+
+    /// Whether layer `i` is drawn this frame.
+    pub fn is_dirty(&self, i: usize) -> bool {
+        self.dirty.get(i).copied().unwrap_or(false)
+    }
+
+    /// Layers drawn this frame.
+    pub fn redrawn(&self) -> usize {
+        self.dirty.iter().filter(|d| **d).count()
     }
 
     /// Layer `i` drawn from `view`: its frame block written, its pass
@@ -229,10 +270,12 @@ impl ShadowMaps {
         ctx.render_state(&s)
     }
 
-    /// Renders this frame's layers.
+    /// Renders this frame's layers that changed.
     pub fn render(&self, ctx: &Context) {
-        for pass in &self.passes[..self.views.len()] {
-            ctx.render(pass);
+        for (i, pass) in self.passes[..self.views.len()].iter().enumerate() {
+            if self.is_dirty(i) {
+                ctx.render(pass);
+            }
         }
     }
 

@@ -227,6 +227,15 @@ $("shadows").addEventListener("change", () => {
   castShadow = $("shadows").checked;
   setLight();
 });
+$("shadow-freeze").addEventListener("change", () => {
+  scene.setShadowsFrozen($("shadow-freeze").checked);
+  invalidate();
+});
+// The HUD's shadow maps: in use, their memory, how many the last frame drew.
+const shadowInfo = () =>
+  castShadow
+    ? `  shadows ${scene.shadowMaps()} (${(scene.shadowMemory() / 1048576).toFixed(0)} MB) drew ${scene.shadowMapsDrawn()}${scene.shadowsFrozen() ? " frozen" : ""}`
+    : "";
 $("shadow-cascades").addEventListener("change", () => {
   scene.setShadowCascadeDebug($("shadow-cascades").checked);
   invalidate();
@@ -736,7 +745,7 @@ function frame(/** @type {number} */ now) {
     $("frame").textContent = `frame ${avg.toFixed(1)} ms (worst ${worst.toFixed(0)})  cpu ${cpu.toFixed(2)} ms`;
     $("info").textContent =
       `\n${canvas.width}×${canvas.height}${still ? "  still" : ""}  ${scene.isHdr() ? (scene.isTaa() ? (scene.isFxaa() ? "HDR TAA+FXAA" : "HDR TAA") : scene.isFxaa() ? "HDR FXAA" : "HDR") : "direct"}  ${scene.shadingModel()}\n` +
-      `drawn ${scene.drawn()} in ${scene.drawCalls()} calls  culled ${scene.culled()}  pending ${scene.pending()}  moving ${scene.movingMeshes()}\n` +
+      `drawn ${scene.drawn()} in ${scene.drawCalls()} calls  culled ${scene.culled()}  pending ${scene.pending()}  moving ${scene.movingMeshes()}${shadowInfo()}\n` +
       `variants ${scene.shaderVariantCount()}  entities ${scene.entityCount()}  file lights ${root ? scene.lights(root).length : 0}  compressed: ${textureCompressionStats()}
 ` +
       gpuLine();

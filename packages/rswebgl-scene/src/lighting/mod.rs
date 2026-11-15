@@ -10,8 +10,10 @@
 //! - `views` — each shadowing light's camera (math only).
 //! - `maps` — the depth-texture array, a layer and pass per light.
 //! - `casters` — which casters each map draws.
+//! - `cache` — which maps changed and are drawn again.
 //! - `pack` — the `Lights` block the lit shaders read (lights.glsl).
 
+mod cache;
 mod casters;
 mod light;
 mod maps;
@@ -75,6 +77,12 @@ pub(crate) struct LightingSystem {
     options: ShadowOptions,
     // Cascades tinted by index (debugging their splits).
     debug_cascades: bool,
+    // Bumped by `invalidate`: part of every map's signature.
+    epoch: u64,
+    // Frozen: the maps drawn once, fitted to the whole scene, then kept
+    // (`baked` once they are).
+    frozen: bool,
+    baked: bool,
     // This frame: each shadowing light's layers, the casters each layer
     // draws, and each layer's render state (its light's biases).
     layers: HashMap<Entity, ShadowSlot>,
@@ -107,6 +115,9 @@ impl LightingSystem {
             maps,
             options: ShadowOptions::default(),
             debug_cascades: false,
+            epoch: 0,
+            frozen: false,
+            baked: false,
             layers: HashMap::new(),
             draws: Vec::new(),
             states: Vec::new(),
@@ -118,6 +129,7 @@ impl LightingSystem {
     pub fn set_shadow_map_size(&mut self, size: u32) {
         let max = rswebgl::limits::max_texture_size().max(256) as u32;
         self.options.map_size = ShadowOptions::clamp_size(size, max);
+        self.baked = false;
     }
 
     pub fn shadow_map_size(&self) -> u32 {
@@ -127,6 +139,7 @@ impl LightingSystem {
     /// 16-bit shadow maps (half the memory) instead of 24-bit; default off.
     pub fn set_shadow_depth16(&mut self, on: bool) {
         self.options.depth16 = on;
+        self.baked = false;
     }
 
     pub fn shadow_depth16(&self) -> bool {
@@ -139,9 +152,43 @@ impl LightingSystem {
         self.debug_cascades = on;
     }
 
-    /// Shadow maps drawn this frame (all lights' layers).
+    /// Shadow maps in use this frame (all lights' layers).
     pub fn shadow_views(&self) -> usize {
         self.maps.views.len()
+    }
+
+    /// Shadow maps drawn this frame: those whose light or casters changed.
+    pub fn shadow_views_drawn(&self) -> usize {
+        self.maps.redrawn()
+    }
+
+    /// Draws every shadow map again next frame: for changes the maps can't
+    /// see (a material's alpha cutoff or texture edited in place). Frozen
+    /// maps are baked again.
+    pub fn invalidate(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.baked = false;
+    }
+
+    /// Bakes frozen maps again next frame (unfrozen ones follow their
+    /// lights and casters by their signatures).
+    pub fn rebake(&mut self) {
+        self.baked = false;
+    }
+
+    /// Frozen shadows: drawn once — directional lights fitted to every
+    /// caster, not the view, so they hold wherever the camera goes — and
+    /// kept until unfrozen or `invalidate`d, whatever moves. For a static
+    /// scene: no shadow pass after the first frame.
+    pub fn set_frozen(&mut self, on: bool) {
+        if on != self.frozen {
+            self.frozen = on;
+            self.baked = false;
+        }
+    }
+
+    pub fn frozen(&self) -> bool {
+        self.frozen
     }
 
     /// The shadow maps' memory now, in bytes (a 1×1 placeholder while no
@@ -164,9 +211,27 @@ impl LightingSystem {
         frame_group: ParamGroupId,
         camera: Option<(Camera, glam::Mat4)>,
     ) {
-        let camera = camera.map(|(camera, world)| ViewCamera { world, camera });
-        self.plan(world, ctx, frame_group, camera.as_ref());
         let debug = self.debug_cascades;
+        if self.frozen && self.baked {
+            // The maps, their cameras and the lights' layers as baked; the
+            // lights themselves may still change color or intensity.
+            self.maps.hold();
+            self.draws.clear();
+            self.block.write(
+                world,
+                ctx,
+                &self.layers,
+                &self.maps.views,
+                debug,
+                CASCADE_OVERLAP,
+            );
+            return;
+        }
+        // Frozen: fitted to the scene, not the view.
+        let camera = camera
+            .filter(|_| !self.frozen)
+            .map(|(camera, world)| ViewCamera { world, camera });
+        self.plan(world, ctx, frame_group, camera.as_ref());
         self.block.write(
             world,
             ctx,
@@ -175,7 +240,17 @@ impl LightingSystem {
             debug,
             CASCADE_OVERLAP,
         );
-        casters::cull(world, ctx, &self.maps.views, &mut self.draws);
+        let waiting = casters::cull(world, ctx, &self.maps.views, &mut self.draws);
+        let signatures = cache::signatures(world, &self.maps.views, &self.draws, self.epoch);
+        self.maps.mark(&signatures);
+        // Only the maps drawn again need their casters.
+        let maps = &self.maps;
+        self.draws.retain(|d| maps.is_dirty(d.view));
+        // Baked once every caster could draw (none still linking or
+        // reloading) into some map.
+        if self.frozen {
+            self.baked = waiting == 0 && !self.maps.views.is_empty();
+        }
         self.states.clear();
         for view in &self.maps.views {
             self.states.push(ShadowMaps::state(ctx, &view.state));

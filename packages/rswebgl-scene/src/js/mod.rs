@@ -502,6 +502,8 @@ impl Scene {
     /// Hides or shows `e` and everything under it.
     #[wasm_bindgen(js_name = setVisible)]
     pub fn set_visible(&mut self, e: Entity, visible: bool) {
+        // Frozen shadows are baked again with it.
+        self.renderer.rebake_shadows();
         self.insert(e, "setVisible", Visible(visible));
     }
 
@@ -531,6 +533,8 @@ impl Scene {
     /// theirs (`findMaterial`).
     #[wasm_bindgen(js_name = addModel)]
     pub fn add_model(&mut self, model: Model) -> Entity {
+        // Frozen shadows are baked again with it.
+        self.renderer.rebake_shadows();
         self.sync_context();
         let (ctx, pbr) = (&self.ctx, &mut self.pbr);
         let root = spawn_model(&mut self.world, &model, |item| {
@@ -555,6 +559,8 @@ impl Scene {
     /// object; the material group is the loader's).
     #[wasm_bindgen(js_name = addModelWithProgram)]
     pub fn add_model_with_program(&mut self, model: Model, program: ProgramId) -> Entity {
+        // Frozen shadows are baked again with it.
+        self.renderer.rebake_shadows();
         self.sync_context();
         let program = self.current_program(program);
         let root = spawn_model(&mut self.world, &model, |_| Some(program));

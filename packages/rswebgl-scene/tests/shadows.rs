@@ -230,15 +230,11 @@ async fn cascades_keep_a_small_shadow_in_a_large_scene() {
 
     scene.set_light(sun, light(1)).unwrap();
     let (blurred, _) = sides(&gl, &mut scene, camera).await;
-    assert_eq!(scene.shadow_maps_drawn(), 1);
+    assert_eq!(scene.shadow_maps(), 1);
 
     scene.set_light(sun, light(3)).unwrap();
     let (shadowed, lit) = sides(&gl, &mut scene, camera).await;
-    assert!(
-        scene.shadow_maps_drawn() >= 2,
-        "{}",
-        scene.shadow_maps_drawn()
-    );
+    assert!(scene.shadow_maps() >= 2, "{}", scene.shadow_maps());
     assert!(
         lit > 60 && shadowed < lit / 4,
         "cascades: {shadowed} vs {lit}"
@@ -267,5 +263,82 @@ async fn cascades_keep_a_small_shadow_in_a_large_scene() {
     )
     .unwrap();
     assert!(px[2] as u32 > px[0] as u32 * 3 / 2, "tinted blue: {px:?}");
+    scene.destroy();
+}
+
+// The cache: a map whose light and casters didn't move isn't drawn again,
+// and still shadows; moving the light draws it. Frozen: drawn once, then
+// kept even as the light moves, until invalidated.
+#[wasm_bindgen_test]
+async fn still_shadow_maps_are_kept_and_frozen_ones_held() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    let sun = scene.spawn();
+    scene.look_at(sun, &[4.0, 0.0, 8.0], &[0.0, 0.0, 0.0]);
+    let light =
+        js_sys::JSON::parse(r#"{ "type": "directional", "intensity": 3, "castShadow": true }"#)
+            .unwrap();
+    scene.set_light(sun, light).unwrap();
+
+    // Two frames: the map drawn in the first, kept in the second.
+    let (shadowed, lit) = sides(&gl, &mut scene, camera).await;
+    assert!(lit > 60 && shadowed < lit / 4, "{shadowed} vs {lit}");
+    assert_eq!(scene.shadow_maps(), 1);
+    assert_eq!(scene.shadow_maps_drawn(), 0, "nothing moved: kept");
+
+    // The light from the left: the shadow moves right; drawn again.
+    scene.look_at(sun, &[-4.0, 0.0, 8.0], &[0.0, 0.0, 0.0]);
+    scene.render_frame(camera);
+    assert_eq!(scene.shadow_maps_drawn(), 1, "the light moved: drawn");
+    let (left, right) = sides(&gl, &mut scene, camera).await;
+    assert!(right < left / 4, "the shadow follows: {right} vs {left}");
+
+    // Frozen: baked once (fitted to the casters), then held while the
+    // light moves back.
+    scene.set_shadows_frozen(true);
+    // (Here the bake is the map it already holds — a model in view is
+    // fitted whole either way — so nothing needs drawing.)
+    scene.render_frame(camera);
+    scene.look_at(sun, &[4.0, 0.0, 8.0], &[0.0, 0.0, 0.0]);
+    let (left, right) = sides(&gl, &mut scene, camera).await;
+    assert_eq!(scene.shadow_maps_drawn(), 0, "frozen: held");
+    assert!(
+        right < left / 4,
+        "frozen: still on the right: {right} vs {left}"
+    );
+
+    // Invalidated: baked again for the light where it is now.
+    scene.invalidate_shadows();
+    let (left, right) = sides(&gl, &mut scene, camera).await;
+    assert!(left < right / 4, "baked again: {left} vs {right}");
     scene.destroy();
 }

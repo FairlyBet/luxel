@@ -938,6 +938,33 @@ impl SceneRenderer {
         self.lights.shadow_views()
     }
 
+    /// Shadow maps drawn again this frame (their light or casters changed).
+    pub fn shadow_views_drawn(&self) -> usize {
+        self.lights.shadow_views_drawn()
+    }
+
+    /// Draws every shadow map again (frozen ones too): for changes the
+    /// maps can't see, such as a material's alpha cutoff edited in place.
+    pub fn invalidate_shadows(&mut self) {
+        self.lights.invalidate();
+    }
+
+    /// Bakes frozen shadows again next frame (others follow their lights
+    /// and casters anyway): after adding, removing or showing what casts.
+    pub fn rebake_shadows(&mut self) {
+        self.lights.rebake();
+    }
+
+    /// Frozen shadows: drawn once, fitted to every caster (not the view),
+    /// then kept whatever moves, until unfrozen or invalidated.
+    pub fn set_shadows_frozen(&mut self, on: bool) {
+        self.lights.set_frozen(on);
+    }
+
+    pub fn shadows_frozen(&self) -> bool {
+        self.lights.frozen()
+    }
+
     /// The shadow maps' memory, in bytes.
     pub fn shadow_bytes(&self) -> usize {
         self.lights.shadow_bytes()
