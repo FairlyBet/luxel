@@ -45,6 +45,35 @@ impl Ray {
     }
 }
 
+/// `camera`'s view and projection (depth −1…1), from its `Camera` and the
+/// last `TransformSystem::update`'s world matrix.
+pub fn view_and_projection(world: &World, camera: Entity) -> Option<(Mat4, Mat4)> {
+    let cam = world.get::<Camera>(camera)?;
+    let view = world.get::<WorldMatrix>(camera)?.0.inverse();
+    Some((view, cam.projection_matrix()))
+}
+
+/// The ray from `camera` through `ndc` (−1…1, +Y up), from its near plane.
+pub fn camera_ray(world: &World, camera: Entity, ndc: Vec2) -> Option<Ray> {
+    let (view, proj) = view_and_projection(world, camera)?;
+    Some(Ray::through(&(proj * view), ndc))
+}
+
+/// Where world point `p` lands as `camera` sees it: x, y in normalized
+/// device coordinates (−1…1, +Y up) and z its depth in front of the camera
+/// (along the view axis; ≤ 0 behind it, where x and y mean nothing).
+pub fn world_to_ndc(world: &World, camera: Entity, p: Vec3) -> Option<Vec3> {
+    let (view, proj) = view_and_projection(world, camera)?;
+    let v = view.transform_point3(p);
+    let clip = proj * v.extend(1.0);
+    let w = if clip.w.abs() > f32::EPSILON {
+        clip.w
+    } else {
+        f32::EPSILON
+    };
+    Some(Vec3::new(clip.x / w, clip.y / w, -v.z))
+}
+
 /// Entry distance of `ray` into the box (0 if it starts inside), or None.
 pub fn ray_aabb(ray: &Ray, min: Vec3, max: Vec3) -> Option<f32> {
     let inv = ray.dir.recip();
@@ -64,12 +93,12 @@ pub struct Hit {
 }
 
 /// The visible mesh whose `Bounds` a ray from `camera` through `ndc` enters
-/// first (`distance` from the near plane), or None. Meshes without bounds
-/// can't be hit. World matrices are the last `TransformSystem::update`'s.
+/// first, or None; `distance` from the camera (as the GPU pick's). Meshes
+/// without bounds can't be hit. World matrices are the last
+/// `TransformSystem::update`'s.
 pub fn pick_bounds(world: &World, camera: Entity, ndc: Vec2) -> Option<Hit> {
-    let cam = world.get::<Camera>(camera)?;
-    let view = world.get::<WorldMatrix>(camera)?.0.inverse();
-    let ray = Ray::through(&(cam.projection_matrix() * view), ndc);
+    let ray = camera_ray(world, camera, ndc)?;
+    let eye = world.get::<WorldMatrix>(camera)?.0.w_axis.truncate();
     let meshes = world.storage::<MeshRenderer>()?;
     let worlds = world.storage::<WorldMatrix>()?;
     let bounds = world.storage::<Bounds>()?;
@@ -91,9 +120,12 @@ pub fn pick_bounds(world: &World, camera: Entity, ndc: Vec2) -> Option<Hit> {
             best = Some((t, e));
         }
     }
-    best.map(|(t, entity)| Hit {
-        entity,
-        distance: t,
-        point: ray.at(t),
+    best.map(|(t, entity)| {
+        let point = ray.at(t);
+        Hit {
+            entity,
+            distance: point.distance(eye),
+            point,
+        }
     })
 }

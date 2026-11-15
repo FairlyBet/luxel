@@ -73,6 +73,35 @@ Texture and vertex compression can be set per load with
 module-wide switch. A file whose POSITION accessors lack `min` / `max` still
 loads, with a warning; other validation errors reject the load.
 
+## Camera, render on demand, hotspots
+
+`rswebgl/orbit` ships an orbit camera (drag, wheel / pinch, right-drag to
+pan, a tap for picking). `scene.frameBounds(camera, root)` points a camera
+at a model. `scene.needsRender()` says whether anything changed since the
+last frame, so a still scene costs nothing:
+
+```js
+import { OrbitControls } from "rswebgl/orbit";
+
+const orbit = new OrbitControls(scene, camera, canvas);
+orbit.frame(root);
+orbit.onTap = (x, y) => scene.pick(camera, x, y).then((hit) => console.log(hit));
+requestAnimationFrame(function frame(now) {
+  orbit.update(1 / 60);
+  scene.advanceAnimations(1 / 60);
+  if (scene.needsRender() || !scene.presentFrame()) scene.renderFrame(camera);
+  requestAnimationFrame(frame);
+});
+```
+
+Call `scene.invalidate()` for a change the scene can't see (a texture you
+filled yourself). For hotspots and annotations:
+- `scene.worldToScreen(camera, point)` gives `[x, y, depth]`: normalized
+  device coordinates, and the depth, which is ≤ 0 behind the camera.
+- `scene.screenToRay(camera, x, y)` gives a world-space ray.
+- `scene.raycastBounds(camera, x, y)` is a synchronous hit test against the
+  meshes' boxes; `pick` is the exact test on the GPU.
+
 ## Compressed glTF
 
 meshopt-compressed files load as they are. Draco meshes and KTX2 (Basis

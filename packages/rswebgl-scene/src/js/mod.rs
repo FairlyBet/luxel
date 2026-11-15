@@ -1154,6 +1154,95 @@ impl Scene {
         }))
     }
 
+    /// Points `camera` at `root` and everything under it, from the side it
+    /// looks from now: far enough that the sphere around their bounds fills
+    /// the view (`margin`, default 1.1, leaves room around it); near and far
+    /// planes with room to zoom. Uses the meshes' bounds in the world as
+    /// they are now (a model's, or yours from `setBounds`); a model with
+    /// none (skinned) uses its bounds as loaded. Returns `[cx, cy, cz,
+    /// distance]` — the center looked at and how far the camera is (an
+    /// orbit's target and radius) — or empty when there is nothing to
+    /// frame or `camera` isn't a camera.
+    #[wasm_bindgen(js_name = frameBounds)]
+    pub fn frame_bounds(&mut self, camera: Entity, root: Entity, margin: Option<f32>) -> Vec<f32> {
+        self.transforms.update(&mut self.world);
+        let bounds = crate::framing::world_bounds(&self.world, root).or_else(|| {
+            // A model without mesh bounds: its sphere as loaded, moved with
+            // the root.
+            let model = self.models.get(&root)?;
+            let m = self.world.get::<crate::transform::WorldMatrix>(root)?.0;
+            let c = m.transform_point3(glam::Vec3::from_slice(&model.center()));
+            let scale = m
+                .x_axis
+                .truncate()
+                .length()
+                .max(m.y_axis.truncate().length())
+                .max(m.z_axis.truncate().length());
+            let r = glam::Vec3::splat(model.radius() * scale / 3f32.sqrt());
+            Some((c - r, c + r))
+        });
+        let Some((min, max)) = bounds else {
+            return Vec::new();
+        };
+        let margin = margin.filter(|m| m.is_finite() && *m > 0.0).unwrap_or(1.1);
+        crate::framing::frame_box(&mut self.world, camera, min, max, margin)
+            .map_or_else(Vec::new, |(c, d)| vec![c.x, c.y, c.z, d])
+    }
+
+    /// Where world point `[x, y, z]` shows as `camera` sees it:
+    /// `[x, y, depth]` — x, y in normalized device coordinates (−1…1, +Y up;
+    /// to CSS pixels: `(x + 1) / 2 * canvas.clientWidth`,
+    /// `(1 - y) / 2 * canvas.clientHeight`), depth its distance in front of
+    /// the camera along the view axis (≤ 0: behind it — hide a hotspot
+    /// then). Empty if `camera` isn't a camera. With the transforms as of now.
+    #[wasm_bindgen(js_name = worldToScreen)]
+    pub fn world_to_screen(
+        &mut self,
+        camera: Entity,
+        #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] point: &[f32],
+    ) -> Vec<f32> {
+        let Some(p) = vec3("worldToScreen", "point", point) else {
+            return Vec::new();
+        };
+        self.transforms.update(&mut self.world);
+        crate::pick::world_to_ndc(&self.world, camera, p)
+            .map_or_else(Vec::new, |v| v.to_array().to_vec())
+    }
+
+    /// The ray from `camera` through a screen point (`x`, `y` normalized
+    /// device coordinates, as `pick`): `[ox, oy, oz, dx, dy, dz]` — its origin
+    /// on the near plane and unit direction, in world space. Empty if
+    /// `camera` isn't a camera.
+    #[wasm_bindgen(js_name = screenToRay)]
+    pub fn screen_to_ray(&mut self, camera: Entity, x: f32, y: f32) -> Vec<f32> {
+        self.transforms.update(&mut self.world);
+        crate::pick::camera_ray(&self.world, camera, Vec2::new(x, y)).map_or_else(Vec::new, |r| {
+            [r.origin.to_array(), r.dir.to_array()].concat()
+        })
+    }
+
+    /// `pick` at once, by the meshes' bounding boxes instead of their
+    /// triangles: the nearest visible mesh whose box the ray enters (`point`
+    /// on the box). Coarse — a box is bigger than what's in it — but
+    /// synchronous: for hover effects and drag targets; `pick` for what's
+    /// exactly under the pointer.
+    #[wasm_bindgen(js_name = raycastBounds, unchecked_return_type = "PickHit | null")]
+    pub fn raycast_bounds(&mut self, camera: Entity, x: f32, y: f32) -> JsValue {
+        self.transforms.update(&mut self.world);
+        let Some(hit) = crate::pick::pick_bounds(&self.world, camera, Vec2::new(x, y)) else {
+            return JsValue::NULL;
+        };
+        let out = js_sys::Object::new();
+        let set = |k: &str, v: JsValue| js_sys::Reflect::set(&out, &k.into(), &v);
+        let _ = set("entity", hit.entity.to_raw().into());
+        let _ = set(
+            "point",
+            js_sys::Float32Array::from(&hit.point.to_array()[..]).into(),
+        );
+        let _ = set("distance", hit.distance.into());
+        out.into()
+    }
+
     /// Frees everything the scene owns: its renderer resources, the built-in
     /// shaders, the models added with `addModel`, the cloned materials and
     /// the textures `loadTexture` made.

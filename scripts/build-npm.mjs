@@ -59,6 +59,7 @@ const pkg = {
   types: "./rswebgl.d.ts",
   exports: {
     ".": { types: "./rswebgl.d.ts", default: "./rswebgl.js" },
+    "./orbit": { types: "./orbit.d.ts", default: "./orbit.js" },
     "./rswebgl_bg.wasm": "./rswebgl_bg.wasm",
     "./package.json": "./package.json",
   },
@@ -67,6 +68,8 @@ const pkg = {
     "rswebgl.d.ts",
     "rswebgl_bg.wasm",
     "rswebgl_bg.wasm.d.ts",
+    "orbit.js",
+    "orbit.d.ts",
     "snippets/",
     "README.md",
     "LICENSE",
@@ -78,6 +81,8 @@ const pkg = {
 };
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 copyFileSync(join(root, "npm", "README.md"), join(out, "README.md"));
+// The orbit controller, beside the module (`rswebgl/orbit`).
+for (const f of ["orbit.js", "orbit.d.ts"]) copyFileSync(join(root, "npm", f), join(out, f));
 copyFileSync(join(root, "LICENSE"), join(out, "LICENSE"));
 copyFileSync(join(root, "THIRD_PARTY.md"), join(out, "THIRD_PARTY.md"));
 console.log(`\n${pkg.name}@${pkg.version} → ${out}`);

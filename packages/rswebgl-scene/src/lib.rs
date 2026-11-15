@@ -34,6 +34,7 @@ mod camera;
 mod culling;
 mod direct;
 mod environment;
+mod framing;
 mod gpu_pick;
 mod hdr;
 mod hierarchy;
@@ -54,6 +55,7 @@ pub use animation::{ModelAnimations, MorphWeights, Playback};
 pub use camera::{Camera, Projection};
 pub use culling::{Bounds, Frustum};
 pub use environment::{BakeJob, EnvBaker, Environment, PendingEnvironment};
+pub use framing::{frame_box, world_bounds};
 pub use hdr::{HdrImage, RgbeImage, decode_hdr, decode_hdr_rgbe, encode_hdr};
 pub use hierarchy::{
     HierarchyError, TransformSystem, children, descendants, despawn_recursive, set_parent,
@@ -67,7 +69,7 @@ pub use model::{Morph, Name, Primitive, Skin, find_by_name, spawn_model};
 pub use occlusion::{AmbientOcclusion, ContactShadows};
 pub use output::{HdrOutput, ToneMapping};
 pub use pbr::{PbrKey, PbrShaders, ShadingModel};
-pub use pick::{Hit, Ray, pick_bounds, ray_aabb};
+pub use pick::{Hit, Ray, camera_ray, pick_bounds, ray_aabb, view_and_projection, world_to_ndc};
 pub use render::{
     FRAME_BLOCK, FRAME_SLOT, LIGHTING_BLOCK, MATERIAL_SLOT, MODEL_UNIFORM, MeshRenderer,
     NORMAL_MATRIX_UNIFORM, OBJECT_SLOT, Reloading, RenderStats, SceneRenderer, Visible,
