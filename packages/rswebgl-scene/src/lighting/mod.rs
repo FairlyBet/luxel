@@ -30,15 +30,17 @@ use rswebgl_ecs::{Entity, World};
 
 pub(crate) use casters::CasterDraw;
 pub use light::{Light, LightKind};
-pub use maps::MAX_SHADOWS;
+pub use maps::MAX_SHADOW_LAYERS;
 pub use pack::MAX_LIGHTS;
 pub use settings::{LightShadow, ShadowCaster};
+pub use views::MAX_CASCADES;
 
 use maps::ShadowMaps;
 use pack::LightsBlock;
 use settings::ShadowOptions;
-use views::{caster_bounds, shadow_view};
+use views::{CASCADE_OVERLAP, ShadowView, ViewCamera, cascade_views, caster_bounds, shadow_view};
 
+use crate::camera::Camera;
 use crate::render::{FRAME_SLOT, LIGHTING_BLOCK, MATERIAL_SLOT, OBJECT_SLOT, Visible, hidden};
 use crate::transform::WorldMatrix;
 
@@ -54,9 +56,11 @@ use crate::transform::WorldMatrix;
 /// };
 /// layout(std140) uniform Lights {
 ///     Light u_lights[8];                // MAX_LIGHTS
-///     vec4 u_light_count;               // x lights in u_lights
-///     vec4 u_light_shadows[8];          // x layer (< 0: none), y normal bias, z perspective
-///     mat4 u_shadow_matrices[4];        // MAX_SHADOWS: world → map [0, 1]³
+///     vec4 u_light_count;        // x lights, y 1: cascades tinted, z cascade overlap
+///     vec4 u_light_shadows[8];   // x first layer (< 0: none), y layers, z 1: perspective
+///     vec4 u_shadow_splits[8];   // the cascades' far bounds (camera-space depth)
+///     vec4 u_shadow_layers[8];   // MAX_SHADOW_LAYERS: x normal bias
+///     mat4 u_shadow_matrices[8]; // world → map [0, 1]³
 /// };
 /// uniform highp sampler2DArrayShadow u_shadow_map;
 /// ```
@@ -69,9 +73,11 @@ pub(crate) struct LightingSystem {
     block: LightsBlock,
     maps: ShadowMaps,
     options: ShadowOptions,
-    // This frame: each shadowing light's layer, the casters each layer
+    // Cascades tinted by index (debugging their splits).
+    debug_cascades: bool,
+    // This frame: each shadowing light's layers, the casters each layer
     // draws, and each layer's render state (its light's biases).
-    layers: HashMap<Entity, usize>,
+    layers: HashMap<Entity, ShadowSlot>,
     draws: Vec<CasterDraw>,
     states: Vec<StateId>,
 }
@@ -100,6 +106,7 @@ impl LightingSystem {
             block,
             maps,
             options: ShadowOptions::default(),
+            debug_cascades: false,
             layers: HashMap::new(),
             draws: Vec::new(),
             states: Vec::new(),
@@ -126,6 +133,17 @@ impl LightingSystem {
         self.options.depth16
     }
 
+    /// Tints what each cascade shades (red, green, blue, yellow nearest
+    /// first): to see where they split.
+    pub fn set_debug_cascades(&mut self, on: bool) {
+        self.debug_cascades = on;
+    }
+
+    /// Shadow maps drawn this frame (all lights' layers).
+    pub fn shadow_views(&self) -> usize {
+        self.maps.views.len()
+    }
+
     /// The shadow maps' memory now, in bytes (a 1×1 placeholder while no
     /// light casts shadows).
     pub fn shadow_bytes(&self) -> usize {
@@ -134,12 +152,29 @@ impl LightingSystem {
         side * side * self.maps.layers() * texel
     }
 
-    /// A new frame: which lights cast shadows and from where (the first
-    /// `MAX_SHADOWS` directional / spot lights with a `LightShadow`), the
-    /// lights block, and the casters each map draws (`push_casters`).
-    pub fn prepare(&mut self, world: &World, ctx: &Context, frame_group: ParamGroupId) {
-        self.plan(world, ctx, frame_group);
-        self.block.write(world, ctx, &self.layers, &self.maps.views);
+    /// A new frame seen by `camera` (its projection and world matrix; the
+    /// cascades follow it): which lights cast shadows and from where (the
+    /// directional / spot lights with a `LightShadow`, while
+    /// `MAX_SHADOW_LAYERS` last), the lights block, and the casters each
+    /// map draws (`push_casters`).
+    pub fn prepare(
+        &mut self,
+        world: &World,
+        ctx: &Context,
+        frame_group: ParamGroupId,
+        camera: Option<(Camera, glam::Mat4)>,
+    ) {
+        let camera = camera.map(|(camera, world)| ViewCamera { world, camera });
+        self.plan(world, ctx, frame_group, camera.as_ref());
+        let debug = self.debug_cascades;
+        self.block.write(
+            world,
+            ctx,
+            &self.layers,
+            &self.maps.views,
+            debug,
+            CASCADE_OVERLAP,
+        );
         casters::cull(world, ctx, &self.maps.views, &mut self.draws);
         self.states.clear();
         for view in &self.maps.views {
@@ -194,9 +229,16 @@ impl LightingSystem {
         self.block.destroy(ctx, lost);
     }
 
-    // The shadowing lights' cameras, fitted to the casters' bounds; the
-    // maps resized to them.
-    fn plan(&mut self, world: &World, ctx: &Context, frame_group: ParamGroupId) {
+    // The shadowing lights' cameras: a spot's fitted to the casters in
+    // front of it, a directional's cascades; the maps grown to hold them
+    // (or shrunk to what the lights could ask for).
+    fn plan(
+        &mut self,
+        world: &World,
+        ctx: &Context,
+        frame_group: ParamGroupId,
+        camera: Option<&ViewCamera>,
+    ) {
         self.maps.begin(ctx);
         self.layers.clear();
         let (Some(settings), Some(lights), Some(worlds)) = (
@@ -212,33 +254,15 @@ impl LightingSystem {
         let Some(bounds) = caster_bounds(world) else {
             return;
         };
-        // A layer for each shadowing directional or spot light.
-        let wanted = settings
-            .iter()
-            .filter(|(e, _)| {
-                lights
-                    .get(*e)
-                    .is_some_and(|l| !matches!(l.kind, LightKind::Point))
-            })
-            .count()
-            .min(MAX_SHADOWS);
-        if wanted == 0 {
-            return;
-        }
         let ShadowOptions { map_size, depth16 } = self.options;
-        let stale = self.maps.size() != map_size
-            || self.maps.layers() != wanted
-            || self.maps.depth16() != depth16;
-        if stale {
-            if let Err(e) = self.maps.resize(ctx, map_size, wanted, depth16) {
-                console::error_once(&format!("[rswebgl-scene] shadow maps: {e}"));
-                return;
-            }
-            ctx.param_set_texture_by_name(frame_group, SHADOW_MAP, self.maps.texture());
-        }
+        let reverse = ctx.reverse_z();
         let any_hidden = world
             .storage::<Visible>()
             .is_some_and(|v| v.data().iter().any(|v| !v.0));
+        // Each shadowing light's views, and the most layers they could ask
+        // for (a directional light's every cascade).
+        let mut planned: Vec<(Entity, ShadowSlot, Vec<ShadowView>)> = Vec::new();
+        let (mut used, mut could) = (0, 0);
         for (e, light) in lights.iter() {
             let Some(&s) = settings.get(e) else {
                 continue;
@@ -249,20 +273,77 @@ impl LightingSystem {
             if any_hidden && hidden(world, e) {
                 continue;
             }
-            if self.maps.views.len() == MAX_SHADOWS {
+            let (views, splits) = match (light.kind, camera) {
+                (LightKind::Point, _) => continue,
+                (LightKind::Directional, Some(camera)) => {
+                    let c = cascade_views(&m.0, camera, bounds, map_size, reverse, s);
+                    could += (s.cascades as usize).clamp(1, MAX_CASCADES);
+                    (c.views, c.far_bounds)
+                }
+                _ => {
+                    could += 1;
+                    let view = shadow_view(light, &m.0, bounds, map_size, reverse, s);
+                    (view.into_iter().collect(), vec![f32::MAX])
+                }
+            };
+            if views.is_empty() {
+                continue;
+            }
+            if used + views.len() > MAX_SHADOW_LAYERS {
                 console::warn_once(&format!(
-                    "[rswebgl-scene] more than {MAX_SHADOWS} shadow-casting lights; the rest \
-                     shine unshadowed"
+                    "[rswebgl-scene] shadows need more than {MAX_SHADOW_LAYERS} map layers; \
+                     the rest of the lights shine unshadowed"
                 ));
                 break;
             }
-            let size = self.maps.size();
-            if let Some(view) = shadow_view(light, &m.0, bounds, size, ctx.reverse_z(), s) {
+            let mut far = [f32::MAX; 4];
+            for (f, s) in far.iter_mut().zip(&splits) {
+                *f = *s;
+            }
+            let slot = ShadowSlot {
+                first: used,
+                count: views.len(),
+                splits: far,
+                perspective: views[0].perspective,
+            };
+            used += views.len();
+            planned.push((e, slot, views));
+        }
+        if used == 0 {
+            return;
+        }
+        // Grown to this frame's layers; shrunk only below what the lights
+        // could ask for, so a cascade coming and going doesn't reallocate.
+        let could = could.clamp(used, MAX_SHADOW_LAYERS);
+        let layers = self.maps.layers().clamp(used, could);
+        let stale = self.maps.size() != map_size
+            || self.maps.layers() != layers
+            || self.maps.depth16() != depth16;
+        if stale {
+            if let Err(e) = self.maps.resize(ctx, map_size, layers, depth16) {
+                console::error_once(&format!("[rswebgl-scene] shadow maps: {e}"));
+                return;
+            }
+            ctx.param_set_texture_by_name(frame_group, SHADOW_MAP, self.maps.texture());
+        }
+        for (e, slot, views) in planned {
+            for view in views {
                 let i = self.maps.views.len();
                 self.maps.prepare(ctx, i, &view);
                 self.maps.views.push(view);
-                self.layers.insert(e, i);
             }
+            self.layers.insert(e, slot);
         }
     }
+}
+
+/// Where a shadowing light's maps are this frame: `count` layers from
+/// `first` (a directional light's cascades, nearest first, each reaching
+/// to its far bound in `splits`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShadowSlot {
+    pub first: usize,
+    pub count: usize,
+    pub splits: [f32; 4],
+    pub perspective: bool,
 }

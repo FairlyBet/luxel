@@ -12,8 +12,9 @@ use rswebgl::ids::UniformBufferId;
 use rswebgl::uniform_buffer::{UboLayout, UniformType};
 use rswebgl_ecs::{Entity, World};
 
+use super::ShadowSlot;
 use super::light::Light;
-use super::maps::MAX_SHADOWS;
+use super::maps::MAX_SHADOW_LAYERS;
 use super::views::ShadowView;
 use crate::render::{Visible, hidden};
 use crate::transform::WorldMatrix;
@@ -42,7 +43,17 @@ impl LightsBlock {
                 .struct_array("u_lights", &light, MAX_LIGHTS as u32)
                 .field("u_light_count", UniformType::Vec4)
                 .array("u_light_shadows", UniformType::Vec4, MAX_LIGHTS as u32)
-                .array("u_shadow_matrices", UniformType::Mat4, MAX_SHADOWS as u32),
+                .array("u_shadow_splits", UniformType::Vec4, MAX_LIGHTS as u32)
+                .array(
+                    "u_shadow_layers",
+                    UniformType::Vec4,
+                    MAX_SHADOW_LAYERS as u32,
+                )
+                .array(
+                    "u_shadow_matrices",
+                    UniformType::Mat4,
+                    MAX_SHADOW_LAYERS as u32,
+                ),
             BufferUsage::DynamicDraw,
         )?;
         Ok(Self {
@@ -56,17 +67,21 @@ impl LightsBlock {
     }
 
     /// The visible lights (the first `MAX_LIGHTS`), each with its shadow
-    /// map's layer from `layers` (into `views`), and the maps' world → map
-    /// matrices.
+    /// maps' layers from `slots` (into `views`), the cascades' far bounds,
+    /// each layer's normal bias and world → map matrix. `debug` tints the
+    /// cascades; `overlap` is how far they reach into each other.
     pub fn write(
         &mut self,
         world: &World,
         ctx: &Context,
-        layers: &HashMap<Entity, usize>,
+        slots: &HashMap<Entity, ShadowSlot>,
         views: &[ShadowView],
+        debug: bool,
+        overlap: f32,
     ) {
         let mut lights: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS * 4);
         let mut shadows: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS);
+        let mut splits: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS);
         if let (Some(storage), Some(worlds)) =
             (world.storage::<Light>(), world.storage::<WorldMatrix>())
         {
@@ -87,24 +102,34 @@ impl LightsBlock {
                     break;
                 }
                 lights.extend(light.packed(&m.0));
-                // x its shadow map's layer (−1: none), y the normal bias, z 1
-                // for a perspective (spot) one.
-                shadows.push(match layers.get(&e) {
-                    Some(&i) => {
-                        let v = &views[i];
-                        let persp = if v.perspective { 1.0 } else { 0.0 };
-                        Vec4::new(i as f32, v.normal_bias, persp, 0.0)
+                // x its first layer (−1: none), y how many, z 1 for a
+                // perspective (spot) one.
+                match slots.get(&e) {
+                    Some(slot) => {
+                        let persp = if slot.perspective { 1.0 } else { 0.0 };
+                        shadows.push(Vec4::new(slot.first as f32, slot.count as f32, persp, 0.0));
+                        splits.push(Vec4::from_array(slot.splits));
                     }
-                    None => NO_SHADOW,
-                });
+                    None => {
+                        shadows.push(NO_SHADOW);
+                        splits.push(Vec4::splat(f32::MAX));
+                    }
+                }
             }
         }
         let count = shadows.len();
         shadows.resize(MAX_LIGHTS, NO_SHADOW);
+        splits.resize(MAX_LIGHTS, Vec4::splat(f32::MAX));
         let mut data = lights;
-        data.push(Vec4::new(count as f32, 0.0, 0.0, 0.0));
+        let debug = if debug { 1.0 } else { 0.0 };
+        data.push(Vec4::new(count as f32, debug, overlap, 0.0));
         data.extend(shadows);
-        for i in 0..MAX_SHADOWS {
+        data.extend(splits);
+        for i in 0..MAX_SHADOW_LAYERS {
+            let bias = views.get(i).map_or(0.0, |v| v.normal_bias);
+            data.push(Vec4::new(bias, 0.0, 0.0, 0.0));
+        }
+        for i in 0..MAX_SHADOW_LAYERS {
             let m = views.get(i).map_or(Mat4::IDENTITY, |v| v.to_map);
             data.extend([m.x_axis, m.y_axis, m.z_axis, m.w_axis]);
         }
@@ -119,16 +144,24 @@ impl LightsBlock {
                 ctx.ubo_set_vec4(ubo, &path, v.x, v.y, v.z, v.w);
             }
         }
-        let c = data[count * 4];
+        let mut at = count * 4;
+        let c = data[at];
         ctx.ubo_set_vec4(ubo, "u_light_count", c.x, c.y, c.z, c.w);
-        let shadows_at = count * 4 + 1;
-        for i in 0..MAX_LIGHTS {
-            let v = data[shadows_at + i];
-            ctx.ubo_set_vec4(ubo, &format!("u_light_shadows[{i}]"), v.x, v.y, v.z, v.w);
+        at += 1;
+        for (name, n) in [
+            ("u_light_shadows", MAX_LIGHTS),
+            ("u_shadow_splits", MAX_LIGHTS),
+            ("u_shadow_layers", MAX_SHADOW_LAYERS),
+        ] {
+            for i in 0..n {
+                let v = data[at + i];
+                ctx.ubo_set_vec4(ubo, &format!("{name}[{i}]"), v.x, v.y, v.z, v.w);
+            }
+            at += n;
         }
-        for i in 0..MAX_SHADOWS {
-            let at = shadows_at + MAX_LIGHTS + i * 4;
-            let cols: Vec<f32> = data[at..at + 4].iter().flat_map(|c| c.to_array()).collect();
+        for i in 0..MAX_SHADOW_LAYERS {
+            let m = at + i * 4;
+            let cols: Vec<f32> = data[m..m + 4].iter().flat_map(|c| c.to_array()).collect();
             ctx.ubo_set_mat(ubo, &format!("u_shadow_matrices[{i}]"), &cols);
         }
         self.held = data;

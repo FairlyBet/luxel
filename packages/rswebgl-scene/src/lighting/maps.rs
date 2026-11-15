@@ -26,8 +26,9 @@ use super::settings::LightShadow;
 use super::views::ShadowView;
 use crate::render::FRAME_BLOCK;
 
-/// Shadow-casting lights a frame shades with (more are left unshadowed).
-pub const MAX_SHADOWS: usize = 4;
+/// Shadow-map layers a frame draws: a spot light takes one, a directional
+/// light one per cascade (lights past them shine unshadowed).
+pub const MAX_SHADOW_LAYERS: usize = 8;
 
 /// The GPU side: the depth array (one layer per shadowing light), a
 /// framebuffer, frame block and pass per layer.
@@ -59,7 +60,7 @@ impl ShadowMaps {
         let mut undo = rswebgl::undo::Undo::new(ctx);
         let mut ubos = Vec::new();
         let mut groups = Vec::new();
-        for _ in 0..MAX_SHADOWS {
+        for _ in 0..MAX_SHADOW_LAYERS {
             let ubo = ctx.create_uniform_buffer(
                 &UboLayout::new()
                     .field("u_view", UniformType::Mat4)
@@ -86,7 +87,7 @@ impl ShadowMaps {
             fbs: Vec::new(),
             ubos,
             groups,
-            passes: (0..MAX_SHADOWS).map(|_| Pass::to_default()).collect(),
+            passes: (0..MAX_SHADOW_LAYERS).map(|_| Pass::to_default()).collect(),
             views: Vec::new(),
             reverse_z: false,
         };
@@ -127,7 +128,7 @@ impl ShadowMaps {
         layers: usize,
         depth16: bool,
     ) -> Result<(), Error> {
-        let layers = layers.clamp(1, MAX_SHADOWS);
+        let layers = layers.clamp(1, MAX_SHADOW_LAYERS);
         if size == self.size && layers == self.layers && depth16 == self.depth16 {
             return Ok(());
         }

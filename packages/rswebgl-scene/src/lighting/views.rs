@@ -1,20 +1,35 @@
 //! The shadow cameras: where each shadowing light looks from and what its
-//! map covers. Math only (no GL): fitted to the casters' bounds (all of
-//! them, not the view) — stable as the camera moves, sharp for a model,
-//! coarse for a large scene (cascades are for later).
+//! map covers. Math only (no GL).
+//!
+//! A spot light's map is fitted to the casters in front of it. A
+//! directional light's is fitted to the casters' bounds (all of them, not
+//! the view) — stable as the camera moves, sharp for a model — or, when the
+//! view sees a large scene, split into cascades along the view: slices of
+//! the view frustum, the nearest the smallest, each with its own map
+//! (`cascades`). A cascade that would cover more than the casters' fit is
+//! replaced by that fit, and is the last: a model in view keeps one sharp
+//! map however many cascades are allowed.
 
 use glam::{Mat4, Vec3, Vec4};
 use rswebgl_ecs::World;
 
 use super::light::{Light, LightKind};
 use super::settings::{LightShadow, ShadowCaster};
+use crate::camera::{Camera, Projection};
 use crate::culling::Bounds;
 use crate::model::Skin;
 use crate::render::Visible;
 use crate::render::hidden;
 use crate::transform::WorldMatrix;
 
-/// One shadowing light's camera this frame.
+/// Cascades a directional light splits into at most.
+pub const MAX_CASCADES: usize = 4;
+/// How far each cascade reaches back into the one before it, as a part of
+/// that one's far bound; the shader blends across it (as Bevy's
+/// `overlap_proportion`).
+pub const CASCADE_OVERLAP: f32 = 0.2;
+
+/// One shadow map's camera this frame.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ShadowView {
     /// Clip space of the shadow pass.
@@ -26,6 +41,24 @@ pub(crate) struct ShadowView {
     pub normal_bias: f32,
     pub perspective: bool,
     pub state: LightShadow,
+    /// An orthographic map's side in world units (0 for a spot's).
+    pub extent: f32,
+}
+
+/// The camera the cascades split: its world matrix and projection.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ViewCamera {
+    pub world: Mat4,
+    pub camera: Camera,
+}
+
+/// A directional light's maps this frame: the cascades nearest first, and
+/// how far along the view (camera-space depth) each reaches. The last one
+/// reaches everything beyond (`f32::MAX`).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CascadeViews {
+    pub views: Vec<ShadowView>,
+    pub far_bounds: Vec<f32>,
 }
 
 /// `light`'s shadow camera (its world matrix `world`), fitted around the
@@ -43,17 +76,11 @@ pub(crate) fn shadow_view(
     if !(min.is_finite() && max.is_finite()) || min.cmpgt(max).any() {
         return None;
     }
-    let corners: [Vec3; 8] = std::array::from_fn(|i| {
-        Vec3::new(
-            if i & 1 == 0 { min.x } else { max.x },
-            if i & 2 == 0 { min.y } else { max.y },
-            if i & 4 == 0 { min.z } else { max.z },
-        )
-    });
-    let dir = (-world.z_axis.truncate()).normalize_or(Vec3::NEG_Z);
+    let corners = box_corners(bounds);
+    let dir = light_direction(world);
     let up = if dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y };
     let texels = size.max(1) as f32;
-    let (view, proj, normal_bias, perspective) = match light.kind {
+    match light.kind {
         LightKind::Directional => {
             let center = (min + max) * 0.5;
             let radius = ((max - min).length() * 0.5).max(1e-4);
@@ -69,13 +96,17 @@ pub(crate) fn shadow_view(
             let pad = (hi - lo).max_element() * 0.02 + 1e-4;
             let (l, r, b, t) = (lo.x - pad, hi.x + pad, lo.y - pad, hi.y + pad);
             let (near, far) = ((-hi.z - pad).max(1e-4), -lo.z + pad);
-            let proj = if reverse_z {
-                Mat4::orthographic_rh(l, r, b, t, far, near)
-            } else {
-                Mat4::orthographic_rh_gl(l, r, b, t, near, far)
-            };
-            let texel = (r - l).max(t - b) / texels;
-            (view, proj, settings.normal_bias * texel, false)
+            let proj = ortho(l, r, b, t, near, far, reverse_z);
+            let extent = (r - l).max(t - b);
+            let bias = settings.normal_bias * extent / texels;
+            Some(finish(
+                proj * view,
+                bias,
+                false,
+                settings,
+                extent,
+                reverse_z,
+            ))
         }
         LightKind::Spot { outer_cone, .. } => {
             let eye = world.w_axis.truncate();
@@ -99,13 +130,229 @@ pub(crate) fn shadow_view(
             };
             // A texel's width one unit of depth away.
             let texel = 2.0 * (fov * 0.5).tan() / texels;
-            (view, proj, settings.normal_bias * texel, true)
+            let bias = settings.normal_bias * texel;
+            Some(finish(proj * view, bias, true, settings, 0.0, reverse_z))
         }
-        LightKind::Point => return None,
+        LightKind::Point => None,
+    }
+}
+
+/// A directional light's cascades for the view of `camera`: the part of
+/// the view the casters' box `bounds` spans (up to `max_distance` when
+/// set) split by the practical scheme (Zhang et al. 2006, PSSM: λ between
+/// logarithmic and uniform). Each slice fitted as Bevy's
+/// `calculate_cascade` (MJP's stable cascades): a square as wide as the
+/// slice's largest diagonal — the same however the camera turns — moved in
+/// whole texels, so its texels don't swim. Its depth reaches back to the
+/// casters toward the light (WebGL2 has no depth clamp).
+pub(crate) fn cascade_views(
+    light_world: &Mat4,
+    camera: &ViewCamera,
+    bounds: (Vec3, Vec3),
+    size: u32,
+    reverse_z: bool,
+    settings: LightShadow,
+) -> CascadeViews {
+    let light = Light::directional(Vec3::ONE, 1.0);
+    let Some(fit) = shadow_view(&light, light_world, bounds, size, reverse_z, settings) else {
+        return CascadeViews::default();
     };
-    let view_proj = proj * view;
-    // Clip → texture coordinates and stored depth: x, y from [−1, 1];
-    // z from [−1, 1] too, or as it is under reverse-Z (zero-to-one).
+    let whole = CascadeViews {
+        views: vec![fit],
+        far_bounds: vec![f32::MAX],
+    };
+    let count = (settings.cascades as usize).clamp(1, MAX_CASCADES);
+    let Some((near, far)) = view_depth_range(camera, bounds, settings.max_distance) else {
+        return whole;
+    };
+    if count == 1 {
+        return whole;
+    }
+
+    // The light's rotation alone (orthonormal, no translation): what
+    // keeps the cascades steady (Bevy's world_from_light).
+    let dir = light_direction(light_world);
+    let up = if dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y };
+    let z = -dir;
+    let x = up.cross(z).normalize();
+    let y = z.cross(x);
+    let light_from_world =
+        Mat4::from_cols(x.extend(0.0), y.extend(0.0), z.extend(0.0), Vec4::W).transpose();
+    // The casters' depth range along the light (−z is away from it).
+    let (mut cz_lo, mut cz_hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for c in box_corners(bounds) {
+        let p = light_from_world.transform_point3(c);
+        cz_lo = cz_lo.min(p.z);
+        cz_hi = cz_hi.max(p.z);
+    }
+    let light_from_camera = light_from_world * camera.world;
+    let texels = size.max(1) as f32;
+    let far_bounds = split_depths(near, far, count, settings.split_lambda);
+
+    let mut out = CascadeViews::default();
+    let mut slice_near = near;
+    for (i, &slice_far) in far_bounds.iter().enumerate() {
+        let corners = slice_corners(&camera.camera, slice_near, slice_far);
+        // Bevy's diameter: the larger of the slice's body and far-plane
+        // diagonals — rounded up in eighths of its power of two (Bevy
+        // rounds to whole units, which suits metres, not a ring).
+        let body = (corners[0] - corners[6]).length();
+        let far_plane = (corners[4] - corners[6]).length();
+        let diameter = round_up(body.max(far_plane));
+        if fit.extent <= diameter {
+            // The casters' fit is as sharp: it covers the rest.
+            out.views.push(fit);
+            out.far_bounds.push(f32::MAX);
+            return out;
+        }
+        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for c in corners {
+            let p = light_from_camera.transform_point3(c);
+            lo = lo.min(p);
+            hi = hi.max(p);
+        }
+        // The slice's center moved to whole texels (Bevy's near_plane_center).
+        let texel = diameter / texels;
+        let cx = (0.5 * (lo.x + hi.x) / texel).floor() * texel;
+        let cy = (0.5 * (lo.y + hi.y) / texel).floor() * texel;
+        // Toward the light as far as the casters go; away from it only as
+        // far as both the slice and the casters (nothing beyond casts).
+        let z_near = hi.z.max(cz_hi);
+        let z_far = lo.z.max(cz_lo);
+        let pad = (z_near - z_far).abs() * 0.01 + texel;
+        let (n, f) = (-(z_near + pad), -(z_far - pad));
+        let h = diameter * 0.5;
+        let view = Mat4::from_translation(Vec3::new(-cx, -cy, 0.0)) * light_from_world;
+        let proj = ortho(-h, h, -h, h, n, f, reverse_z);
+        let bias = settings.normal_bias * texel;
+        out.views.push(finish(
+            proj * view,
+            bias,
+            false,
+            settings,
+            diameter,
+            reverse_z,
+        ));
+        let last = i + 1 == count;
+        out.far_bounds.push(if last { f32::MAX } else { slice_far });
+        // The next slice starts inside this one: the shader blends there.
+        slice_near = slice_far * (1.0 - CASCADE_OVERLAP);
+    }
+    out
+}
+
+// The far bounds of `count` slices of [near, far]: the practical split,
+// λ of the logarithmic one plus 1 − λ of the uniform.
+fn split_depths(near: f32, far: f32, count: usize, lambda: f32) -> Vec<f32> {
+    let lambda = lambda.clamp(0.0, 1.0);
+    (1..=count)
+        .map(|i| {
+            let t = i as f32 / count as f32;
+            let log = near * (far / near).powf(t);
+            let uniform = near + (far - near) * t;
+            lambda * log + (1.0 - lambda) * uniform
+        })
+        .collect()
+}
+
+// The depths along the view (positive, camera space) the casters' box
+// spans, within the camera's near and far and `max_distance` (0: none).
+fn view_depth_range(
+    camera: &ViewCamera,
+    bounds: (Vec3, Vec3),
+    max_distance: f32,
+) -> Option<(f32, f32)> {
+    let view = camera.world.inverse();
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for c in box_corners(bounds) {
+        let d = -view.transform_point3(c).z;
+        lo = lo.min(d);
+        hi = hi.max(d);
+    }
+    let (cam_near, cam_far) = match camera.camera.projection {
+        Projection::Perspective { near, far, .. } | Projection::Orthographic { near, far, .. } => {
+            (near, far)
+        }
+    };
+    let near = lo.max(cam_near);
+    let mut far = hi.min(cam_far);
+    if max_distance > 0.0 {
+        far = far.min(max_distance);
+    }
+    (near.is_finite() && far > near * 1.001 && near > 0.0).then_some((near, far))
+}
+
+// The 8 corners (camera space) of the view between depths `near` and
+// `far`: the near plane's four, then the far plane's, each as Bevy orders
+// them (bottom right, top right, top left, bottom left).
+fn slice_corners(camera: &Camera, near: f32, far: f32) -> [Vec3; 8] {
+    let aspect = if camera.aspect > 0.0 {
+        camera.aspect
+    } else {
+        1.0
+    };
+    let half = |d: f32| match camera.projection {
+        Projection::Perspective { fov_y, .. } => d * (fov_y * 0.5).tan(),
+        Projection::Orthographic { half_height, .. } => half_height,
+    };
+    let plane = |d: f32| {
+        let h = half(d);
+        let w = h * aspect;
+        [
+            Vec3::new(w, -h, -d),
+            Vec3::new(w, h, -d),
+            Vec3::new(-w, h, -d),
+            Vec3::new(-w, -h, -d),
+        ]
+    };
+    let (a, b) = (plane(near), plane(far));
+    [a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]]
+}
+
+// `d` rounded up to a multiple of an eighth of its power of two: changes
+// only in steps, so a cascade's texels stay put while it holds.
+fn round_up(d: f32) -> f32 {
+    if d.is_nan() || d <= 0.0 || d.is_infinite() {
+        return d.max(1e-4);
+    }
+    let step = 2f32.powi(d.log2().floor() as i32 - 3);
+    (d / step).ceil() * step
+}
+
+fn light_direction(world: &Mat4) -> Vec3 {
+    (-world.z_axis.truncate()).normalize_or(Vec3::NEG_Z)
+}
+
+fn box_corners((min, max): (Vec3, Vec3)) -> [Vec3; 8] {
+    std::array::from_fn(|i| {
+        Vec3::new(
+            if i & 1 == 0 { min.x } else { max.x },
+            if i & 2 == 0 { min.y } else { max.y },
+            if i & 4 == 0 { min.z } else { max.z },
+        )
+    })
+}
+
+// An orthographic projection, GL's or reverse-Z's (zero-to-one, near → 1).
+fn ortho(l: f32, r: f32, b: f32, t: f32, near: f32, far: f32, reverse_z: bool) -> Mat4 {
+    if reverse_z {
+        Mat4::orthographic_rh(l, r, b, t, far, near)
+    } else {
+        Mat4::orthographic_rh_gl(l, r, b, t, near, far)
+    }
+}
+
+// The view with its world → map matrix: clip → texture coordinates and
+// stored depth (x, y from [−1, 1]; z from [−1, 1] too, or as it is under
+// reverse-Z: zero-to-one).
+fn finish(
+    view_proj: Mat4,
+    normal_bias: f32,
+    perspective: bool,
+    state: LightShadow,
+    extent: f32,
+    reverse_z: bool,
+) -> ShadowView {
     let z = if reverse_z { (1.0, 0.0) } else { (0.5, 0.5) };
     let window = Mat4::from_cols(
         Vec4::new(0.5, 0.0, 0.0, 0.0),
@@ -113,13 +360,14 @@ pub(crate) fn shadow_view(
         Vec4::new(0.0, 0.0, z.0, 0.0),
         Vec4::new(0.5, 0.5, z.1, 1.0),
     );
-    Some(ShadowView {
+    ShadowView {
         view_proj,
         to_map: window * view_proj,
         normal_bias,
         perspective,
-        state: settings,
-    })
+        state,
+        extent,
+    }
 }
 
 // The world box around every visible shadow caster: its bounds, or for a
@@ -168,4 +416,98 @@ pub(crate) fn caster_bounds(world: &World) -> Option<(Vec3, Vec3)> {
         }
     }
     (lo.x <= hi.x).then_some((lo, hi))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A sun from above and a little to the side.
+    fn sun() -> Mat4 {
+        Mat4::look_at_rh(Vec3::new(1.0, 4.0, 0.5), Vec3::ZERO, Vec3::Y).inverse()
+    }
+
+    // A camera at `eye` looking at `at` (60° fov, 16:9).
+    fn camera(eye: Vec3, at: Vec3) -> ViewCamera {
+        ViewCamera {
+            world: Mat4::look_at_rh(eye, at, Vec3::Y).inverse(),
+            camera: Camera::perspective(1.05, 16.0 / 9.0, 0.1, 1000.0),
+        }
+    }
+
+    fn settings(cascades: u32) -> LightShadow {
+        LightShadow {
+            cascades,
+            ..LightShadow::default()
+        }
+    }
+
+    #[test]
+    fn splits_grow_to_the_far_end() {
+        let s = split_depths(1.0, 100.0, 3, 0.5);
+        assert_eq!(s.len(), 3);
+        assert!(s[0] < s[1] && s[1] < s[2]);
+        assert!((s[2] - 100.0).abs() < 1e-3);
+        // Between the uniform split (34) and the logarithmic one (4.6).
+        assert!(s[0] > 4.6 && s[0] < 34.0, "{s:?}");
+    }
+
+    #[test]
+    fn a_model_in_view_keeps_one_map_fitted_to_it() {
+        let model = (Vec3::splat(-0.5), Vec3::splat(0.5));
+        let cam = camera(Vec3::new(0.0, 0.5, 3.0), Vec3::ZERO);
+        let c = cascade_views(&sun(), &cam, model, 2048, false, settings(3));
+        assert_eq!(c.views.len(), 1, "{:?}", c.far_bounds);
+        assert_eq!(c.far_bounds, vec![f32::MAX]);
+    }
+
+    #[test]
+    fn a_large_scene_splits_into_cascades_nearest_smallest() {
+        let ground = (
+            Vec3::new(-200.0, -1.0, -200.0),
+            Vec3::new(200.0, 5.0, 200.0),
+        );
+        let cam = camera(Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 1.0, -10.0));
+        let c = cascade_views(&sun(), &cam, ground, 2048, false, settings(3));
+        assert_eq!(c.views.len(), 3);
+        let e: Vec<f32> = c.views.iter().map(|v| v.extent).collect();
+        assert!(e[0] < e[1] && e[1] <= e[2], "{e:?}");
+        assert!(c.far_bounds[0] < c.far_bounds[1]);
+        assert_eq!(c.far_bounds[2], f32::MAX);
+        // A point just ahead of the eye on the ground is inside the first.
+        let p = c.views[0].to_map.project_point3(Vec3::new(0.0, 0.0, -1.0));
+        assert!(p.cmpge(Vec3::ZERO).all() && p.cmple(Vec3::ONE).all(), "{p}");
+        // One cascade only: the casters' fit.
+        let one = cascade_views(&sun(), &cam, ground, 2048, false, settings(1));
+        assert_eq!(one.views.len(), 1);
+    }
+
+    // Moving the camera a little moves a cascade's texels by whole texels
+    // (or not at all): its shadows don't swim.
+    #[test]
+    fn cascades_move_in_whole_texels() {
+        let ground = (
+            Vec3::new(-200.0, -1.0, -200.0),
+            Vec3::new(200.0, 5.0, 200.0),
+        );
+        let a = camera(Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 1.0, -10.0));
+        let step = Vec3::new(0.013, 0.0, 0.007);
+        let b = camera(
+            Vec3::new(0.0, 2.0, 0.0) + step,
+            Vec3::new(0.0, 1.0, -10.0) + step,
+        );
+        let ca = cascade_views(&sun(), &a, ground, 2048, false, settings(3));
+        let cb = cascade_views(&sun(), &b, ground, 2048, false, settings(3));
+        assert_eq!(ca.views[0].extent, cb.views[0].extent);
+        let p = Vec3::new(3.0, 0.0, -7.0);
+        let (pa, pb) = (
+            ca.views[0].to_map.project_point3(p),
+            cb.views[0].to_map.project_point3(p),
+        );
+        let d = (pb - pa).truncate() * 2048.0;
+        assert!(
+            (d - d.round()).abs().max_element() < 1e-2,
+            "moved {d} texels"
+        );
+    }
 }

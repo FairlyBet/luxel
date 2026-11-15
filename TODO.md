@@ -29,15 +29,19 @@ blending, the display's divide, TAA, the glass copy).
 1. **More shadows** (next): directional and spot shadow maps are in
    (`castShadow`, the `lighting` module — `LightingSystem` owns lights and
    shadows: settings, views, maps, casters, the `Lights` block — and
-   `shadows.glsl`; `setShadowDepthBits(16)` halves their memory: a depth layer per light,
-   hardware PCF filtered 3×3 as Filament's PCF_Low, normal and polygon-offset
-   biases, the light's camera fitted to the casters). Left: cascades for
-   large scenes (the fit is to all casters, so a big scene gets coarse
-   shadows); point lights (a cube map); not redrawing maps whose light and
-   casters didn't move; batching casters into instanced draws. Then
-   screen-space contact shadows (a short march toward the light through the depth buffer; MSAA
-   needs a resolved depth). For environment-only scenes: GTAO (XeGTAO, as
-   Godot / Bevy) and a ground shadow (three.js' contact-shadows example).
+   `shadows.glsl`): hardware PCF filtered 3×3 as Filament's PCF_Low, normal
+   and polygon-offset biases; `setShadowDepthBits(16)` halves their memory
+   (the viewer's default on phones). Directional lights split into up to 4
+   cascades along the view (`shadowCascades`, default 3; Bevy's stable fit,
+   blended across their overlap, `setShadowCascadeDebug` tints them); a
+   cascade wider than the map fitted to the casters is replaced by that
+   fit, so a model in view keeps one sharp map. Left: point lights (6
+   layers); not redrawing maps whose light and casters didn't move, and
+   freezing them for a static scene; batching casters into instanced draws;
+   a per-light map size (an atlas). Then screen-space contact shadows (a
+   short march toward the light through the depth buffer; MSAA needs a
+   resolved depth). For environment-only scenes: GTAO (XeGTAO, as Godot /
+   Bevy) and a ground shadow (three.js' contact-shadows example).
 2. **Runtime texture compression**: done (`TextureCompressor`,
    `setTextureCompression`, on by default; fragment-shader encoders, PBO to
    compressed storage on the GPU). BC1 / BC3 / BC5 on desktops (Betsy), ETC2

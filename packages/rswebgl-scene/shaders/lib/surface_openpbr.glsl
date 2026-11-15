@@ -290,7 +290,7 @@ vec3 shade_openpbr(Surface s) {
         if (i >= count) break;
         Light light = u_lights[i];
         vec3 l;
-        vec3 radiance = light_radiance(light, s.position, l) * light_shadow(i, light, s.position, s.ng);
+        vec3 radiance = light_radiance(light, s.position, l) * light_shadow_rgb(i, light, s.position, s.ng);
         vec3 h = normalize(l + v);
         float NdotL = dot(n, l);
         float VdotH = clamp(dot(v, h), 0.0, 1.0);

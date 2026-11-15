@@ -718,7 +718,12 @@ impl SceneRenderer {
             return self.stats;
         };
         self.frame_bases.clear();
-        self.lights.prepare(world, ctx, self.frame_group);
+        let view_camera = world
+            .get::<Camera>(camera)
+            .zip(world.get::<WorldMatrix>(camera))
+            .map(|(c, m)| (*c, m.0));
+        self.lights
+            .prepare(world, ctx, self.frame_group, view_camera);
         self.write_lighting(ctx);
         self.push_background(ctx, opaque);
         let frustum = Frustum::from_view_proj_depth(&view_proj, ctx.reverse_z());
@@ -921,6 +926,16 @@ impl SceneRenderer {
 
     pub fn shadow_depth16(&self) -> bool {
         self.lights.shadow_depth16()
+    }
+
+    /// Tints what each shadow cascade shades, to see where they split.
+    pub fn set_debug_cascades(&mut self, on: bool) {
+        self.lights.set_debug_cascades(on);
+    }
+
+    /// Shadow maps drawn this frame.
+    pub fn shadow_views(&self) -> usize {
+        self.lights.shadow_views()
     }
 
     /// The shadow maps' memory, in bytes.

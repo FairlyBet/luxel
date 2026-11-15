@@ -167,8 +167,105 @@ async fn a_shadow_falls_where_the_light_is_blocked() {
     let full = scene.shadow_memory();
     scene.set_shadow_depth_bits(16).unwrap();
     let (shadowed, lit) = sides(&gl, &mut scene, camera).await;
-    assert!(lit > 60 && shadowed < lit / 4, "16-bit: {shadowed} vs {lit}");
+    assert!(
+        lit > 60 && shadowed < lit / 4,
+        "16-bit: {shadowed} vs {lit}"
+    );
     assert_eq!(scene.shadow_memory(), full / 2.0, "16-bit: half the memory");
     assert!(scene.set_shadow_depth_bits(32).is_err());
+    scene.destroy();
+}
+
+// Cascades: the same square and floor, plus a second copy 100× as large far
+// off to the side, so the casters' box is hundreds of units wide. One map
+// fitted to it has texels wider than the square, and its shadow blurs
+// away; cascades along the view keep a map as wide as what the camera
+// sees, and the shadow sharp.
+#[wasm_bindgen_test]
+async fn cascades_keep_a_small_shadow_in_a_large_scene() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    scene.set_shadow_map_size(256);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    let big = scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    scene.set_translation(big, 0.0, 300.0, 0.0);
+    scene.set_scale(big, 100.0, 100.0, 1.0);
+    let sun = scene.spawn();
+    scene.look_at(sun, &[4.0, 0.0, 8.0], &[0.0, 0.0, 0.0]);
+    let light = |cascades: u32| {
+        js_sys::JSON::parse(&format!(
+            r#"{{ "type": "directional", "intensity": 3, "castShadow": true,
+                 "shadowCascades": {cascades} }}"#
+        ))
+        .unwrap()
+    };
+
+    scene.set_light(sun, light(1)).unwrap();
+    let (blurred, _) = sides(&gl, &mut scene, camera).await;
+    assert_eq!(scene.shadow_maps_drawn(), 1);
+
+    scene.set_light(sun, light(3)).unwrap();
+    let (shadowed, lit) = sides(&gl, &mut scene, camera).await;
+    assert!(
+        scene.shadow_maps_drawn() >= 2,
+        "{}",
+        scene.shadow_maps_drawn()
+    );
+    assert!(
+        lit > 60 && shadowed < lit / 4,
+        "cascades: {shadowed} vs {lit}"
+    );
+    assert!(
+        blurred > shadowed * 2,
+        "one map over everything is coarser: {blurred} vs {shadowed}"
+    );
+
+    // Debugging the cascades tints the lit floor (it is the farthest of the
+    // casters from the eye: the last cascade, blue).
+    scene.set_shadow_cascade_debug(true);
+    wasm_bindgen_futures::JsFuture::from(scene.when_ready())
+        .await
+        .unwrap();
+    scene.render_frame(camera);
+    let mut px = [0u8; 4];
+    gl.read_pixels_with_opt_u8_array(
+        24,
+        SIZE / 2,
+        1,
+        1,
+        Gl::RGBA,
+        Gl::UNSIGNED_BYTE,
+        Some(&mut px),
+    )
+    .unwrap();
+    assert!(px[2] as u32 > px[0] as u32 * 3 / 2, "tinted blue: {px:?}");
     scene.destroy();
 }

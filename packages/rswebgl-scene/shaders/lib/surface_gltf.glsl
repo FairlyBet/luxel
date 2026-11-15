@@ -123,7 +123,7 @@ vec3 shade_gltf(Surface s) {
         vec3 dielectric_fresnel = F_Schlick(f0_dielectric * specular_weight, f90_dielectric, VdotH);
         vec3 metal_fresnel = F_Schlick(base, vec3(1.0), VdotH);
         vec3 intensity = light.color.rgb * light.color.w * light_attenuation(light, to_light)
-            * light_shadow(i, light, s.position, s.ng);
+            * light_shadow_rgb(i, light, s.position, s.ng);
 
         vec3 l_diffuse = intensity * NdotL * base * INV_PI;
 #ifdef HAS_DIFFUSE_TRANSMISSION

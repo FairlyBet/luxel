@@ -30,6 +30,16 @@ export interface LightOptions {
   shadowNormalBias?: number;
   shadowSlopeBias?: number;
   shadowConstantBias?: number;
+  /** Directional: the most cascades its shadow splits into along the view
+   *  (1–4; default 3). Only where the view sees more than a model: one in
+   *  view keeps one map fitted to it. */
+  shadowCascades?: number;
+  /** Directional: how the cascades split, from uniform slices (0) to
+   *  logarithmic ones (1, more texels near the eye); default 0.5. */
+  shadowSplitLambda?: number;
+  /** Directional: no shadows farther along the view (0, the default: as
+   *  far as the casters reach). */
+  shadowMaxDistance?: number;
 }
 
 /** A camera. It looks down its entity's −Z, +Y up. */

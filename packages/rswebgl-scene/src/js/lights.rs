@@ -107,7 +107,13 @@ impl Scene {
                 normal_bias: options::f32_or(&light, "shadowNormalBias", d.normal_bias)?,
                 slope_bias: options::f32_or(&light, "shadowSlopeBias", d.slope_bias)?,
                 constant_bias: options::f32_or(&light, "shadowConstantBias", d.constant_bias)?,
+                cascades: options::u32_or(&light, "shadowCascades", d.cascades)?,
+                split_lambda: options::f32_or(&light, "shadowSplitLambda", d.split_lambda)?,
+                max_distance: options::f32_or(&light, "shadowMaxDistance", d.max_distance)?,
             };
+            if !(1..=crate::lighting::MAX_CASCADES as u32).contains(&shadow.cascades) {
+                return Err("setLight: shadowCascades is 1 to 4".into());
+            }
             self.world.insert(e, shadow);
         } else {
             self.world.remove::<LightShadow>(e);
@@ -147,7 +153,25 @@ impl Scene {
 
     #[wasm_bindgen(js_name = shadowDepthBits)]
     pub fn shadow_depth_bits(&self) -> u32 {
-        if self.renderer.shadow_depth16() { 16 } else { 24 }
+        if self.renderer.shadow_depth16() {
+            16
+        } else {
+            24
+        }
+    }
+
+    /// Tints what each shadow cascade shades — red, green, blue, yellow,
+    /// nearest first — to see where they split. Default off.
+    #[wasm_bindgen(js_name = setShadowCascadeDebug)]
+    pub fn set_shadow_cascade_debug(&mut self, on: bool) {
+        self.renderer.set_debug_cascades(on);
+    }
+
+    /// Shadow maps drawn last frame: one per spot light, one per cascade
+    /// of a directional light.
+    #[wasm_bindgen(js_name = shadowMapsDrawn)]
+    pub fn shadow_maps_drawn(&self) -> u32 {
+        self.renderer.shadow_views() as u32
     }
 
     /// Bytes the shadow maps take now (all layers).

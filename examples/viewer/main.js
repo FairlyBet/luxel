@@ -214,7 +214,11 @@ let lightIntensity = 2;
 // (and a smaller map when turned on).
 const coarse = matchMedia("(pointer: coarse)").matches;
 let castShadow = !coarse;
-if (coarse) scene.setShadowMapSize(1024);
+// Phones: a smaller map, 16-bit (a quarter of the desktop's memory).
+if (coarse) {
+  scene.setShadowMapSize(1024);
+  scene.setShadowDepthBits(16);
+}
 const setLight = () =>
   scene.setLight(light, { type: "directional", intensity: lightIntensity, castShadow });
 setLight();
@@ -222,6 +226,10 @@ $("shadows").checked = castShadow;
 $("shadows").addEventListener("change", () => {
   castShadow = $("shadows").checked;
   setLight();
+});
+$("shadow-cascades").addEventListener("change", () => {
+  scene.setShadowCascadeDebug($("shadow-cascades").checked);
+  invalidate();
 });
 
 // Orbit with one pointer, zoom with the wheel or two; a tap picks.

@@ -9,11 +9,20 @@ use rswebgl::ids::ProgramId;
 /// units (polygon offset), the receiver moved along its normal by
 /// `normal_bias` shadow-map texels. Raise them for shadow acne (stripes on
 /// lit surfaces), lower them for peter-panning (shadows coming loose).
+///
+/// A directional light's map splits into up to `cascades` along the
+/// view where the view sees more than a model (1–4; see `views`):
+/// `split_lambda` between uniform slices (0) and logarithmic ones (1,
+/// more of the map near the eye); `max_distance` (> 0) ends shadows that
+/// far along the view.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LightShadow {
     pub normal_bias: f32,
     pub slope_bias: f32,
     pub constant_bias: f32,
+    pub cascades: u32,
+    pub split_lambda: f32,
+    pub max_distance: f32,
 }
 
 impl Default for LightShadow {
@@ -22,6 +31,9 @@ impl Default for LightShadow {
             normal_bias: 1.0,
             slope_bias: 2.0,
             constant_bias: 0.5,
+            cascades: 3,
+            split_lambda: 0.5,
+            max_distance: 0.0,
         }
     }
 }
