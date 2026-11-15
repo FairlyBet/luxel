@@ -29,9 +29,9 @@ thread_local! {
 /// after they decode (on by default): a 2048² map with mips goes from ~21 MB
 /// to ~2.8 MB (BC1: base color, emissive, occlusion / metallic-roughness)
 /// or ~5.6 MB (BC3: base color with alpha; BC5: normal maps), at some
-/// loss — blocks of 4×4 texels share two colors. Where the device has no
-/// such formats (S3TC / RGTC: most phones, for now) textures stay as they
-/// are. Off: full-quality RGBA8.
+/// loss — blocks of 4×4 texels share a few colors. Phones without S3TC get
+/// ETC2 / EAC instead (ETC2 RGB, ETC2 RGBA, RG11), the same sizes; where
+/// neither exists textures stay as they are. Off: full-quality RGBA8.
 #[wasm_bindgen(js_name = setTextureCompression)]
 pub fn set_texture_compression(on: bool) {
     ENABLED.with(|e| e.set(on));
