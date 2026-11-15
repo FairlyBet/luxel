@@ -403,7 +403,9 @@ impl Scene {
         material: ParamGroupId,
         map: &str,
         texture: TextureId,
-        #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: Option<JsValue>,
+        #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: Option<
+            JsValue,
+        >,
     ) -> Result<(), Error> {
         let opts = opts.unwrap_or(JsValue::UNDEFINED);
         self.sync_context();

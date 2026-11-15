@@ -25,7 +25,7 @@
 //! transforms.update(&mut world);
 //! let m = world.get::<WorldMatrix>(stone).unwrap().0;
 //! assert_eq!(m.w_axis.truncate(), Vec3::new(1.0, 2.0, 0.0));
-//! world.clear_trackers();
+//! world.trim_removed(transforms.last_run());
 //! ```
 
 mod animation;

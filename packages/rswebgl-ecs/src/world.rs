@@ -11,6 +11,18 @@ use crate::{Entity, Tick};
 /// Any `'static` type is a component; its storage is created on first use.
 /// Writes are stamped with the world's current tick, which is how systems find
 /// what changed since they last ran (see `advance_tick`).
+///
+/// **The tick rule.** A system starts with `let now = world.advance_tick()`,
+/// reads what changed after its previous `now` (its `last_run`), and stamps
+/// its own writes with `now` — through `Storage::get_mut(e, now)` /
+/// `iter_mut(now)`, or `World::insert_at` / `get_mut_at`.
+/// They are new to the systems that run after it, but not newer than its own
+/// `last_run`: it doesn't take its own writes for changes next time.
+/// `insert` / `get_mut` / `remove` stamp with `tick()`, newer than every
+/// `last_run` so far — for writes from outside systems (the app's).
+/// Removals are always logged at `tick()`: seen by every system, the one
+/// that removed included (seeing a removal twice is harmless, missing one
+/// isn't).
 pub struct World {
     entities: Pool<()>,
     storages: Vec<Box<dyn AnyStorage>>,
@@ -55,8 +67,9 @@ impl World {
         if !matches!(self.entities.destroy(e.0), Destroyed::Now(())) {
             return false;
         }
+        let tick = self.tick;
         for s in &mut self.storages {
-            s.remove_entity(e);
+            s.remove_entity(e, tick);
         }
         true
     }
@@ -87,7 +100,25 @@ impl World {
     }
 
     pub fn remove<T: 'static>(&mut self, e: Entity) -> Option<T> {
-        self.storage_mut_if_any::<T>()?.remove(e)
+        let tick = self.tick;
+        self.storage_mut_if_any::<T>()?.remove(e, tick)
+    }
+
+    /// `insert` stamped with `tick` — a system's own `now` (see the tick
+    /// rule above). A tick past `tick()` counts as `tick()` (it would read as
+    /// changed for good).
+    pub fn insert_at<T: 'static>(&mut self, e: Entity, value: T, tick: Tick) -> Option<T> {
+        if !self.is_alive(e) {
+            return None;
+        }
+        let tick = tick.min(self.tick);
+        self.storage_mut::<T>().insert(e, value, tick)
+    }
+
+    /// `get_mut` whose write is stamped with `tick` (no later than `tick()`).
+    pub fn get_mut_at<T: 'static>(&mut self, e: Entity, tick: Tick) -> Option<Mut<'_, T>> {
+        let tick = tick.min(self.tick);
+        self.storage_mut_if_any::<T>()?.get_mut(e, tick)
     }
 
     pub fn has<T: 'static>(&self, e: Entity) -> bool {
@@ -175,11 +206,12 @@ impl World {
         now
     }
 
-    /// Forgets which components were removed — call once per frame, after
-    /// every system that reads `Storage::removed` has run.
-    pub fn clear_trackers(&mut self) {
+    /// Forgets removals logged at or before `through` — the oldest
+    /// `last_run` among the systems that read `Storage::removed_since`, so
+    /// each has seen them. (Never trimmed, the logs grow with every removal.)
+    pub fn trim_removed(&mut self, through: Tick) {
         for s in &mut self.storages {
-            s.clear_removed();
+            s.trim_removed(through);
         }
     }
 }

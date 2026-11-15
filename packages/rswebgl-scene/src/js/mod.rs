@@ -1262,7 +1262,12 @@ impl Scene {
             let _s = tracing::info_span!("scene.shadows").entered();
             self.renderer.render_shadows(&self.ctx);
         }
-        self.world.clear_trackers();
+        // Removals both consumers have seen.
+        self.world.trim_removed(
+            self.transforms
+                .last_run()
+                .min(self.renderer.removals_checked()),
+        );
         self.stats.drawn
     }
 }

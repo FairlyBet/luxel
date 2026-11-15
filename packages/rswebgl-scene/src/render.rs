@@ -168,8 +168,7 @@ struct Object {
 
 /// Builds a pass's draw list from the world.
 ///
-/// Per frame, after `TransformSystem::update` and before
-/// `World::clear_trackers`:
+/// Per frame, after `TransformSystem::update`:
 ///
 /// ```ignore
 /// transforms.update(&mut world);
@@ -177,7 +176,7 @@ struct Object {
 /// scene.render(&world, &ctx, camera, &mut pass);
 /// pass.sort();
 /// ctx.render(&pass);
-/// world.clear_trackers();
+/// world.trim_removed(transforms.last_run().min(scene.removals_checked()));
 /// ```
 ///
 /// Owns one uniform buffer for the frame block and a parameter group per
@@ -224,7 +223,8 @@ pub struct SceneRenderer {
     f_object_id: ParamField,
     objects: HashMap<Entity, Object>,
     // MeshRenderer's removal count at the last sweep check.
-    removals_seen: u64,
+    // Removals logged after it are still to be looked at.
+    removals_checked: Tick,
     f_instance_base: ParamField,
     f_joint_base: ParamField,
     f_morph_base: ParamField,
@@ -371,7 +371,7 @@ impl SceneRenderer {
             f_normal: ctx.param_field(object_layout, NORMAL_MATRIX_UNIFORM)?,
             f_object_id: ctx.param_field(object_layout, OBJECT_ID_UNIFORM)?,
             objects: HashMap::new(),
-            removals_seen: 0,
+            removals_checked: 0,
             f_instance_base: ctx.param_field(object_layout, INSTANCE_BASE_UNIFORM)?,
             f_joint_base: ctx.param_field(object_layout, JOINT_BASE_UNIFORM)?,
             f_morph_base: ctx.param_field(object_layout, MORPH_BASE_UNIFORM)?,
@@ -1513,19 +1513,23 @@ impl SceneRenderer {
         Ok(picker.pick(ctx, &meshes, &view))
     }
 
-    // Groups of entities that no longer have a MeshRenderer. Seen through the
-    // removal log; a sweep also runs if there are more groups than meshes
-    // (removals missed because `clear_trackers` ran first).
+    // Groups of entities that no longer have a MeshRenderer, seen through
+    // the removal log since the last look; a sweep also runs if there are
+    // more groups than meshes (a log trimmed too early).
+    /// The tick through which it has looked at the removal logs:
+    /// `World::trim_removed` no further than this.
+    pub fn removals_checked(&self) -> Tick {
+        self.removals_checked
+    }
+
     fn release_removed(&mut self, world: &World, ctx: &Context) {
         let meshes = world.storage::<MeshRenderer>();
-        let logged = meshes.is_some_and(|m| !m.removed().is_empty());
+        let since = self.removals_checked;
+        // What's logged from here on is stamped at `tick()` or later.
+        self.removals_checked = world.tick().saturating_sub(1);
+        let removed = meshes.is_some_and(|m| m.any_removed_since(since));
         let live = meshes.map_or(0, |m| m.len());
-        // The storage's removal count catches what the log can't: a removal
-        // whose log was cleared before this frame, alongside an addition.
-        let removals = meshes.map_or(0, |m| m.removal_count());
-        let counted = removals != self.removals_seen;
-        self.removals_seen = removals;
-        if !logged && !counted && self.objects.len() <= live {
+        if !removed && self.objects.len() <= live {
             return;
         }
         self.objects.retain(|&e, o| {

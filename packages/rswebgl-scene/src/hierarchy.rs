@@ -27,8 +27,9 @@ struct Node {
 /// changed since the last update, plus their subtrees — a frame where nothing
 /// moved writes nothing.
 ///
-/// Call `update` once per frame **before** `World::clear_trackers`: removals
-/// are seen through the world's removal logs.
+/// Call `update` once per frame. Removals are seen through the world's
+/// removal logs after `last_run`: trim them (`World::trim_removed`) no
+/// further than that.
 ///
 /// Entities caught in a `Parent` cycle (possible only by inserting `Parent`
 /// directly instead of through [`set_parent`]) are left out: they get no
@@ -70,11 +71,17 @@ impl TransformSystem {
         let now = world.advance_tick();
         let all = self.needs_rebuild(world);
         if all {
-            self.rebuild(world);
+            self.rebuild(world, now);
         }
         let count = self.recompute(world, now, all);
         self.last_run = now;
         count
+    }
+
+    /// The tick of its last `update` (removals logged after it are still
+    /// to be seen).
+    pub fn last_run(&self) -> Tick {
+        self.last_run
     }
 
     /// Entities with a `Transform` left out of the last rebuild because their
@@ -88,19 +95,21 @@ impl TransformSystem {
         if self.order.len() + self.skipped != transforms_len {
             return true;
         }
-        let removed = |logged: Option<&[Entity]>| logged.is_some_and(|r| !r.is_empty());
-        if removed(world.storage::<Transform>().map(|s| s.removed()))
-            || removed(world.storage::<WorldMatrix>().map(|s| s.removed()))
-            || removed(world.storage::<Parent>().map(|s| s.removed()))
-        {
-            return true;
-        }
-        world.storage::<Parent>().is_some_and(|parents| {
-            (0..parents.len() as u32).any(|row| parents.changed_tick(row) > self.last_run)
-        })
+        // All O(1): a Transform or Parent added, removed or (Parent) changed,
+        // a WorldMatrix taken away.
+        let since = self.last_run;
+        world
+            .storage::<Transform>()
+            .is_some_and(|s| s.structure_changed_since(since))
+            || world
+                .storage::<Parent>()
+                .is_some_and(|s| s.changed_since(since) || s.structure_changed_since(since))
+            || world
+                .storage::<WorldMatrix>()
+                .is_some_and(|s| s.any_removed_since(since))
     }
 
-    fn rebuild(&mut self, world: &mut World) {
+    fn rebuild(&mut self, world: &mut World, now: Tick) {
         self.order.clear();
         self.skipped = 0;
         let Some(transforms) = world.storage::<Transform>() else {
@@ -174,8 +183,9 @@ impl TransformSystem {
             .map(|node| node.entity)
             .filter(|&e| !world.has::<WorldMatrix>(e))
             .collect();
+        // At its own tick: not a change it rebuilds for next time.
         for e in missing {
-            world.insert(e, WorldMatrix::default());
+            world.insert_at(e, WorldMatrix::default(), now);
         }
     }
 

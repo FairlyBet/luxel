@@ -146,12 +146,20 @@ ctx.render(pass);
   равно видится из JS одним `Float32Array` (сделаем в E4).
 - Тики `u64`. Правило системы: `let now = world.advance_tick()` (возвращает
   текущий тик и сдвигает мир), обработать изменённое после `last_run`,
-  свои записи ставить тиком `now`, затем `last_run = now`. Так записи
-  после прогона системы видны ей в следующий раз, а её собственные — нет.
+  свои записи ставить тиком `now` (`get_mut(e, now)`, `iter_mut(now)`,
+  `World::insert_at` / `get_mut_at`), затем `last_run = now`.
+  Так записи после прогона системы видны ей в следующий раз, а её
+  собственные — нет. `insert` / `get_mut` / `remove` ставят `tick()` —
+  для записей приложения, новых для всех систем. Удаления всегда пишутся
+  в журнал тиком `tick()`: их видят все, включая удалившую систему.
+- O(1)-проверки на хранилище: `changed_since(t)` (значения или добавления),
+  `structure_changed_since(t)` (добавления или удаления), `newest_change()`.
 - `Mut<T>` помечает изменение только при записи через `DerefMut`;
   `set_if_neq` не помечает равное значение.
-- Удаления (`remove`, `despawn`) пишутся в `Storage::removed` до
-  `World::clear_trackers()` — раз в кадр, после систем.
+- Удаления (`remove`, `despawn`) пишутся в журнал с тиком:
+  `Storage::removed_since(last_run)` / `any_removed_since` — когда бы в
+  кадре система ни смотрела. `World::trim_removed(t)` стирает записи не
+  новее `t` — самого старого `last_run` читающих систем.
 - Запросы: `join::<A, B>()` для чтения (обход по `A`), для записи —
   `storages_mut::<A, B>()` и обычный цикл. Без RefCell.
 - Тесты на хосте (`cargo test -p rswebgl-ecs`), браузер не нужен.
@@ -160,8 +168,8 @@ ctx.render(pass);
 `glam`; рендерер подключится в E3): `Transform` (позиция, кватернион,
 масштаб; `from_matrix` для узлов glTF), `Parent(Entity)`, `WorldMatrix`.
 
-- `TransformSystem::update(&mut world)` — раз в кадр **до**
-  `clear_trackers` (удаления видны через журналы). Порядок «родители раньше
+- `TransformSystem::update(&mut world)` — раз в кадр (удаления видны через
+  журналы после её `last_run()`). Порядок «родители раньше
   детей» кэшируется и перестраивается (подсчётной сортировкой + обход в
   ширину, без аллокаций в установившемся режиме), только если изменился
   какой-то `Parent`, добавился/удалился `Transform` или удалена сущность.
@@ -188,7 +196,8 @@ ctx.render(pass);
   не удаляет), `Visible(bool)` (в E4 стал наследуемым: скрытый предок
   скрывает поддерево).
 - `SceneRenderer::render(&world, &ctx, camera, &mut pass)` — после
-  `TransformSystem::update`, до `clear_trackers`: пишет матрицы камеры в
+  `TransformSystem::update` (журнал обрезается до
+  `min(transforms.last_run(), renderer.removals_checked())`): пишет матрицы камеры в
   UBO блока `Frame` (`u_view`, `u_proj`, `u_view_proj`, `u_camera_pos`),
   отсекает по frustum (AABB, переведённый в мир по модулю матрицы) и
   добавляет draw'ы в `Pass` с группами: 0 — кадр, 1 — материал, 2 — объект

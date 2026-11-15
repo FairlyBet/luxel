@@ -92,7 +92,15 @@ What every product viewer rebuilds today from the example's code:
 - Morph targets: bounds from the targets' deltas (S); today morphing
   meshes aren't culled at all.
 
-## 5. ECS foundations — H, S (do 5.1–5.3 together)
+## 5. ECS foundations — H, S (do 5.1–5.3 together) — 5.1–5.3 done
+
+5.1: `insert_at` / `get_mut_at` and the tick rule on `World`;
+5.2: `Storage::changed_since` / `structure_changed_since` / `newest_change`
+(O(1)); 5.3: `removed_since` / `any_removed_since` with `World::trim_removed`
+(`clear_trackers`, `removed()` and `removal_count` gone). The transform
+system's rebuild check is O(1) now (no `Parent` scan); the renderer's
+release reads the log by tick. What follows is the item as reviewed.
+
 
 - **5.1 One tick rule for systems**: `World::insert` / `get_mut` stamp
   the next system's tick, so a system's own writes look changed to it

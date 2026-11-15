@@ -164,7 +164,11 @@ impl Setup {
             .render(&self.world, &self.ctx, self.camera, &mut self.pass);
         self.pass.sort();
         self.ctx.render(&self.pass);
-        self.world.clear_trackers();
+        self.world.trim_removed(
+            self.transforms
+                .last_run()
+                .min(self.scene.removals_checked()),
+        );
         stats
     }
 

@@ -21,7 +21,7 @@ fn pos(w: &World, e: Entity) -> Vec3 {
 
 fn frame(w: &mut World, sys: &mut TransformSystem) -> usize {
     let n = sys.update(w);
-    w.clear_trackers();
+    w.trim_removed(sys.last_run());
     n
 }
 

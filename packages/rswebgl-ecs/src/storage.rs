@@ -6,6 +6,7 @@
 //! to how many entities have the component, not to the largest entity index
 //! (apart from 4 bytes per index in `sparse`).
 
+use std::cell::Cell;
 use std::ops::{Deref, DerefMut};
 
 use crate::{Entity, Tick};
@@ -18,12 +19,14 @@ pub struct Storage<T> {
     entities: Vec<Entity>,
     data: Vec<T>,
     changed: Vec<Tick>,
-    // Entities that lost the component (or were despawned) since the last
-    // `World::clear_trackers`.
-    removed: Vec<Entity>,
-    // Removals ever (never cleared): lets a consumer notice one even after
-    // the trackers were cleared.
-    removals: u64,
+    // The newest tick any row was changed or added at: "did anything change
+    // since t" in O(1). A Cell: `Mut`s handed out together all raise it.
+    newest: Cell<Tick>,
+    // The newest tick a row was added or removed at.
+    structure: Tick,
+    // Entities that lost the component (or were despawned), with the tick,
+    // oldest first; trimmed by `World::trim_removed`.
+    removed: Vec<(Entity, Tick)>,
 }
 
 impl<T> Default for Storage<T> {
@@ -33,8 +36,9 @@ impl<T> Default for Storage<T> {
             entities: Vec::new(),
             data: Vec::new(),
             changed: Vec::new(),
+            newest: Cell::new(0),
+            structure: 0,
             removed: Vec::new(),
-            removals: 0,
         }
     }
 }
@@ -70,6 +74,7 @@ impl<T> Storage<T> {
         Some(Mut {
             value: &mut self.data[r],
             changed: &mut self.changed[r],
+            newest: &self.newest,
             tick,
         })
     }
@@ -77,10 +82,12 @@ impl<T> Storage<T> {
     /// Adds or replaces `e`'s component; either way it counts as changed.
     /// Returns the previous value.
     pub(crate) fn insert(&mut self, e: Entity, value: T, tick: Tick) -> Option<T> {
+        self.raise(tick);
         if let Some(r) = self.row(e) {
             self.changed[r as usize] = tick;
             return Some(std::mem::replace(&mut self.data[r as usize], value));
         }
+        self.structure = self.structure.max(tick);
         let idx = e.0.index() as usize;
         if idx >= self.sparse.len() {
             self.sparse.resize(idx + 1, NONE);
@@ -92,7 +99,7 @@ impl<T> Storage<T> {
         None
     }
 
-    pub(crate) fn remove(&mut self, e: Entity) -> Option<T> {
+    pub(crate) fn remove(&mut self, e: Entity, tick: Tick) -> Option<T> {
         let r = self.row(e)? as usize;
         let last = self.entities.len() - 1;
         if r != last {
@@ -102,8 +109,11 @@ impl<T> Storage<T> {
         self.sparse[e.0.index() as usize] = NONE;
         self.entities.swap_remove(r);
         self.changed.swap_remove(r);
-        self.removed.push(e);
-        self.removals += 1;
+        // Ticks stay in order along the log (a removal stamped older than
+        // the last logged counts as that one's tick).
+        let tick = tick.max(self.removed.last().map_or(0, |&(_, t)| t));
+        self.removed.push((e, tick));
+        self.structure = self.structure.max(tick);
         Some(self.data.swap_remove(r))
     }
 
@@ -125,6 +135,30 @@ impl<T> Storage<T> {
 
     pub fn mark_changed(&mut self, row: u32, tick: Tick) {
         self.changed[row as usize] = tick;
+        self.raise(tick);
+    }
+
+    /// Whether any row was changed or added after tick `since` — O(1), so a
+    /// system can skip a storage that didn't change at all.
+    pub fn changed_since(&self, since: Tick) -> bool {
+        self.newest.get() > since
+    }
+
+    /// Whether any row was added or removed (despawns included) after tick
+    /// `since`: the set of entities changed, not just values.
+    pub fn structure_changed_since(&self, since: Tick) -> bool {
+        self.structure > since
+    }
+
+    /// The newest tick a row was changed or added at (0: never).
+    pub fn newest_change(&self) -> Tick {
+        self.newest.get()
+    }
+
+    fn raise(&self, tick: Tick) {
+        if tick > self.newest.get() {
+            self.newest.set(tick);
+        }
     }
 
     /// The tick row `row` was last changed (or added) at.
@@ -146,6 +180,7 @@ impl<T> Storage<T> {
 
     /// Every component, each marking itself changed only if written through.
     pub fn iter_mut(&mut self, tick: Tick) -> impl ExactSizeIterator<Item = (Entity, Mut<'_, T>)> {
+        let newest = &self.newest;
         self.entities
             .iter()
             .copied()
@@ -156,28 +191,31 @@ impl<T> Storage<T> {
                     Mut {
                         value,
                         changed,
+                        newest,
                         tick,
                     },
                 )
             })
     }
 
-    /// Entities that lost this component since the last
-    /// `World::clear_trackers` (despawned ones included). An entity can be
-    /// listed and have the component again if it was re-added.
-    pub fn removed(&self) -> &[Entity] {
-        &self.removed
+    /// Entities that lost this component (despawned ones included) after
+    /// tick `since` — a system's `last_run` — oldest first. Kept until
+    /// `World::trim_removed` drops them, so it doesn't matter when in the
+    /// frame a system looks. An entity can be listed and have the component
+    /// again if it was re-added.
+    pub fn removed_since(&self, since: Tick) -> impl Iterator<Item = Entity> + '_ {
+        let start = self.removed.partition_point(|&(_, t)| t <= since);
+        self.removed[start..].iter().map(|&(e, _)| e)
     }
 
-    /// How many times the component was removed (despawns included) since
-    /// the storage was made; unlike `removed`, `clear_trackers` doesn't reset
-    /// it.
-    pub fn removal_count(&self) -> u64 {
-        self.removals
+    /// Whether anything lost the component after tick `since`.
+    pub fn any_removed_since(&self, since: Tick) -> bool {
+        self.removed.last().is_some_and(|&(_, t)| t > since)
     }
 
-    pub(crate) fn clear_removed(&mut self) {
-        self.removed.clear();
+    pub(crate) fn trim_removed(&mut self, through: Tick) {
+        let end = self.removed.partition_point(|&(_, t)| t <= through);
+        self.removed.drain(..end);
     }
 }
 
@@ -186,7 +224,17 @@ impl<T> Storage<T> {
 pub struct Mut<'a, T> {
     value: &'a mut T,
     changed: &'a mut Tick,
+    newest: &'a Cell<Tick>,
     tick: Tick,
+}
+
+impl<T> Mut<'_, T> {
+    fn stamp(&mut self) {
+        *self.changed = self.tick;
+        if self.tick > self.newest.get() {
+            self.newest.set(self.tick);
+        }
+    }
 }
 
 impl<T> Mut<'_, T> {
@@ -198,7 +246,7 @@ impl<T> Mut<'_, T> {
     {
         if *self.value != value {
             *self.value = value;
-            *self.changed = self.tick;
+            self.stamp();
         }
     }
 }
@@ -212,25 +260,25 @@ impl<T> Deref for Mut<'_, T> {
 
 impl<T> DerefMut for Mut<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        *self.changed = self.tick;
+        self.stamp();
         self.value
     }
 }
 
 // Type-erased view the world uses for despawn and tracker clearing.
 pub(crate) trait AnyStorage: 'static {
-    fn remove_entity(&mut self, e: Entity);
-    fn clear_removed(&mut self);
+    fn remove_entity(&mut self, e: Entity, tick: Tick);
+    fn trim_removed(&mut self, through: Tick);
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 impl<T: 'static> AnyStorage for Storage<T> {
-    fn remove_entity(&mut self, e: Entity) {
-        self.remove(e);
+    fn remove_entity(&mut self, e: Entity, tick: Tick) {
+        self.remove(e, tick);
     }
-    fn clear_removed(&mut self) {
-        Storage::clear_removed(self);
+    fn trim_removed(&mut self, through: Tick) {
+        Storage::trim_removed(self, through);
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
