@@ -731,6 +731,9 @@ impl SceneRenderer {
             .map(|(c, m)| (*c, m.0));
         self.lights
             .prepare(world, ctx, self.frame_group, view_camera);
+        // Shadow casters still linking count as pending meshes: the frame
+        // isn't finished until they cast.
+        self.stats.pending += self.lights.waiting();
         self.write_lighting(ctx);
         self.push_background(ctx, opaque);
         let frustum = Frustum::from_view_proj_depth(&view_proj, ctx.reverse_z());
@@ -976,6 +979,12 @@ impl SceneRenderer {
     /// Draw calls into this frame's shadow maps.
     pub fn shadow_draw_calls(&self) -> usize {
         self.lights.draw_calls()
+    }
+
+    /// The programs of the shadow system's own (the ground shadow's plane),
+    /// for `whenReady`.
+    pub(crate) fn shadow_programs(&self) -> Vec<ProgramId> {
+        self.lights.programs()
     }
 
     /// The ground shadow on (with these settings) or off (None).

@@ -831,6 +831,11 @@ impl Scene {
         programs.extend(self.pending_variants.iter().map(|&(_, p)| p));
         programs.extend(self.renderer.built_background_program());
         programs.extend(self.renderer.motion_programs());
+        // The shadow casters' depth-only programs, and the ground shadow's.
+        if let Some(casters) = self.world.storage::<crate::lighting::ShadowCaster>() {
+            programs.extend(casters.data().iter().map(|c| c.program));
+        }
+        programs.extend(self.renderer.shadow_programs());
         programs.sort_unstable_by_key(|p| p.to_raw());
         programs.dedup();
         let ready = self.ctx.programs_ready(programs);

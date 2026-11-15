@@ -280,6 +280,10 @@ impl Ground {
         self.pass.set_clear(&ClearMask::depth());
     }
 
+    pub fn plane_program(&self) -> ProgramId {
+        self.plane_program
+    }
+
     /// Whether the maps are drawn again this frame.
     pub fn is_dirty(&self) -> bool {
         self.dirty

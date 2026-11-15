@@ -104,6 +104,8 @@ pub(crate) struct LightingSystem {
     // The ground shadow, while on.
     ground: Ground,
     ground_on: bool,
+    // Casters this frame left out while their programs link.
+    waiting: usize,
 }
 
 /// A caster draw's view index for the ground shadow's pass.
@@ -151,6 +153,7 @@ impl LightingSystem {
             draw_calls: 0,
             ground,
             ground_on: false,
+            waiting: 0,
         })
     }
 
@@ -223,6 +226,17 @@ impl LightingSystem {
         self.ground_on.then_some(self.ground.settings)
     }
 
+    /// Casters this frame left out of their maps while their programs link
+    /// (or their model reloads).
+    pub fn waiting(&self) -> usize {
+        self.waiting
+    }
+
+    /// Its own programs (the ground shadow's plane).
+    pub fn programs(&self) -> Vec<rswebgl::ids::ProgramId> {
+        vec![self.ground.plane_program()]
+    }
+
     /// The ground shadow's plane to draw this frame, if any.
     pub fn ground_plane(&self, ctx: &Context) -> Option<GroundPlane> {
         if !self.ground_on {
@@ -284,6 +298,7 @@ impl LightingSystem {
             self.maps.hold();
             self.ground.hold();
             self.draws.clear();
+            self.waiting = 0;
             self.block.write(
                 world,
                 ctx,
@@ -314,6 +329,7 @@ impl LightingSystem {
         let maps = &self.maps;
         self.draws.retain(|d| maps.is_dirty(d.view));
         let ground_waiting = self.prepare_ground(world, ctx);
+        self.waiting = waiting + ground_waiting;
         // Baked once every caster could draw (none still linking or
         // reloading) into some map.
         if self.frozen {
