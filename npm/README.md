@@ -102,6 +102,14 @@ filled yourself). For hotspots and annotations:
 - `scene.raycastBounds(camera, x, y)` is a synchronous hit test against the
   meshes' boxes; `pick` is the exact test on the GPU.
 
+## The same model twice
+
+`scene.instantiate(root)` spawns a model added with `addModel` again, under
+a new root, sharing its vertex arrays, textures and materials: no second
+load, no second copy on the GPU. Each copy has its own transforms,
+visibility, animation and material variant; a material edited shows on
+every copy (`cloneMaterial` + `setMaterial` for one of its own).
+
 ## Quality, resolution, screenshots
 
 `scene.setQuality("low" | "medium" | "high")` sets antialiasing, shadow

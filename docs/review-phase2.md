@@ -89,7 +89,14 @@ What every product viewer rebuilds today from the example's code:
 - **Screenshots**: `capture(w, h) → Blob` (thumbnails, "save image");
   `render(camera, pass)` today skips HDR, AA, background and post.
 
-## 4. Configurator correctness — H, M
+## 4. Configurator correctness — H, M — done
+
+Variant materials draw with vertex arrays built for their needs
+(`Model::vertex_array_for`, fitted on every material change and after a
+reload); a texture in two colour spaces is made twice; morph targets widen
+the bounds (culled again); `scene.instantiate(root)` spawns a model again
+sharing its GPU data. What follows is the item as reviewed.
+
 
 - **Variant materials get the default material's vertex arrays** (UV
   slots, generated tangents): a variant using another TEXCOORD set or

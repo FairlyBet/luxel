@@ -114,8 +114,7 @@ impl Scene {
     /// (what `addModel` returned), by name; empty without the extension.
     #[wasm_bindgen(js_name = materialVariants)]
     pub fn material_variants(&self, root: Entity) -> Vec<String> {
-        self.models
-            .get(&root)
+        self.model(root)
             .map_or_else(Vec::new, |m| m.material_variants().to_vec())
     }
 
@@ -134,8 +133,7 @@ impl Scene {
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         let model = self
-            .models
-            .get(&root)
+            .model(root)
             .ok_or("setMaterialVariant: not the root of a model")?;
         let variant = match &name {
             None => None,
@@ -584,7 +582,7 @@ impl Scene {
     // is a model root.
     fn model_root_of(&self, mut e: Entity) -> Option<Entity> {
         for _ in 0..=self.world.len() {
-            if self.models.contains_key(&e) {
+            if self.model_roots.contains_key(&e) {
                 return Some(e);
             }
             e = self.world.get::<crate::transform::Parent>(e)?.0;
@@ -606,7 +604,7 @@ impl Scene {
         };
         let mirrored = self
             .model_root_of(e)
-            .and_then(|r| self.models.get(&r))
+            .and_then(|r| self.model(r))
             .and_then(|m| m.items().get(prim.item as usize))
             .is_some_and(|i| i.render_state().front_face == FrontFace::Cw);
         let state = render_state_for(&record.material, mirrored);
@@ -632,7 +630,7 @@ impl Scene {
             return;
         };
         let key = record.material.vertex_key();
-        let Some(model) = self.model_root_of(e).and_then(|r| self.models.get(&r)) else {
+        let Some(model) = self.model_root_of(e).and_then(|r| self.model(r)) else {
             return;
         };
         let Some((vao, attributes)) = model.vertex_array_for(prim.item as usize, key) else {

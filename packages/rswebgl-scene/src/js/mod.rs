@@ -74,6 +74,9 @@ pub struct Scene {
     // Models added with `addModel`, by their root entity: their GPU
     // resources go when the root is despawned.
     models: HashMap<Entity, Model>,
+    // Every root a model is spawned under (`addModel`, `instantiate`) →
+    // the key of its model in `models` (the first root's entity).
+    model_roots: HashMap<Entity, Entity>,
     // Every material the scene knows (models' and clones), by group.
     materials: HashMap<ParamGroupId, MaterialRecord>,
     pbr: PbrShaders,
@@ -196,6 +199,7 @@ impl Scene {
             transforms: TransformSystem::new(),
             renderer: SceneRenderer::new(ctx)?,
             models: HashMap::new(),
+            model_roots: HashMap::new(),
             materials: HashMap::new(),
             pbr: PbrShaders::new(),
             textures: Vec::new(),
@@ -267,9 +271,16 @@ impl Scene {
         self.renderer.rebake_shadows();
         // Every model root in the subtree, not just `e`: a model hung under a
         // group goes with the group.
-        if !self.models.is_empty() {
+        if !self.model_roots.is_empty() {
             for d in descendants(&self.world, e) {
-                if let Some(model) = self.models.remove(&d) {
+                let Some(key) = self.model_roots.remove(&d) else {
+                    continue;
+                };
+                // Freed with its last root (instances share it).
+                if self.model_roots.values().any(|&k| k == key) {
+                    continue;
+                }
+                if let Some(model) = self.models.remove(&key) {
                     for g in model.material_groups() {
                         self.materials.remove(g);
                     }
@@ -609,6 +620,57 @@ impl Scene {
         root
     }
 
+    /// The model at `root` (`addModel`'s, or another `instantiate` made)
+    /// spawned again under a new root, sharing everything on the GPU with
+    /// it: vertex arrays, textures, and materials (a material edited shows
+    /// on every instance; `cloneMaterial` + `setMaterial` for one of its
+    /// own). Each instance has its own transforms, visibility, animation
+    /// and variant. The GPU data is freed with the last instance despawned.
+    /// Throws if `root` isn't a model's root.
+    pub fn instantiate(&mut self, root: Entity) -> Result<Entity, Error> {
+        self.invalidate();
+        self.renderer.rebake_shadows();
+        self.sync_context();
+        let key = *self
+            .model_roots
+            .get(&root)
+            .ok_or("instantiate: not the root of a model (addModel's)")?;
+        let model = self
+            .models
+            .get(&key)
+            .ok_or("instantiate: the model is gone")?;
+        let (ctx, pbr) = (&self.ctx, &mut self.pbr);
+        // The same programs as the meshes it copies (one of the app's
+        // included): by item, from the first instance.
+        let programs: HashMap<u32, ProgramId> = descendants(&self.world, root)
+            .into_iter()
+            .filter_map(|e| {
+                let item = self.world.get::<crate::model::Primitive>(e)?.item;
+                Some((item, self.world.get::<MeshRenderer>(e)?.program))
+            })
+            .collect();
+        let items = model.items();
+        let new_root = spawn_model(&mut self.world, model, |item| {
+            let index = items.iter().position(|i| std::ptr::eq(i, item))? as u32;
+            match programs.get(&index) {
+                Some(&p) => Some(p),
+                None => pbr
+                    .program_for(ctx, model, item)
+                    .map_err(|e| {
+                        console::error_once(&format!(
+                            "[rswebgl-scene] a PBR shader variant failed to build: {e}"
+                        ))
+                    })
+                    .ok(),
+            }
+        });
+        self.model_roots.insert(new_root, key);
+        for e in descendants(&self.world, new_root) {
+            self.refresh_shadow_caster(e);
+        }
+        Ok(new_root)
+    }
+
     /// `addModel` with your own `program` for every primitive (a scene
     /// shader from `createProgram` sees the camera, lights, environment and
     /// object; the material group is the loader's).
@@ -631,7 +693,7 @@ impl Scene {
     /// entity that isn't a model root. For framing a camera.
     #[wasm_bindgen(js_name = modelBounds)]
     pub fn model_bounds(&self, root: Entity) -> Vec<f32> {
-        self.models.get(&root).map_or_else(Vec::new, |m| {
+        self.model(root).map_or_else(Vec::new, |m| {
             let mut v = m.center();
             v.push(m.radius());
             v
@@ -1179,7 +1241,7 @@ impl Scene {
         let bounds = crate::framing::world_bounds(&self.world, root).or_else(|| {
             // A model without mesh bounds: its sphere as loaded, moved with
             // the root.
-            let model = self.models.get(&root)?;
+            let model = self.model(root)?;
             let m = self.world.get::<crate::transform::WorldMatrix>(root)?.0;
             let c = m.transform_point3(glam::Vec3::from_slice(&model.center()));
             let scale = m

@@ -210,6 +210,20 @@ impl Scene {
         }
     }
 
+    // The model at `root` (an instance's too).
+    pub(crate) fn model(&self, root: Entity) -> Option<&Model> {
+        self.models.get(self.model_roots.get(&root)?)
+    }
+
+    // Every root model `key` is spawned under.
+    fn roots_of(&self, key: Entity) -> Vec<Entity> {
+        self.model_roots
+            .iter()
+            .filter(|&(_, &k)| k == key)
+            .map(|(&r, _)| r)
+            .collect()
+    }
+
     // Starts fetching every model again; its meshes wait meanwhile.
     fn reload_models(&mut self) {
         let roots: Vec<Entity> = self.models.keys().copied().collect();
@@ -235,16 +249,20 @@ impl Scene {
                     "[rswebgl-scene] restore: models aren't fetched again \
                      (setRestoreModels(false)): their meshes stay out of frames until replaced",
                 );
-                for e in descendants(&self.world, root) {
-                    if self.world.get::<MeshRenderer>(e).is_some() {
-                        self.world.insert(e, Reloading);
+                for r in self.roots_of(root) {
+                    for e in descendants(&self.world, r) {
+                        if self.world.get::<MeshRenderer>(e).is_some() {
+                            self.world.insert(e, Reloading);
+                        }
                     }
                 }
                 return;
             };
-            for e in descendants(&self.world, root) {
-                if self.world.get::<MeshRenderer>(e).is_some() {
-                    self.world.insert(e, Reloading);
+            for r in self.roots_of(root) {
+                for e in descendants(&self.world, r) {
+                    if self.world.get::<MeshRenderer>(e).is_some() {
+                        self.world.insert(e, Reloading);
+                    }
                 }
             }
             let (ctx, inbox, alive) = (self.ctx.clone(), self.reloads.clone(), self.alive.clone());
@@ -313,7 +331,12 @@ impl Scene {
                 .iter()
                 .map(|i| (i.vao(), i.state(), i.morph()))
                 .collect();
-            for e in descendants(&self.world, root) {
+            let meshes: Vec<Entity> = self
+                .roots_of(root)
+                .into_iter()
+                .flat_map(|r| descendants(&self.world, r))
+                .collect();
+            for e in meshes {
                 let Some(item) = self.world.get::<Primitive>(e).map(|p| p.item as usize) else {
                     continue;
                 };
@@ -373,5 +396,6 @@ impl Scene {
             model.forget_source();
         }
         self.models.insert(root, model);
+        self.model_roots.insert(root, root);
     }
 }

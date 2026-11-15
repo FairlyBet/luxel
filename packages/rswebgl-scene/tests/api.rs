@@ -1457,3 +1457,41 @@ async fn a_variant_reads_its_own_texcoord_set() {
     s.scene.set_material_variant(quad, None).unwrap();
     assert_eq!(s.frame().await[1], WHITE);
 }
+
+// A model spawned again shares its GPU data: drawn twice, still drawn with
+// its first root despawned, freed with its last.
+#[wasm_bindgen_test]
+async fn instances_share_a_model_and_free_it_last() {
+    let mut s = setup().await;
+    s.frame().await;
+    let drawn = s.scene.drawn();
+    let copy = s.scene.instantiate(s.root).unwrap();
+    s.scene.set_translation(copy, 0.0, 0.0, 0.25);
+    s.frame().await;
+    assert_eq!(s.scene.drawn(), drawn * 2);
+    assert!(s.scene.instantiate(s.camera).is_err(), "not a model");
+    // Materials are shared: by name from either root.
+    assert_eq!(
+        s.scene.find_material(copy, "Gold"),
+        s.scene.find_material(s.root, "Gold")
+    );
+    let vaos: Vec<VertexArrayId> = s
+        .scene
+        .world()
+        .storage::<rswebgl_scene::MeshRenderer>()
+        .unwrap()
+        .data()
+        .iter()
+        .map(|m| m.vao)
+        .collect();
+    s.scene.despawn(s.root);
+    let px = s.frame().await;
+    assert_eq!(s.scene.drawn(), drawn);
+    assert_eq!(px[0], YELLOW, "the copy's band");
+    assert!(vaos.iter().all(|&v| s.ctx.vertex_array_is_valid(v)));
+    s.scene.despawn(copy);
+    assert!(
+        vaos.iter().all(|&v| !s.ctx.vertex_array_is_valid(v)),
+        "freed"
+    );
+}
