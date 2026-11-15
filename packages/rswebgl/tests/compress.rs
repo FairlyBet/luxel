@@ -67,6 +67,9 @@ fn env() -> Env {
     let mut options = ContextOptions::new();
     options.antialias = false;
     let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    // Encoders compile in the background (else they block the page past
+    // the runner's timeout).
+    ctx.enable_extension(rswebgl::extension::Extension::KhrParallelShaderCompile);
     let gl = canvas
         .get_context("webgl2")
         .unwrap()
@@ -329,6 +332,14 @@ fn decode_eac(b: &[u8], r11: bool) -> [i32; 16] {
 async fn etc2_and_eac_blocks_decode_close_to_the_original() {
     let e = env();
     let compressor = TextureCompressor::new(&e.ctx).expect("compressor");
+    for (f, k) in [
+        (0x9274, CompressKind::Rgb),
+        (0x9278, CompressKind::Rgba),
+        (0x9272, CompressKind::Rg),
+    ] {
+        let ready = compressor.prepare_format(f, k).unwrap();
+        wasm_bindgen_futures::JsFuture::from(ready).await.unwrap();
+    }
     let tex = texture(&e.ctx, false);
     let src = image();
     let blocks = (SIZE / 4) as usize;
@@ -541,9 +552,13 @@ fn decode_astc(b: &[u8]) -> Vec<[i32; 4]> {
 }
 
 #[wasm_bindgen_test]
-fn astc_blocks_decode_close_to_the_original() {
+async fn astc_blocks_decode_close_to_the_original() {
     let e = env();
     let compressor = TextureCompressor::new(&e.ctx).expect("compressor");
+    for k in [CompressKind::Rgb, CompressKind::Rgba, CompressKind::Rg] {
+        let ready = compressor.prepare_format(0x93B0, k).unwrap();
+        wasm_bindgen_futures::JsFuture::from(ready).await.unwrap();
+    }
     let tex = texture(&e.ctx, false);
     let src = image();
     let blocks = (SIZE / 4) as usize;
@@ -579,5 +594,237 @@ fn astc_blocks_decode_close_to_the_original() {
             worst <= tolerance,
             "ASTC {kind:?}: off by {worst} (≤ {tolerance})"
         );
+    }
+}
+
+// --- BC6H: HDR textures and cube maps, sampled back on this GPU ---
+
+// Draws `tex` texel for texel into an RGBA32F target and reads it back:
+// level 0 of a 2D texture, or face `face` of a cube (sampled along the
+// direction to each texel's center, GL's cube layout).
+fn show_float(e: &Env, tex: TextureId, cube: Option<i32>, size: i32) -> Vec<f32> {
+    let ctx = &e.ctx;
+    let frag = format!(
+        "#version 300 es
+precision highp float;
+{}
+uniform int u_face;
+out vec4 frag_color;
+void main() {{
+    ivec2 p = ivec2(gl_FragCoord.xy);
+#ifdef CUBE
+    vec2 st = (vec2(p) + 0.5) / float({size}) * 2.0 - 1.0;
+    vec3 d = u_face == 0 ? vec3(1.0, -st.y, -st.x) : u_face == 1 ? vec3(-1.0, -st.y, st.x)
+           : u_face == 2 ? vec3(st.x, 1.0, st.y) : u_face == 3 ? vec3(st.x, -1.0, -st.y)
+           : u_face == 4 ? vec3(st.x, -st.y, 1.0) : vec3(-st.x, -st.y, -1.0);
+    frag_color = vec4(textureLod(u_tex, d, 0.0).rgb, 1.0);
+#else
+    frag_color = vec4(texelFetch(u_tex, p, 0).rgb, 1.0);
+#endif
+}}
+",
+        if cube.is_some() {
+            "#define CUBE\nuniform highp samplerCube u_tex;"
+        } else {
+            "uniform highp sampler2D u_tex;"
+        }
+    );
+    let program = ctx.create_program(VERT, &frag).unwrap();
+    let layout = ctx
+        .create_param_layout(
+            &ParamLayoutBuilder::new()
+                .texture("u_tex")
+                .uniform("u_face", UniformType::I32),
+        )
+        .unwrap();
+    let group = ctx.create_param_group(layout).unwrap();
+    ctx.param_set_texture(group, ctx.param_field(layout, "u_tex").unwrap(), tex);
+    let mut nearest = rswebgl::sampler::SamplerDesc::nearest_clamp();
+    nearest.min_filter = TextureMinFilter::NearestMipmapNearest;
+    let sampler = ctx.create_sampler(&nearest).unwrap();
+    ctx.param_set_sampler(group, ctx.param_field(layout, "u_tex").unwrap(), sampler);
+    ctx.param_set_i32(
+        group,
+        ctx.param_field(layout, "u_face").unwrap(),
+        cube.unwrap_or(0),
+    );
+    let target = ctx
+        .create_texture(
+            TextureTarget::Texture2D,
+            TextureMinFilter::Nearest,
+            TextureMagFilter::Nearest,
+        )
+        .unwrap();
+    ctx.texture_storage_2d(target, 1, &TextureFormat::rgba32f(), size, size);
+    let fb = ctx.create_framebuffer(size, size).unwrap();
+    ctx.framebuffer_attach_color_texture_2d(fb, 0, target, 0);
+    let mut batch = Batch::new(program, ctx.render_state(&RenderState::new()));
+    batch.set_group(0, group);
+    batch.draw_vertexless(&DrawCommand::arrays(DrawMode::Triangles, 0, 3));
+    let mut pass = Pass::new(fb);
+    pass.set_viewport(&Viewport::new(0, 0, size, size));
+    pass.add(&batch);
+    ctx.render(&pass);
+    let bytes = ctx
+        .read_pixels(
+            fb,
+            0,
+            0,
+            0,
+            size,
+            size,
+            rswebgl::readback::ReadFormat::RgbaF32,
+        )
+        .unwrap();
+    let out: Vec<f32> = bytes
+        .chunks(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    ctx.destroy_framebuffer(fb);
+    ctx.destroy_texture(target);
+    ctx.destroy_sampler(sampler);
+    ctx.destroy_param_group(group);
+    ctx.destroy_param_layout(layout);
+    ctx.destroy_program(program);
+    out
+}
+
+// HDR texels as a sky has them: a hue of its own per face, its brightness
+// varying smoothly from ~0.1 to ~12 (within a block the colors lie near a
+// line, which is what BC6H stores; channels varying independently inside
+// a block — a plane of colors — it can't).
+fn hdr_texels(face: i32, size: i32) -> Vec<f32> {
+    let hues = [
+        [1.0, 0.6, 0.3],
+        [0.3, 0.6, 1.0],
+        [1.0, 1.0, 1.0],
+        [0.5, 1.0, 0.4],
+        [1.0, 0.3, 0.7],
+        [0.7, 0.7, 1.0],
+    ];
+    let hue = hues[face as usize];
+    let mut v = Vec::new();
+    for y in 0..size {
+        for x in 0..size {
+            let (fx, fy) = (x as f32 / size as f32, y as f32 / size as f32);
+            let l = 0.1 + 10.0 * fx * fx + 2.0 * fy;
+            v.extend_from_slice(&[l * hue[0], l * hue[1], l * hue[2], 1.0]);
+        }
+    }
+    v
+}
+
+fn f32_bytes(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+// The largest error relative to the texel's brightest channel (+ 0.25): a
+// block holds one line of colors per region, so a dim channel beside a
+// bright one errs by a share of the bright one, as it is seen.
+fn worst_relative(a: &[f32], b: &[f32]) -> f32 {
+    let mut m = 0f32;
+    for (pa, pb) in a.chunks(4).zip(b.chunks(4)) {
+        let scale = 0.25 + pa[0].max(pa[1]).max(pa[2]);
+        for c in 0..3 {
+            m = m.max((pa[c] - pb[c]).abs() / scale);
+        }
+    }
+    m
+}
+
+#[wasm_bindgen_test]
+async fn bc6h_textures_and_cubes_sample_close_to_the_original() {
+    let e = env();
+    if !e
+        .ctx
+        .enable_extension(rswebgl::extension::Extension::ExtColorBufferFloat)
+    {
+        return; // can't read floats back here
+    }
+    let compressor = TextureCompressor::new(&e.ctx).expect("compressor");
+    if !compressor.supports(CompressKind::Hdr) {
+        return; // no BPTC here
+    }
+    wasm_bindgen_futures::JsFuture::from(compressor.when_ready())
+        .await
+        .unwrap();
+    let f16 = TextureFormat::rgba16f_from_float();
+
+    // A 2D RGBA16F texture.
+    let t = e
+        .ctx
+        .create_texture(
+            TextureTarget::Texture2D,
+            TextureMinFilter::Nearest,
+            TextureMagFilter::Nearest,
+        )
+        .unwrap();
+    e.ctx
+        .texture_storage_2d(t, 1, &TextureFormat::rgba16f(), SIZE, SIZE);
+    e.ctx.texture_sub_image_2d(
+        t,
+        0,
+        0,
+        0,
+        SIZE,
+        SIZE,
+        &f16,
+        &f32_bytes(&hdr_texels(0, SIZE)),
+    );
+    let before = show_float(&e, t, None, SIZE);
+    assert!(compressor.compress(t, CompressKind::Hdr), "2D compresses");
+    let after = show_float(&e, t, None, SIZE);
+    let d = worst_relative(&before, &after);
+    web_sys::console::log_1(&format!("BC6H 2D: worst relative {d:.3}").into());
+    assert!(d < 0.12, "BC6H 2D: off by {d}");
+
+    // A cube, every face its own pattern (a face read from the wrong one,
+    // or flipped, would show).
+    let n = 16;
+    let c = e
+        .ctx
+        .create_texture(
+            TextureTarget::TextureCubeMap,
+            TextureMinFilter::NearestMipmapNearest,
+            TextureMagFilter::Nearest,
+        )
+        .unwrap();
+    e.ctx
+        .texture_storage_2d(c, 2, &TextureFormat::rgba16f(), n, n);
+    use rswebgl::texture::CubeMapFace as F;
+    let faces = [
+        F::PositiveX,
+        F::NegativeX,
+        F::PositiveY,
+        F::NegativeY,
+        F::PositiveZ,
+        F::NegativeZ,
+    ];
+    for (i, f) in faces.iter().enumerate() {
+        for level in 0..2 {
+            let s = n >> level;
+            e.ctx.texture_sub_image_cube_face(
+                c,
+                *f,
+                level,
+                0,
+                0,
+                s,
+                s,
+                &f16,
+                &f32_bytes(&hdr_texels(i as i32, s)),
+            );
+        }
+    }
+    let before: Vec<_> = (0..6).map(|f| show_float(&e, c, Some(f), n)).collect();
+    assert!(
+        compressor.compress(c, CompressKind::Hdr),
+        "the cube compresses"
+    );
+    for (f, want) in before.iter().enumerate() {
+        let got = show_float(&e, c, Some(f as i32), n);
+        let d = worst_relative(want, &got);
+        web_sys::console::log_1(&format!("BC6H cube face {f}: worst relative {d:.3}").into());
+        assert!(d < 0.12, "BC6H cube face {f}: off by {d}");
     }
 }

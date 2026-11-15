@@ -195,7 +195,9 @@ impl Scene {
     /// default, as Filament's IBL prefilter): half the memory of RGBA16F
     /// (a 256 environment's specular cube: ~2.1 MB instead of ~4.2), ~1.5%
     /// color steps — on devices that render to it (`EXT_color_buffer_float`;
-    /// RGBA16F otherwise). Off: RGBA16F (full half-float precision). A
+    /// RGBA16F otherwise); then, where the device has BPTC (desktops), the
+    /// cubes are compressed to BC6H on the GPU once baked: a byte a texel
+    /// (~0.5 MB for that cube). Off: RGBA16F (full half-float precision). A
     /// change bakes the current environment again.
     #[wasm_bindgen(js_name = setCompactEnvironment)]
     pub fn set_compact_environment(&mut self, on: bool) -> Result<(), Error> {
@@ -301,6 +303,9 @@ impl Scene {
         self.env_pending = None;
         match result {
             Ok(env) => {
+                if self.compact_environment {
+                    self.compress_environment(env.cubes());
+                }
                 self.renderer.set_environment(&self.ctx, env);
                 if let Some(rgb) = self.env_intensity_after_bake.take() {
                     self.renderer.set_environment_intensity(rgb);
@@ -308,5 +313,30 @@ impl Scene {
             }
             Err(e) => console::error(&format!("[rswebgl-scene] environment: {e}")),
         }
+    }
+
+    // BC6H for the environment's cubes where the device has BPTC: once the
+    // encoder has compiled, in place (the renderer keeps its handles).
+    fn compress_environment(&self, cubes: [rswebgl::ids::TextureId; 2]) {
+        use rswebgl::texture_compressor::{CompressKind, TextureCompressor};
+        let comp = match TextureCompressor::shared(&self.ctx) {
+            Ok(c) if c.supports(CompressKind::Hdr) => c,
+            Ok(_) => return,
+            Err(e) => {
+                console::warn(&format!(
+                    "[rswebgl-scene] environment left uncompressed: {e}"
+                ));
+                return;
+            }
+        };
+        let ctx = self.ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = wasm_bindgen_futures::JsFuture::from(comp.when_ready()).await;
+            for t in cubes {
+                if ctx.texture_is_valid(t) {
+                    comp.compress(t, CompressKind::Hdr);
+                }
+            }
+        });
     }
 }

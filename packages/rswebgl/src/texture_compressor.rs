@@ -2,7 +2,8 @@
 //! desktops BC (S3TC / RGTC): BC1 for opaque color, BC3 with alpha, BC5 for
 //! two channels (normal maps). Where those are missing — phones — ETC2 /
 //! EAC: ETC2 RGB, ETC2 RGBA, RG11. ASTC 4×4 where a device has neither
-//! (see `preference`). Encoded by fragment shaders
+//! (see `preference`). HDR (half-float) textures and cube maps — the
+//! environment's — BC6H where the device has BPTC. Encoded by fragment shaders
 //! (`compress/bc.frag`, `compress/etc.frag`, `compress/astc.frag`).
 //!
 //! Each mip level is encoded into an RGBA32UI target whose texels are the
@@ -25,6 +26,7 @@ mod tables;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 use web_sys::WebGl2RenderingContext as Gl;
@@ -44,6 +46,7 @@ use crate::uniform_buffer::UniformType;
 const BC_FRAG: &str = include_str!("compress/bc.frag");
 const ETC_FRAG: &str = include_str!("compress/etc.frag");
 const ASTC_FRAG: &str = include_str!("compress/astc.frag");
+const BC6H_FRAG: &str = include_str!("compress/bc6h.frag");
 const VERT: &str = "#version 300 es
 void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;
@@ -53,6 +56,10 @@ void main() {
 
 const RGBA8: u32 = 0x8058;
 const SRGB8_ALPHA8: u32 = 0x8C43;
+// Float formats BC6H reads.
+const R11F_G11F_B10F: u32 = 0x8C3A;
+const RGBA16F: u32 = 0x881A;
+const RGBA32F: u32 = 0x8814;
 const MAX_ANISOTROPY: u32 = 0x84FE;
 // The widest encode target (texels; a row of blocks wraps onto the next).
 const TARGET_WIDTH: i32 = 1024;
@@ -69,6 +76,9 @@ pub enum CompressKind {
     /// Two channels (a normal map's X and Y; the shader rebuilds Z): BC5
     /// or RG11 EAC, 8 bits a texel.
     Rg = 2,
+    /// HDR color (an R11F_G11F_B10F, RGBA16F or RGBA32F source, 2D or a
+    /// cube map): BC6H, 8 bits a texel. Needs `EXT_texture_compression_bptc`.
+    Hdr = 3,
 }
 
 // A compressed format and how it is encoded.
@@ -89,7 +99,7 @@ enum Family {
 }
 
 // Every format the encoders write (BC first: preferred where both exist).
-const FORMATS: [BlockFormat; 15] = {
+const FORMATS: [BlockFormat; 16] = {
     const fn f(
         internal: u32,
         bytes: i32,
@@ -123,6 +133,7 @@ const FORMATS: [BlockFormat; 15] = {
         f(0x93B0, 16, Rgba, false, Astc), // RGBA_ASTC_4x4
         f(0x93D0, 16, Rgba, true, Astc),  // SRGB8_ALPHA8_ASTC_4x4
         f(0x93B0, 16, Rg, false, Astc),   // RGBA_ASTC_4x4
+        f(0x8E8F, 16, Hdr, false, Bc),    // RGB_BPTC_UNSIGNED_FLOAT
     ]
 };
 
@@ -135,6 +146,7 @@ struct Encoder {
     f_blocks_x: ParamField,
     f_blocks: ParamField,
     f_width: ParamField,
+    f_face: Option<ParamField>,
 }
 
 /// Compresses textures on the GPU (see the module docs). Holds an encoder
@@ -147,12 +159,16 @@ pub struct TextureCompressor {
     etc_layout: ParamLayoutId,
     tables: TextureId,
     // By the format's GL enum and kind (ASTC writes all three into one).
-    encoders: RefCell<HashMap<(u32, CompressKind), Encoder>>,
+    encoders: RefCell<HashMap<(u32, CompressKind, bool), Encoder>>,
+    cube_layout: ParamLayoutId,
+    // Exact texel reads at an explicit level from a cube.
+    cube_sampler: crate::ids::SamplerId,
     s3tc: bool,
     s3tc_srgb: bool,
     rgtc: bool,
     etc: bool,
     astc: bool,
+    bptc: bool,
 }
 
 #[wasm_bindgen]
@@ -167,10 +183,14 @@ impl TextureCompressor {
         let rgtc = ctx.enable_extension_quietly(Extension::ExtTextureCompressionRgtc);
         let etc = ctx.enable_extension_quietly(Extension::WebglCompressedTextureEtc);
         let astc = ctx.enable_extension_quietly(Extension::WebglCompressedTextureAstc);
-        let layout = |tables: bool| {
+        let bptc = ctx.enable_extension_quietly(Extension::ExtTextureCompressionBptc);
+        let layout = |tables: bool, face: bool| {
             let mut b = ParamLayoutBuilder::new().texture("u_source");
             if tables {
                 b = b.texture("u_tables");
+            }
+            if face {
+                b = b.uniform("u_face", UniformType::I32);
             }
             ctx.create_param_layout(
                 &b.uniform("u_level", UniformType::I32)
@@ -179,8 +199,12 @@ impl TextureCompressor {
                     .uniform("u_width", UniformType::I32),
             )
         };
-        let bc_layout = layout(true)?;
-        let etc_layout = layout(false)?;
+        let bc_layout = layout(true, false)?;
+        let etc_layout = layout(false, false)?;
+        let cube_layout = layout(false, true)?;
+        let mut nearest = crate::sampler::SamplerDesc::nearest_clamp();
+        nearest.min_filter = TextureMinFilter::NearestMipmapNearest;
+        let cube_sampler = ctx.create_sampler(&nearest)?;
         let tables = ctx.create_texture(
             TextureTarget::Texture2D,
             TextureMinFilter::Nearest,
@@ -205,18 +229,25 @@ impl TextureCompressor {
             etc_layout,
             tables,
             encoders: RefCell::new(HashMap::new()),
+            cube_layout,
+            cube_sampler,
             s3tc,
             s3tc_srgb,
             rgtc,
             etc,
             astc,
+            bptc,
         };
         for kind in [CompressKind::Rgb, CompressKind::Rgba, CompressKind::Rg] {
             for srgb in [false, true] {
                 if let Some(format) = me.format(kind, srgb) {
-                    me.encoder(format)?;
+                    me.encoder(format, false)?;
                 }
             }
+        }
+        // HDR: the environment's cubes.
+        if let Some(format) = me.format(CompressKind::Hdr, false) {
+            me.encoder(format, true)?;
         }
         Ok(me)
     }
@@ -239,6 +270,7 @@ impl TextureCompressor {
                 (Family::Etc, CompressKind::Rgba) => "ETC2 RGBA",
                 (Family::Etc, CompressKind::Rg) => "RG11 EAC",
                 (Family::Astc, _) => "ASTC 4x4",
+                (_, CompressKind::Hdr) => "BC6H",
             }
             .to_string()
         })
@@ -277,6 +309,30 @@ impl TextureCompressor {
     /// the encoders write, whether or not the device samples it), its
     /// blocks' bytes. For tests: a format the device lacks can still be decoded on
     /// the CPU.
+    /// Makes the encoder for `internal` / `kind` (as `encode_level`
+    /// would, compiling in the background) and resolves once it has
+    /// compiled. For tests.
+    #[doc(hidden)]
+    #[wasm_bindgen(js_name = prepareFormat)]
+    pub fn prepare_format(
+        &self,
+        internal: u32,
+        kind: CompressKind,
+    ) -> Result<js_sys::Promise, Error> {
+        let format = FORMATS
+            .iter()
+            .find(|f| f.internal == internal && f.kind == kind)
+            .copied()
+            .ok_or("prepareFormat: not a format the encoders write")?;
+        self.encoder(format, false)?;
+        let program = self.encoders.borrow()[&(format.internal, format.kind, false)].program;
+        let ready = self.ctx.programs_ready(vec![program]);
+        Ok(wasm_bindgen_futures::future_to_promise(async move {
+            ready.await;
+            Ok(JsValue::UNDEFINED)
+        }))
+    }
+
     #[doc(hidden)]
     #[wasm_bindgen(js_name = encodeLevel)]
     pub fn encode_level(
@@ -298,11 +354,11 @@ impl TextureCompressor {
             .get(tex.0)
             .map(|t| t.extent.get())
             .ok_or("encodeLevel: the texture is destroyed")?;
-        let plan = plan_levels(&format, extent[1], extent[2], level + 1);
+        let plan = plan_levels(&format, extent[1], extent[2], level + 1, 1);
         let l = plan.last().ok_or("encodeLevel: no such level")?;
         let (fbo, scratch) = self.scratch(l.target)?;
         let out = (|| {
-            self.encode(tex, format, level, l, fbo)?;
+            self.encode(tex, format, false, l, fbo)?;
             let gl = self.ctx.gl();
             let mut words = vec![0u32; (l.target.0 * l.target.1 * 4) as usize];
             // SAFETY: the view lives only for the call.
@@ -333,6 +389,8 @@ impl TextureCompressor {
             res.textures.contains(self.tables.0),
             res.param_layouts.contains(self.bc_layout.0),
             res.param_layouts.contains(self.etc_layout.0),
+            res.param_layouts.contains(self.cube_layout.0),
+            res.samplers.contains(self.cube_sampler.0),
         );
         drop(res);
         for (_, e) in self.encoders.borrow_mut().drain() {
@@ -352,6 +410,38 @@ impl TextureCompressor {
         if live.2 {
             self.ctx.destroy_param_layout(self.etc_layout);
         }
+        if live.3 {
+            self.ctx.destroy_param_layout(self.cube_layout);
+        }
+        if live.4 {
+            self.ctx.destroy_sampler(self.cube_sampler);
+        }
+    }
+}
+
+thread_local! {
+    // One compressor per context, shared by whoever compresses on it (its
+    // encoders compile once), made again after a context loss.
+    static SHARED: RefCell<Option<(Context, u32, Rc<TextureCompressor>)>> =
+        const { RefCell::new(None) };
+}
+
+impl TextureCompressor {
+    /// The compressor of `ctx`, made on first use and kept for the
+    /// context's life (a new one after a loss).
+    pub fn shared(ctx: &Context) -> Result<Rc<TextureCompressor>, Error> {
+        SHARED.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if let Some((c, generation, comp)) = slot.as_ref()
+                && c.is_same_context(ctx)
+                && *generation == ctx.generation()
+            {
+                return Ok(comp.clone());
+            }
+            let comp = Rc::new(TextureCompressor::new(ctx)?);
+            *slot = Some((ctx.clone(), ctx.generation(), comp.clone()));
+            Ok(comp)
+        })
     }
 }
 
@@ -364,6 +454,8 @@ impl Drop for TextureCompressor {
 // A level's blocks, the target rectangle that holds them, and where they go
 // in the buffer.
 struct Level {
+    level: i32,
+    face: i32,
     width: i32,
     height: i32,
     blocks_x: i32,
@@ -372,11 +464,17 @@ struct Level {
     offset: i32,
 }
 
-fn plan_levels(format: &BlockFormat, width: i32, height: i32, levels: i32) -> Vec<Level> {
+fn plan_levels(
+    format: &BlockFormat,
+    width: i32,
+    height: i32,
+    levels: i32,
+    faces: i32,
+) -> Vec<Level> {
     let per_texel = 16 / format.block_bytes; // blocks an RGBA32UI texel holds
     let mut plan = Vec::new();
     let mut offset = 0;
-    for l in 0..levels {
+    for (l, face) in (0..levels).flat_map(|l| (0..faces).map(move |f| (l, f))) {
         let (w, h) = ((width >> l).max(1), (height >> l).max(1));
         let (bx, by) = ((w + 3) / 4, (h + 3) / 4);
         let blocks = bx * by;
@@ -384,6 +482,8 @@ fn plan_levels(format: &BlockFormat, width: i32, height: i32, levels: i32) -> Ve
         let tw = texels.min(TARGET_WIDTH);
         let th = (texels + tw - 1) / tw;
         plan.push(Level {
+            level: l,
+            face,
             width: w,
             height: h,
             blocks_x: bx,
@@ -424,17 +524,18 @@ impl TextureCompressor {
             (Family::Etc, _, _) => self.etc,
             (Family::Astc, _, _) => self.astc,
             (Family::Bc, CompressKind::Rg, _) => self.rgtc,
+            (Family::Bc, CompressKind::Hdr, _) => self.bptc,
             (Family::Bc, _, false) => self.s3tc,
             (Family::Bc, _, true) => self.s3tc_srgb,
         }
     }
 
     // The encoder for `format` (made on first use).
-    fn encoder(&self, format: BlockFormat) -> Result<(), Error> {
+    fn encoder(&self, format: BlockFormat, cube: bool) -> Result<(), Error> {
         if self
             .encoders
             .borrow()
-            .contains_key(&(format.internal, format.kind))
+            .contains_key(&(format.internal, format.kind, cube))
         {
             return Ok(());
         }
@@ -449,13 +550,15 @@ impl TextureCompressor {
             (Family::Astc, CompressKind::Rgb) => ("MODE_ASTC_RGB", ASTC_FRAG, self.etc_layout),
             (Family::Astc, CompressKind::Rgba) => ("MODE_ASTC_RGBA", ASTC_FRAG, self.etc_layout),
             (Family::Astc, CompressKind::Rg) => ("MODE_ASTC_RG", ASTC_FRAG, self.etc_layout),
+            (_, CompressKind::Hdr) if cube => ("CUBE", BC6H_FRAG, self.cube_layout),
+            (_, CompressKind::Hdr) => ("BC6H", BC6H_FRAG, self.etc_layout),
         };
         let srgb = if format.srgb { "#define SRGB\n" } else { "" };
         let frag = format!("#version 300 es\n#define {mode}\n{srgb}{source}");
         let program = self.ctx.create_program(VERT, &frag)?;
         let params = self.ctx.create_param_group(layout)?;
         let field = |name: &str| self.ctx.param_field(layout, name);
-        if format.family == Family::Bc {
+        if format.family == Family::Bc && format.kind != CompressKind::Hdr {
             self.ctx
                 .param_set_texture(params, field("u_tables")?, self.tables);
         }
@@ -467,10 +570,15 @@ impl TextureCompressor {
             f_blocks_x: field("u_blocks_x")?,
             f_blocks: field("u_blocks")?,
             f_width: field("u_width")?,
+            f_face: if cube { Some(field("u_face")?) } else { None },
         };
+        if cube {
+            self.ctx
+                .param_set_sampler(params, encoder.f_source, self.cube_sampler);
+        }
         self.encoders
             .borrow_mut()
-            .insert((format.internal, format.kind), encoder);
+            .insert((format.internal, format.kind, cube), encoder);
         Ok(())
     }
 
@@ -509,16 +617,19 @@ impl TextureCompressor {
         &self,
         tex: TextureId,
         format: BlockFormat,
-        level: i32,
+        cube: bool,
         l: &Level,
         fbo: FramebufferId,
     ) -> Result<(), Error> {
         let ctx = &self.ctx;
-        self.encoder(format)?;
+        self.encoder(format, cube)?;
         let encoders = self.encoders.borrow();
-        let encoder = &encoders[&(format.internal, format.kind)];
+        let encoder = &encoders[&(format.internal, format.kind, cube)];
         ctx.param_set_texture(encoder.params, encoder.f_source, tex);
-        ctx.param_set_i32(encoder.params, encoder.f_level, level);
+        ctx.param_set_i32(encoder.params, encoder.f_level, l.level);
+        if let Some(f) = encoder.f_face {
+            ctx.param_set_i32(encoder.params, f, l.face);
+        }
         ctx.param_set_i32(encoder.params, encoder.f_blocks_x, l.blocks_x);
         ctx.param_set_i32(encoder.params, encoder.f_blocks, l.blocks);
         ctx.param_set_i32(encoder.params, encoder.f_width, l.target.0);
@@ -554,20 +665,31 @@ impl TextureCompressor {
         }) else {
             return Err("compress: the texture is destroyed".into());
         };
-        let srgb = match internal {
-            RGBA8 => false,
-            SRGB8_ALPHA8 => true,
+        let srgb = match (internal, kind) {
+            (RGBA8, CompressKind::Rgb | CompressKind::Rgba | CompressKind::Rg) => false,
+            (SRGB8_ALPHA8, CompressKind::Rgb | CompressKind::Rgba | CompressKind::Rg) => true,
+            (R11F_G11F_B10F | RGBA16F | RGBA32F, CompressKind::Hdr) => false,
             _ => return Ok(false),
         };
-        if target != TextureTarget::Texture2D || width % 4 != 0 || height % 4 != 0 || levels < 1 {
+        let cube = target == TextureTarget::TextureCubeMap;
+        if !(cube && kind == CompressKind::Hdr || target == TextureTarget::Texture2D)
+            || width % 4 != 0
+            || height % 4 != 0
+            || levels < 1
+        {
             return Ok(false);
         }
+        let (bind_target, faces) = if cube {
+            (Gl::TEXTURE_CUBE_MAP, 6)
+        } else {
+            (Gl::TEXTURE_2D, 1)
+        };
         // Two-channel formats have no sRGB form: a normal map is data anyway.
         let srgb = srgb && kind != CompressKind::Rg;
         let Some(format) = self.format(kind, srgb) else {
             return Ok(false);
         };
-        let plan = plan_levels(&format, width, height, levels);
+        let plan = plan_levels(&format, width, height, levels, faces);
         let size = plan
             .iter()
             .fold((1, 1), |(w, h), l| (w.max(l.target.0), h.max(l.target.1)));
@@ -582,8 +704,8 @@ impl TextureCompressor {
         gl.buffer_data_with_i32(Gl::PIXEL_PACK_BUFFER, bytes, Gl::STREAM_COPY);
         gl.bind_buffer(Gl::PIXEL_PACK_BUFFER, None);
         let encoded = (|| -> Result<(), Error> {
-            for (i, l) in plan.iter().enumerate() {
-                self.encode(tex, format, i as i32, l, fbo)?;
+            for l in &plan {
+                self.encode(tex, format, cube, l, fbo)?;
                 // The rendered blocks into the buffer.
                 gl.bind_buffer(Gl::PIXEL_PACK_BUFFER, Some(&pbo));
                 let read = gl.read_pixels_with_i32(
@@ -632,13 +754,18 @@ impl TextureCompressor {
             return Ok(false);
         };
         ctx.gl_state().forget_texture_unit();
-        gl.bind_texture(Gl::TEXTURE_2D, Some(&raw));
-        gl.tex_storage_2d(Gl::TEXTURE_2D, levels, format.internal, width, height);
+        gl.bind_texture(bind_target, Some(&raw));
+        gl.tex_storage_2d(bind_target, levels, format.internal, width, height);
         gl.bind_buffer(Gl::PIXEL_UNPACK_BUFFER, Some(&pbo));
-        for (i, l) in plan.iter().enumerate() {
+        for l in &plan {
+            let image_target = if cube {
+                Gl::TEXTURE_CUBE_MAP_POSITIVE_X + l.face as u32
+            } else {
+                Gl::TEXTURE_2D
+            };
             gl.compressed_tex_sub_image_2d_with_i32_and_i32(
-                Gl::TEXTURE_2D,
-                i as i32,
+                image_target,
+                l.level,
                 0,
                 0,
                 l.width,
@@ -652,13 +779,13 @@ impl TextureCompressor {
         for (pname, value) in settings {
             if pname == MAX_ANISOTROPY {
                 if let Some(v) = value.as_f64() {
-                    gl.tex_parameterf(Gl::TEXTURE_2D, pname, v as f32);
+                    gl.tex_parameterf(bind_target, pname, v as f32);
                 }
             } else if let Some(v) = value.as_f64() {
-                gl.tex_parameteri(Gl::TEXTURE_2D, pname, v as i32);
+                gl.tex_parameteri(bind_target, pname, v as i32);
             }
         }
-        gl.bind_texture(Gl::TEXTURE_2D, None);
+        gl.bind_texture(bind_target, None);
         // Freed once the uploads that read it have run.
         gl.delete_buffer(Some(&pbo));
         ctx.replace_texture_storage(tex, raw, format.internal, [levels, width, height, 1]);

@@ -61,6 +61,11 @@ pub struct Environment {
 }
 
 impl Environment {
+    /// Its two cube maps: diffuse irradiance, prefiltered specular.
+    pub fn cubes(&self) -> [TextureId; 2] {
+        [self.diffuse, self.specular]
+    }
+
     /// Light of one color from every direction: what `SceneRenderer` uses
     /// until an environment is set (scaled by its intensity, it's a flat
     /// ambient light).

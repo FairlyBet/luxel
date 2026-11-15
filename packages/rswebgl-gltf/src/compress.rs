@@ -19,10 +19,6 @@ use rswebgl::texture_compressor::{CompressKind, TextureCompressor};
 
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(true) };
-    // One compressor per context (its encoders compile once), remade after
-    // a context loss.
-    static COMPRESSOR: RefCell<Option<(Context, u32, Rc<TextureCompressor>)>> =
-        const { RefCell::new(None) };
     // Compressed textures by format: how many, milliseconds.
     static STATS: RefCell<std::collections::BTreeMap<String, (u32, f64)>> =
         const { RefCell::new(std::collections::BTreeMap::new()) };
@@ -52,28 +48,15 @@ fn compressor(ctx: &Context) -> Option<Rc<TextureCompressor>> {
     if !texture_compression() {
         return None;
     }
-    COMPRESSOR.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        if let Some((c, generation, comp)) = slot.as_ref()
-            && c.is_same_context(ctx)
-            && *generation == ctx.generation()
-        {
-            return Some(comp.clone());
+    match TextureCompressor::shared(ctx) {
+        Ok(comp) => Some(comp),
+        Err(e) => {
+            console::error(&format!(
+                "[rswebgl-gltf] texture compression unavailable: {e}"
+            ));
+            None
         }
-        match TextureCompressor::new(ctx) {
-            Ok(comp) => {
-                let comp = Rc::new(comp);
-                *slot = Some((ctx.clone(), ctx.generation(), comp.clone()));
-                Some(comp)
-            }
-            Err(e) => {
-                console::error(&format!(
-                    "[rswebgl-gltf] texture compression unavailable: {e}"
-                ));
-                None
-            }
-        }
-    })
+    }
 }
 
 /// The format each of `doc`'s textures compresses to, by how its materials
