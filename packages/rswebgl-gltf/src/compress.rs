@@ -1,10 +1,11 @@
 //! Runtime texture compression of a model's images (`setTextureCompression`):
 //! once an image has decoded (and its mips are made) it is compressed on the
-//! GPU in place (`rswebgl::texture_compressor`) — base color BC1, or BC3
-//! where a material using it blends or masks; emissive, occlusion and
-//! metallic-roughness (or the packed ORM) BC1; normal maps BC5. Extension
-//! maps (sheen, clearcoat, specular, …) stay as they are: several keep data
-//! in alpha or need more precision than BC1 gives.
+//! GPU in place (`rswebgl::texture_compressor`), by how the material reads
+//! it (`SLOT_USES`): color and data in R / G / B BC1 (base color BC3 where a
+//! material using it blends or masks), maps read in alpha (specular, sheen
+//! roughness, diffuse transmission) BC3, normal maps (clearcoat's too) BC5;
+//! on phones the ETC2 / EAC counterparts. The anisotropy map stays as it is:
+//! BC1's channel crosstalk would bend its direction.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -59,53 +60,71 @@ fn compressor(ctx: &Context) -> Option<Rc<TextureCompressor>> {
     }
 }
 
+/// How a material slot (`material::MAP_SLOTS` order) reads its map, which
+/// picks the format: color or data in R / G / B, alpha too, a tangent-space
+/// normal, or none (left uncompressed).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Use {
+    Rgb,
+    Rgba,
+    Normal,
+    Keep,
+}
+
+const SLOT_USES: [Use; crate::material::MAP_COUNT] = [
+    Use::Rgb,    // baseColor (Rgba where its material blends or masks)
+    Use::Rgb,    // metallicRoughness: G, B
+    Use::Normal, // normal
+    Use::Rgb,    // occlusion: R
+    Use::Rgb,    // emissive
+    Use::Rgb,    // clearcoat: R
+    Use::Rgb,    // clearcoatRoughness: G
+    Use::Normal, // clearcoatNormal
+    Use::Rgb,    // transmission: R
+    Use::Rgb,    // thickness: G
+    Use::Rgba,   // specular: A
+    Use::Rgb,    // specularColor
+    Use::Rgb,    // sheenColor
+    Use::Rgba,   // sheenRoughness: A
+    Use::Rgb,    // iridescence: R
+    Use::Rgb,    // iridescenceThickness: G
+    Use::Keep,   // anisotropy: a direction in R, G (BC1's channel crosstalk would bend it)
+    Use::Rgba,   // diffuseTransmission: A
+    Use::Rgb,    // diffuseTransmissionColor
+];
+
 /// The format each of `doc`'s textures compresses to, by how its materials
-/// use it; None to leave it be (an extension's map, or roles at odds).
+/// read it (every slot that uses it must agree: color with and without
+/// alpha make color with alpha); None to leave it be.
 pub(crate) fn kinds(doc: &gltf::Document) -> Vec<Option<CompressKind>> {
-    #[derive(Clone, Copy, Default)]
-    struct Use {
-        color: bool, // base color, emissive, occlusion, metallic-roughness
-        alpha: bool, // base color of a blended or masked material
-        normal: bool,
-        other: bool,
-    }
-    let mut uses = vec![Use::default(); doc.textures().len()];
+    let mut uses: Vec<Option<Use>> = vec![None; doc.textures().len()];
+    let mut merge = |i: usize, u: Use| {
+        let Some(slot) = uses.get_mut(i) else {
+            return;
+        };
+        *slot = Some(match (*slot, u) {
+            (None, u) => u,
+            (Some(a), b) if a == b => a,
+            (Some(Use::Rgb), Use::Rgba) | (Some(Use::Rgba), Use::Rgb) => Use::Rgba,
+            _ => Use::Keep,
+        });
+    };
     for mat in doc.materials() {
-        let pbr = mat.pbr_metallic_roughness();
         let blends = mat.alpha_mode() != gltf::material::AlphaMode::Opaque;
-        if let Some(i) = pbr.base_color_texture().map(|i| i.texture().index()) {
-            uses[i].color = true;
-            uses[i].alpha |= blends;
-        }
-        for i in [
-            pbr.metallic_roughness_texture()
-                .map(|i| i.texture().index()),
-            mat.occlusion_texture().map(|i| i.texture().index()),
-            mat.emissive_texture().map(|i| i.texture().index()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            uses[i].color = true;
-        }
-        if let Some(i) = mat.normal_texture().map(|i| i.texture().index()) {
-            uses[i].normal = true;
-        }
-        for m in crate::material::doc_maps(&mat)
-            .into_iter()
-            .skip(5)
-            .flatten()
-        {
-            if let Some(u) = uses.get_mut(m.texture) {
-                u.other = true;
-            }
+        for (slot, m) in crate::material::doc_maps(&mat).into_iter().enumerate() {
+            let Some(m) = m else { continue };
+            let u = match SLOT_USES[slot] {
+                Use::Rgb if slot == 0 && blends => Use::Rgba,
+                u => u,
+            };
+            merge(m.texture, u);
         }
     }
-    uses.iter()
-        .map(|u| match (u.color, u.normal, u.other) {
-            (true, false, false) if u.alpha => Some(CompressKind::Rgba),
-            (true, false, false) => Some(CompressKind::Rgb),
-            (false, true, false) => Some(CompressKind::Rg),
+    uses.into_iter()
+        .map(|u| match u {
+            Some(Use::Rgb) => Some(CompressKind::Rgb),
+            Some(Use::Rgba) => Some(CompressKind::Rgba),
+            Some(Use::Normal) => Some(CompressKind::Rg),
             _ => None,
         })
         .collect()
@@ -183,4 +202,55 @@ pub fn texture_compression_stats() -> String {
         let parts: Vec<String> = s.iter().map(|(k, e)| format!("{k} ×{}", e.0)).collect();
         format!("{} in {ms:.0} ms", parts.join(", "))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Texture i over image 0: what each slot's reading makes of it.
+    fn kinds_of(materials: &str, textures: usize) -> Vec<Option<CompressKind>> {
+        let textures: Vec<String> = (0..textures).map(|_| r#"{ "source": 0 }"#.into()).collect();
+        let json = format!(
+            r#"{{ "asset": {{ "version": "2.0" }},
+                 "extensionsUsed": ["KHR_materials_sheen", "KHR_materials_clearcoat", "KHR_materials_anisotropy"],
+                 "images": [{{ "uri": "a.png" }}],
+                 "textures": [{}],
+                 "materials": [{materials}] }}"#,
+            textures.join(",")
+        );
+        let doc = gltf::Gltf::from_slice(json.as_bytes())
+            .expect("gltf")
+            .document;
+        kinds(&doc)
+    }
+
+    #[test]
+    fn slots_pick_their_formats() {
+        let k = kinds_of(
+            r#"{ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } },
+                 "normalTexture": { "index": 1 },
+                 "extensions": {
+                   "KHR_materials_sheen": { "sheenColorTexture": { "index": 2 }, "sheenRoughnessTexture": { "index": 3 } },
+                   "KHR_materials_clearcoat": { "clearcoatNormalTexture": { "index": 4 } },
+                   "KHR_materials_anisotropy": { "anisotropyTexture": { "index": 5 } } } },
+               { "alphaMode": "BLEND", "pbrMetallicRoughness": { "baseColorTexture": { "index": 6 } } },
+               { "normalTexture": { "index": 7 }, "emissiveTexture": { "index": 7 } }"#,
+            8,
+        );
+        use CompressKind::*;
+        assert_eq!(
+            k,
+            vec![
+                Some(Rgb),  // base color, opaque
+                Some(Rg),   // normal
+                Some(Rgb),  // sheen color
+                Some(Rgba), // sheen roughness: alpha
+                Some(Rg),   // clearcoat normal
+                None,       // anisotropy
+                Some(Rgba), // base color of a blended material
+                None,       // a normal map also read as emissive: at odds
+            ]
+        );
+    }
 }

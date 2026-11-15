@@ -405,6 +405,8 @@ void main() {
 #ifdef HAS_CLEARCOAT_NORMAL_MAP
     // The coat's own normal map, through the same frame.
     vec3 cm = texture(u_clearcoat_normal_tex, CLEARCOAT_NORMAL_UV).xyz * 2.0 - 1.0;
+    // Two channels (BC5 / RG11): Z from X and Y, as for the base normal map.
+    if (cm.z <= -1.0) cm.z = sqrt(max(1.0 - dot(cm.xy, cm.xy), 0.0));
     cm.xy *= u_clearcoat_normal_scale;
     s.n_coat = normalize(mat3(frame.t, frame.b, frame.ng) * cm);
 #endif
