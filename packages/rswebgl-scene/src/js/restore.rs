@@ -228,7 +228,8 @@ impl Scene {
             if !model.is_lost(&self.ctx) {
                 return;
             }
-            if !self.restore_models || model.source().is_empty() {
+            let request = model.reload_request().filter(|_| self.restore_models);
+            let Some(request) = request else {
                 // The app reloads it (setRestoreModels(false)).
                 console::warn_once(
                     "[rswebgl-scene] restore: models aren't fetched again \
@@ -240,16 +241,15 @@ impl Scene {
                     }
                 }
                 return;
-            }
+            };
             for e in descendants(&self.world, root) {
                 if self.world.get::<MeshRenderer>(e).is_some() {
                     self.world.insert(e, Reloading);
                 }
             }
-            let (ctx, url, inbox) = (self.ctx.clone(), model.source(), self.reloads.clone());
-            let (options, alive) = (model.load_options(), self.alive.clone());
+            let (ctx, inbox, alive) = (self.ctx.clone(), self.reloads.clone(), self.alive.clone());
             wasm_bindgen_futures::spawn_local(async move {
-                let result = rswebgl_gltf::load_model_with(&ctx, &url, options).await;
+                let result = rswebgl_gltf::load_request(&ctx, request).await;
                 if !alive.get() {
                     // The scene was destroyed meanwhile.
                     if let Ok(model) = result {

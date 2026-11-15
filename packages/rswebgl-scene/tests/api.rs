@@ -516,11 +516,14 @@ async fn material_textures_from_js() {
     // A red base color map on white Stone: both stones turn red.
     let p = s
         .scene
-        .load_texture(&png_url([255, 0, 0, 255]), json(r#"{ "mipmaps": false }"#))
+        .load_texture(
+            &png_url([255, 0, 0, 255]),
+            Some(json(r#"{ "mipmaps": false }"#)),
+        )
         .unwrap();
     let red = await_texture(p).await.expect("loaded");
     s.scene
-        .set_material_texture(stone, "baseColorTexture", red, JsValue::UNDEFINED)
+        .set_material_texture(stone, "baseColorTexture", red, None)
         .unwrap();
     assert_eq!(s.frame().await, [YELLOW, RED, RED]);
     assert_eq!(s.scene.material_texture(stone, "baseColorTexture"), red);
@@ -533,7 +536,7 @@ async fn material_textures_from_js() {
     // A clone keeps the map; changing the clone's leaves the original.
     let blue = await_texture(
         s.scene
-            .load_texture(&png_url([0, 0, 255, 255]), JsValue::UNDEFINED)
+            .load_texture(&png_url([0, 0, 255, 255]), None)
             .unwrap(),
     )
     .await
@@ -541,7 +544,7 @@ async fn material_textures_from_js() {
     let copy = s.scene.clone_material(stone).unwrap();
     assert_eq!(s.scene.material_texture(copy, "baseColorTexture"), red);
     s.scene
-        .set_material_texture(copy, "baseColorTexture", blue, JsValue::UNDEFINED)
+        .set_material_texture(copy, "baseColorTexture", blue, None)
         .unwrap();
     s.scene
         .set_material(s.scene.find_by_name(s.root, "stone_b"), copy);
@@ -549,12 +552,7 @@ async fn material_textures_from_js() {
 
     // Removing a map goes back to the factor (and the variant without it).
     s.scene
-        .set_material_texture(
-            stone,
-            "baseColorTexture",
-            TextureId::NULL,
-            JsValue::UNDEFINED,
-        )
+        .set_material_texture(stone, "baseColorTexture", TextureId::NULL, None)
         .unwrap();
     assert_eq!(s.frame().await, [YELLOW, WHITE, BLUE]);
     assert_eq!(
@@ -565,22 +563,27 @@ async fn material_textures_from_js() {
     // Errors: unknown map, bad options, an image that doesn't load.
     assert!(
         s.scene
-            .set_material_texture(stone, "nope", red, JsValue::UNDEFINED)
+            .set_material_texture(stone, "nope", red, None)
             .is_err()
     );
     assert!(
         s.scene
-            .set_material_texture(stone, "normalTexture", red, json(r#"{ "texCoord": 2 }"#))
+            .set_material_texture(
+                stone,
+                "normalTexture",
+                red,
+                Some(json(r#"{ "texCoord": 2 }"#))
+            )
             .is_err()
     );
     assert!(
         s.scene
-            .load_texture("x.png", json(r#"{ "wrap": "tile" }"#))
+            .load_texture("x.png", Some(json(r#"{ "wrap": "tile" }"#)))
             .is_err()
     );
     let bad = s
         .scene
-        .load_texture("data:image/png;base64,AAAA", JsValue::UNDEFINED)
+        .load_texture("data:image/png;base64,AAAA", None)
         .unwrap();
     assert!(await_texture(bad).await.is_err(), "rejects");
 
@@ -649,12 +652,15 @@ async fn shaders_compile_without_stalling_frames() {
     // A new variant (a base color map): the stones stay drawn meanwhile.
     let p = s
         .scene
-        .load_texture(&png_url([255, 0, 0, 255]), json(r#"{ "mipmaps": false }"#))
+        .load_texture(
+            &png_url([255, 0, 0, 255]),
+            Some(json(r#"{ "mipmaps": false }"#)),
+        )
         .unwrap();
     let red = await_texture(p).await.expect("loaded");
     let stone = s.scene.find_material(s.root, "Stone");
     s.scene
-        .set_material_texture(stone, "baseColorTexture", red, JsValue::UNDEFINED)
+        .set_material_texture(stone, "baseColorTexture", red, None)
         .unwrap();
     s.scene.render_frame(s.camera);
     assert_eq!(s.scene.drawn(), 3, "parallel: {parallel}");
@@ -693,11 +699,14 @@ async fn the_scene_comes_back_after_a_context_loss() {
     let blue_stone = s.scene.clone_material(stone).unwrap();
     let p = s
         .scene
-        .load_texture(&png_url([0, 0, 255, 255]), json(r#"{ "mipmaps": false }"#))
+        .load_texture(
+            &png_url([0, 0, 255, 255]),
+            Some(json(r#"{ "mipmaps": false }"#)),
+        )
         .unwrap();
     let blue = await_texture(p).await.unwrap();
     s.scene
-        .set_material_texture(blue_stone, "baseColorTexture", blue, JsValue::UNDEFINED)
+        .set_material_texture(blue_stone, "baseColorTexture", blue, None)
         .unwrap();
     s.scene.set_material(stone_a, blue_stone);
     // stone_b hidden; in its place a half-size quad with its own texture,
@@ -1016,14 +1025,14 @@ async fn extension_maps_from_js() {
         .scene
         .load_texture(
             &png_url([255, 255, 255, 255]),
-            json(r#"{ "colorSpace": "linear" }"#),
+            Some(json(r#"{ "colorSpace": "linear" }"#)),
         )
         .unwrap();
     let tex = await_texture(p).await.unwrap();
     // No coat yet: the map is held but costs no variant.
     let before = s.scene.shader_variant_count();
     s.scene
-        .set_material_texture(stone, "clearcoatTexture", tex, JsValue::UNDEFINED)
+        .set_material_texture(stone, "clearcoatTexture", tex, None)
         .unwrap();
     assert_eq!(s.scene.material_texture(stone, "clearcoatTexture"), tex);
     s.scene
@@ -1033,17 +1042,12 @@ async fn extension_maps_from_js() {
     assert!(coated > before, "the coat (with its map) is a new variant");
     // Removing the map: yet another variant (coat without a map).
     s.scene
-        .set_material_texture(
-            stone,
-            "clearcoatTexture",
-            TextureId::NULL,
-            JsValue::UNDEFINED,
-        )
+        .set_material_texture(stone, "clearcoatTexture", TextureId::NULL, None)
         .unwrap();
     assert_eq!(s.scene.shader_variant_count(), coated + 1);
     assert!(
         s.scene
-            .set_material_texture(stone, "glitterTexture", tex, JsValue::UNDEFINED)
+            .set_material_texture(stone, "glitterTexture", tex, None)
             .is_err()
     );
     s.frame().await;
@@ -1119,7 +1123,10 @@ async fn texture_transforms() {
     );
     let p = s
         .scene
-        .load_texture(&url, json(r#"{ "mipmaps": false, "wrap": "repeat" }"#))
+        .load_texture(
+            &url,
+            Some(json(r#"{ "mipmaps": false, "wrap": "repeat" }"#)),
+        )
         .unwrap();
     let tex = await_texture(p).await.unwrap();
     async fn halves(
@@ -1129,7 +1136,7 @@ async fn texture_transforms() {
         opts: &str,
     ) -> [[u8; 4]; 2] {
         s.scene
-            .set_material_texture(material, "baseColorTexture", tex, json(opts))
+            .set_material_texture(material, "baseColorTexture", tex, Some(json(opts)))
             .unwrap();
         s.frame().await;
         let read = |x: i32| {

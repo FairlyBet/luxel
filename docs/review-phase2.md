@@ -4,7 +4,17 @@ Four read-only reviews (foundation + ECS, core, glTF, scene + JS API), each
 claim checked against the code, merged and grouped into pieces of work.
 Effort S / M / L; value H / M / L. Nothing here is fixed yet: pick from it.
 
-## 1. Loading (glTF) — H, M (one piece of work)
+## 1. Loading (glTF) — H, M — done
+
+`loadModel(ctx, source, options)`: a URL, a `File` / `Blob` or bytes; `signal`,
+`request`, `resolveUrl`, `files`, `onProgress`, `baseUrl`, per-load
+compression (`loader.js` — every request of a load, images too, goes through
+one fetcher); buffers requested at once; `model.whenLoaded()` /
+`isLoaded()` / `warnings()`, and `scene.whenReady()` waits for the images;
+POSITION `min` / `max` problems are warnings. Reloads after a context loss
+load the same source with the same options. What follows is the item as
+reviewed.
+
 
 Two reviews independently put this first; it is what an app meets first.
 

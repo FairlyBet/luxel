@@ -313,33 +313,55 @@ function zoom(/** @type {number} */ factor) {
 let root = 0;
 let modelLabel = "";
 let modelUrl = "";
-// The model asked for last (still loading, perhaps).
-let wantedUrl = "";
-let wantedLabel = "";
+// The model asked for last (still loading, perhaps): loaded again when the
+// texture compression toggle changes.
+/** @type {{ source: string | File, label: string, files?: File[] } | null} */
+let wanted = null;
 Object.assign(/** @type {any} */ (globalThis).viewer, { root: () => root });
-let loading = 0;
-async function load(/** @type {string} */ url, /** @type {string} */ label) {
-  const ticket = ++loading;
-  wantedUrl = url;
-  wantedLabel = label;
+/** @type {AbortController | null} */
+let loading = null;
+const megabytes = (/** @type {number} */ n) => (n / 1048576).toFixed(1);
+async function load(
+  /** @type {string | File} */ source,
+  /** @type {string} */ label,
+  /** @type {File[] | undefined} */ files,
+) {
+  // A newer load cancels the one running (its requests, images included).
+  loading?.abort();
+  const abort = new AbortController();
+  loading = abort;
+  const current = () => loading === abort;
+  wanted = { source, label, files };
   status(`Loading ${label}…`);
   const t0 = performance.now();
   try {
-    const model = await loadModel(ctx, url);
-    if (ticket !== loading) {
-      model.destroy(ctx); // a newer load won
-      if (url.startsWith("blob:") && url !== wantedUrl) URL.revokeObjectURL(url);
+    const model = await loadModel(ctx, source, {
+      signal: abort.signal,
+      files,
+      onProgress: (loaded, total) =>
+        current() &&
+        status(`Loading ${label}… ${megabytes(loaded)}${total > loaded ? ` / ${megabytes(total)}` : ""} MB`),
+    });
+    if (!current()) {
+      model.destroy(ctx);
       return;
     }
-    // An opened file's object URL is kept while its model shows (a reload
-    // after a context loss fetches it again), freed once replaced.
-    if (modelUrl.startsWith("blob:") && modelUrl !== url) URL.revokeObjectURL(modelUrl);
+    // Shown once its images are in (not drawn untextured first).
+    const loaded = model.whenLoaded();
+    const warnings = () => model.warnings();
     Trace.instant(`model: ${label}`);
+    status(`Loading ${label}: textures…`);
+    await loaded;
+    if (!current()) {
+      model.destroy(ctx);
+      return;
+    }
+    const problems = warnings();
     if (root) scene.despawn(root);
     root = scene.addModel(model);
     invalidate();
     modelLabel = label;
-    modelUrl = url;
+    modelUrl = typeof source === "string" ? source : source.name;
     const [cx, cy, cz, r] = scene.modelBounds(root);
     orbit.target = [cx, cy, cz];
     orbit.radius = r || 1;
@@ -353,12 +375,17 @@ async function load(/** @type {string} */ url, /** @type {string} */ label) {
     status(`Compiling shaders for ${label}…`);
     await scene.whenReady();
     invalidate();
-    if (ticket === loading) {
-      status(`${label}: ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-      setTimeout(() => ticket === loading && status(""), 2500);
+    if (current()) {
+      const time = `${label}: ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+      if (problems.length) {
+        status(`${time}; ${problems.length} warning(s): ${problems[0]}`, true);
+      } else {
+        status(time);
+        setTimeout(() => current() && status(""), 2500);
+      }
     }
   } catch (err) {
-    if (ticket === loading) status(`Can't load ${label}: ${err instanceof Error ? err.message : err}`, true);
+    if (current()) status(`Can't load ${label}: ${err instanceof Error ? err.message : err}`, true);
   }
 }
 function resetView() {
@@ -400,7 +427,7 @@ variantSelect.addEventListener("change", () => {
 $("texture-compression").checked = textureCompression();
 $("texture-compression").addEventListener("change", () => {
   setTextureCompression($("texture-compression").checked);
-  if (wantedUrl) load(wantedUrl, wantedLabel);
+  if (wanted) load(wanted.source, wanted.label, wanted.files);
 });
 
 // The model's own cameras (glTF `cameras`) as alternatives to the orbit.
@@ -424,11 +451,16 @@ $("load-url").addEventListener("click", () => {
   if (url) load(url, url.split("/").pop() ?? url);
 });
 $("open-file").addEventListener("click", () => $("file").click());
-$("file").addEventListener("change", () => openFile($("file").files?.[0]));
-function openFile(/** @type {File | undefined} */ file) {
-  if (!file) return;
-  // A .glb is self-contained: an object URL of it is all the loader needs.
-  load(URL.createObjectURL(file), file.name);
+$("file").addEventListener("change", () => openFiles($("file").files));
+// A .glb, or a .gltf with its .bin and textures picked / dropped with it.
+function openFiles(/** @type {FileList | null | undefined} */ list) {
+  const files = Array.from(list ?? []);
+  const main = files.find((f) => /\.(glb|gltf)$/i.test(f.name));
+  if (!main) {
+    if (files.length) status("Pick or drop a .glb, or a .gltf with its files", true);
+    return;
+  }
+  load(main, main.name, files);
 }
 addEventListener("dragover", (e) => {
   e.preventDefault();
@@ -438,7 +470,7 @@ addEventListener("dragleave", () => document.body.classList.remove("dragging"));
 addEventListener("drop", (e) => {
   e.preventDefault();
   document.body.classList.remove("dragging");
-  openFile(e.dataTransfer?.files?.[0]);
+  openFiles(e.dataTransfer?.files);
 });
 
 // --- environment ---------------------------------------------------------------

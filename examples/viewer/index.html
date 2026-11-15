@@ -274,7 +274,7 @@
 <canvas id="graph" width="180" height="36"></canvas><span id="info"></span></div>
 
   <div id="status"></div>
-  <div id="drop">Drop a .glb to view it</div>
+  <div id="drop">Drop a .glb, or a .gltf with its files, to view it</div>
 
   <aside id="panel">
     <details open>
@@ -286,8 +286,8 @@
           <button id="load-url" style="width: auto">Load</button>
         </div>
         <button id="open-file">Open a .glb from this device…</button>
-        <input id="file" type="file" accept=".glb" hidden />
-        <div class="note">Or drop a .glb anywhere on the page.</div>
+        <input id="file" type="file" accept=".glb,.gltf,.bin,.png,.jpg,.jpeg,.webp,.avif,.ktx2" multiple hidden />
+        <div class="note">Or drop a .glb (or a .gltf with its files) anywhere on the page.</div>
         <div class="row"><span>Animation</span><select id="anim"><option value="-1">none</option></select><span></span></div>
         <div class="row"><span>Variant</span><select id="variant"><option value="">default</option></select><span></span></div>
         <div class="row" title="Compress the model's textures on the GPU after they load (BC1 / BC3 / BC5 where the device has them): a fraction of the memory, some loss. Reloads the model."><span>Compress textures</span><input id="texture-compression" type="checkbox" /><span></span></div>

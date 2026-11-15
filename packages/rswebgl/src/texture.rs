@@ -1237,6 +1237,25 @@ impl Context {
                 return;
             }
         };
+        self.texture_load_blob(tex, &blob, format, generate_mipmaps, flip_y, on_load);
+    }
+
+    /// `texture_load_bytes` from a `Blob` (a `File`, a fetched body): the
+    /// bytes go to the browser's decoder without passing through wasm
+    /// memory. The blob's type should be the image's (the decoder sniffs
+    /// most formats anyway).
+    #[wasm_bindgen(js_name = textureLoadBlob)]
+    pub fn texture_load_blob(
+        &self,
+        tex: TextureId,
+        blob: &Blob,
+        format: &TextureFormat,
+        generate_mipmaps: bool,
+        flip_y: bool,
+        #[wasm_bindgen(unchecked_param_type = "(width: number, height: number) => void")]
+        on_load: js_sys::Function,
+    ) {
+        let blob = blob.clone();
         if let Some(decode) = bitmap_decoder() {
             let source = BitmapSource::Blob(blob);
             self.load_bitmap(

@@ -39,6 +39,40 @@ requestAnimationFrame(function frame(now) {
 });
 ```
 
+## Loading models
+
+`loadModel(ctx, source, options?)` takes a URL, a `File` / `Blob` or the
+file's bytes. It resolves once the geometry is in; the images arrive after
+that. `model.whenLoaded()` resolves when they are all in or have failed
+(`scene.whenReady()` waits for them too), and `model.warnings()` says what
+failed.
+
+```js
+const abort = new AbortController();
+const model = await loadModel(ctx, "https://cdn.example.com/chair.glb", {
+  signal: abort.signal,                       // cancels every request
+  request: { credentials: "include" },        // headers, credentials, …
+  resolveUrl: (url) => sign(url),             // rewrite each URL
+  onProgress: (loaded, total) => bar(loaded, total),
+});
+await model.whenLoaded();
+console.log(model.warnings());
+```
+
+A `.gltf` dropped or picked with its `.bin` and textures loads from the
+files themselves:
+
+```js
+const files = [...event.dataTransfer.files];
+const main = files.find((f) => /\.(glb|gltf)$/i.test(f.name));
+const model = await loadModel(ctx, main, { files });
+```
+
+Texture and vertex compression can be set per load with
+`textureCompression` and `vertexCompression`; by default each follows its
+module-wide switch. A file whose POSITION accessors lack `min` / `max` still
+loads, with a warning; other validation errors reject the load.
+
 ## Compressed glTF
 
 meshopt-compressed files load as they are. Draco meshes and KTX2 (Basis

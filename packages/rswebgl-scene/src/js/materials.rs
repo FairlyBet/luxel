@@ -334,8 +334,9 @@ impl Scene {
     pub fn load_texture(
         &mut self,
         url: &str,
-        #[wasm_bindgen(unchecked_param_type = "TextureOptions | undefined")] opts: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "TextureOptions | undefined")] opts: Option<JsValue>,
     ) -> Result<js_sys::Promise, Error> {
+        let opts = opts.unwrap_or(JsValue::UNDEFINED);
         self.sync_context();
         let spec = TextureSpec::parse(url, &opts)?;
         let mut result = Ok(TextureId::NULL);
@@ -402,8 +403,9 @@ impl Scene {
         material: ParamGroupId,
         map: &str,
         texture: TextureId,
-        #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: Option<JsValue>,
     ) -> Result<(), Error> {
+        let opts = opts.unwrap_or(JsValue::UNDEFINED);
         self.sync_context();
         let texture = self.current_texture(texture);
         // Frozen shadows don't see this change on their own.

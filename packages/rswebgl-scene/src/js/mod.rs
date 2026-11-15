@@ -869,7 +869,8 @@ impl Scene {
     /// background (`KHR_parallel_shader_compile`); until then frames leave
     /// those meshes out rather than stall. Await it after `addModel` to show
     /// a model whole; resolves at once where compiles are synchronous. Also
-    /// waits for an environment bake under way (`setEnvironmentHdr`).
+    /// waits for an environment bake under way (`setEnvironmentHdr`) and for
+    /// the images of the models added (`Model.whenLoaded`).
     #[wasm_bindgen(js_name = whenReady)]
     #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn when_ready(&mut self) -> js_sys::Promise {
@@ -893,10 +894,14 @@ impl Scene {
         programs.dedup();
         let ready = self.ctx.programs_ready(programs);
         let environment = self.env_pending.as_ref().map(|p| p.finished());
+        let images: Vec<js_sys::Promise> = self.models.values().map(|m| m.when_loaded()).collect();
         wasm_bindgen_futures::future_to_promise(async move {
             ready.await;
             if let Some(environment) = environment {
                 environment.await;
+            }
+            for loaded in images {
+                let _ = wasm_bindgen_futures::JsFuture::from(loaded).await;
             }
             Ok(JsValue::UNDEFINED)
         })

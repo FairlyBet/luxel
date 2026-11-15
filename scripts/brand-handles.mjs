@@ -388,6 +388,19 @@ export function brandHandles(dts) {
   if (missing.length) {
     throw new Error("brand-handles: not found in the .d.ts:\n  " + missing.join("\n  "));
   }
+  // Trailing `T | undefined` parameters (options objects) may be left out:
+  // in JS a missing argument is `undefined` anyway.
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*(?:export function |static )?[\w$]+)\((.*)\)(: .*;)$/);
+    if (!m || !m[2].includes("| undefined")) continue;
+    const params = splitTop(m[2]);
+    for (let j = params.length - 1; j >= 0; j--) {
+      const p = params[j].match(/^([\w$]+)(\??): (.*) \| undefined$/);
+      if (!p) break;
+      params[j] = `${p[1]}?: ${p[3]}`;
+    }
+    lines[i] = `${m[1]}(${params.join(", ")})${m[3]}`;
+  }
   const decls = [...handleNames]
     .sort()
     .map(

@@ -45,7 +45,7 @@ pub fn build_texture_set(
     ctx: &Context,
     doc: &gltf::Document,
     buffers: &[Vec<u8>],
-    base: &str,
+    load: &crate::fetch::Load,
 ) -> Result<TextureSet, Error> {
     let docs: Vec<gltf::Texture> = doc.textures().collect();
     let tex_count = docs.len();
@@ -123,7 +123,7 @@ pub fn build_texture_set(
             ctx,
             t,
             buffers,
-            base,
+            load,
             srgb.contains(&i),
             needs_mips[&key],
             on_load,
@@ -137,7 +137,7 @@ pub fn build_texture_set(
     // 2. One packed ORM texture per accepted pair; both source indices point here.
     if let Some(packer) = &packer {
         for &(occ, mr) in &accepted {
-            let output = build_packed_orm(ctx, &docs, buffers, base, occ, mr, packer.clone())?;
+            let output = build_packed_orm(ctx, &docs, buffers, load, occ, mr, packer.clone())?;
             let p = textures.len() as i32;
             remap[occ] = p;
             remap[mr] = p;
@@ -269,7 +269,7 @@ fn build_packed_orm(
     ctx: &Context,
     docs: &[gltf::Texture],
     buffers: &[Vec<u8>],
-    base: &str,
+    load: &crate::fetch::Load,
     occ_idx: usize,
     mr_idx: usize,
     packer: Rc<TexturePacker>,
@@ -300,7 +300,7 @@ fn build_packed_orm(
         ctx,
         &docs[occ_idx],
         buffers,
-        base,
+        load,
         false,
         false,
         source_callback(&join, &packer, Source::Occlusion),
@@ -309,7 +309,7 @@ fn build_packed_orm(
         ctx,
         mr_doc,
         buffers,
-        base,
+        load,
         false,
         false,
         source_callback(&join, &packer, Source::MetallicRoughness),

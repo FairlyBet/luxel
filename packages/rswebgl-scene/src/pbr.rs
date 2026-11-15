@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-
 use crate::shader::shader_sources;
 use rswebgl::context::Context;
 use rswebgl::error::Error;

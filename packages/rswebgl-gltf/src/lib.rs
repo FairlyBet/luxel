@@ -11,7 +11,9 @@
 //! colour space, one sampler object per distinct glTF sampler.
 //!
 //! Loading is async (it fetches external buffers/images); textures fill in
-//! after the call returns.
+//! after the call returns (`Model::when_loaded`). A model loads from a URL,
+//! a `File` / `Blob` or bytes, with an `AbortSignal`, request options, a URL
+//! modifier, dropped files and progress (`LoadRequest`, `loader.js`).
 //!
 //! ```ignore
 //! let model = rswebgl_gltf::load_model(&ctx, "./model.glb").await?;
@@ -40,6 +42,7 @@ mod vertex_format;
 
 pub use animation::{Animation, AnimationChannel, AnimationPath, Interpolation};
 pub use draco::set_draco_decoder_path;
+pub use fetch::{Fetcher, Loading};
 pub use ktx2::set_ktx2_transcoder_path;
 pub use material::{
     AlphaMode, EXTERNAL_TEXTURE, MAP_COUNT, MAP_NAMES, MAP_SLOTS, MapSlot, Material, PROPERTIES,
@@ -55,7 +58,10 @@ use rswebgl::ids::{
 use rswebgl::param::ParamLayoutBuilder;
 use rswebgl::render_state::RenderState;
 use rswebgl::uniform_buffer::UniformType;
+use std::rc::Rc;
 use wasm_bindgen::prelude::*;
+
+use crate::fetch::{Load, message};
 
 /// Extensions this crate handles itself; a file that *requires* one of them
 /// still loads (the `gltf` crate would reject it as unsupported).
@@ -341,8 +347,12 @@ pub struct Model {
     pub(crate) mesh_count: usize,
     pub(crate) center: [f32; 3],
     pub(crate) radius: f32,
-    // Where it was loaded from, to reload it after a context loss.
+    // What it was loaded from (a URL, a file's name, empty for bytes).
     pub(crate) source: String,
+    // How to load it again after a context loss (none once forgotten).
+    pub(crate) request: Option<LoadRequest>,
+    // Its images still loading, and what went wrong.
+    pub(crate) loading: Rc<fetch::Loading>,
     // The context generation its GPU handles belong to.
     pub(crate) generation: u32,
     // KHR_materials_variants: the variants' names, in index order.
@@ -492,20 +502,44 @@ impl Model {
         self.buffers = fresh.buffers;
         self.morph_textures = fresh.morph_textures;
         self.generation = fresh.generation;
+        self.loading = fresh.loading;
         Ok(())
     }
 
-    /// The URL the model was loaded from (what a reload after a context loss
-    /// fetches again).
+    /// What the model was loaded from: its URL, a file's name, or empty
+    /// for bytes.
     pub fn source(&self) -> String {
         self.source.clone()
     }
 
-    /// Drops the kept source URL (a `data:` URI can be the whole file):
-    /// the model can't be reloaded after a context loss then.
+    /// Drops what a reload after a context loss would load again (the URL,
+    /// the `File`, the bytes — a `data:` URI or bytes can be the whole
+    /// file): the model can't be reloaded then.
     #[wasm_bindgen(js_name = forgetSource)]
     pub fn forget_source(&mut self) {
-        self.source = String::new();
+        self.request = None;
+    }
+
+    /// Resolves once every image of the model has loaded or failed (and the
+    /// ORM textures made from them are packed): await it before showing a
+    /// model to skip the moment it is drawn untextured. Never rejects —
+    /// `warnings()` says what failed. Texture compression may still swap
+    /// formats after it (the look stays).
+    #[wasm_bindgen(js_name = whenLoaded, unchecked_return_type = "Promise<void>")]
+    pub fn when_loaded(&self) -> js_sys::Promise {
+        self.loading.when_done()
+    }
+
+    /// Whether every image has loaded or failed (`whenLoaded` has resolved).
+    #[wasm_bindgen(js_name = isLoaded)]
+    pub fn is_loaded(&self) -> bool {
+        self.loading.pending() == 0
+    }
+
+    /// What went wrong without stopping the load, so far: images that didn't
+    /// load, validation problems the loader went past.
+    pub fn warnings(&self) -> Vec<String> {
+        self.loading.warnings()
     }
 
     /// Whether its GPU objects belong to an earlier context generation (lost
@@ -560,26 +594,179 @@ impl Model {
     }
 }
 
-/// `loadModel(ctx, url)` for JS: a promise of a `Model`. (An exported async fn
-/// can't borrow the context across `await`; this clones it first.)
+/// `loadModel(ctx, source, options?)` for JS: a promise of a `Model`.
+/// `source` is a URL, a `File` / `Blob` or the file's bytes; see
+/// `LoadModelOptions`. Aborted through `options.signal`, it rejects with the
+/// signal's reason (an `AbortError`). (An exported async fn can't borrow the
+/// context across `await`; this clones it first.)
 #[wasm_bindgen(js_name = loadModel, unchecked_return_type = "Promise<Model>")]
-pub fn load_model_js(ctx: &Context, url: String) -> js_sys::Promise {
+pub fn load_model_js(
+    ctx: &Context,
+    #[wasm_bindgen(unchecked_param_type = "string | Blob | ArrayBuffer | ArrayBufferView")]
+    source: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "LoadModelOptions | undefined")] options: Option<JsValue>,
+) -> Result<js_sys::Promise, Error> {
+    let request = LoadRequest::from_js(source, &options.unwrap_or(JsValue::UNDEFINED))?;
     let ctx = ctx.clone();
-    wasm_bindgen_futures::future_to_promise(async move {
-        load_model(&ctx, &url)
-            .await
-            .map(JsValue::from)
-            .map_err(JsValue::from)
-    })
+    Ok(wasm_bindgen_futures::future_to_promise(async move {
+        let fetcher = request.fetcher.clone();
+        match load_request(&ctx, request).await {
+            Ok(model) => Ok(model.into()),
+            // Aborted: the signal's reason, as fetch rejects.
+            Err(_) if fetcher.aborted() => Err(fetcher.abort_reason()),
+            Err(e) => Err(e.into()),
+        }
+    }))
 }
+
+#[wasm_bindgen(typescript_custom_section)]
+const TS_LOAD: &str = r#"
+/** How `loadModel` loads a model. */
+export interface LoadModelOptions {
+  /** Aborts the load (it rejects) and every request still running, images
+   *  included. */
+  signal?: AbortSignal;
+  /** Sent with every request: headers, credentials, mode, cache, … */
+  request?: RequestInit;
+  /** Rewrites each absolute URL before it is fetched (three.js'
+   *  `setURLModifier`): signed URLs, a proxy. */
+  resolveUrl?: (url: string) => string;
+  /** Files the model's URIs name, for a model dropped or picked with its
+   *  `.bin` and textures: an array of `File`s, a `FileList`, or a path →
+   *  `Blob` map / object. Looked up by path, then by file name. */
+  files?: ArrayLike<File> | Iterable<File> | Map<string, Blob> | Record<string, Blob>;
+  /** Bytes received so far over every request, and the sizes known
+   *  (`total` grows as requests start; 0 while none is known). */
+  onProgress?: (loaded: number, total: number) => void;
+  /** What the URIs of a model given as a `Blob` or bytes resolve against
+   *  (default: the page, or the `files`). */
+  baseUrl?: string;
+  /** Default: `setVertexCompression`'s setting. */
+  vertexCompression?: boolean;
+  /** Default: `setTextureCompression`'s setting. */
+  textureCompression?: boolean;
+}
+"#;
 
 /// Load and translate a glTF/GLB asset at `url` into GPU resources.
 ///
 /// Geometry, draw commands, render state and node transforms are ready when this
 /// resolves; textures are created empty and fill in asynchronously as their
-/// images decode (sampling one before it arrives shows black, then it pops in).
+/// images decode (`Model::when_loaded`).
 pub async fn load_model(ctx: &Context, url: &str) -> Result<Model, Error> {
-    load_model_with(ctx, url, LoadOptions::current()).await
+    load_request(ctx, LoadRequest::url(url)).await
+}
+
+/// What to load and how: a source (a URL, a `File` / `Blob`, bytes), the
+/// requests' options and the loader's settings. A model keeps one (without
+/// the signal and progress) to load itself again after a context loss.
+#[derive(Clone)]
+pub struct LoadRequest {
+    source: JsValue,
+    base_url: JsValue,
+    fetcher: fetch::Fetcher,
+    /// The settings the model is built with.
+    pub options: LoadOptions,
+}
+
+impl LoadRequest {
+    /// `url`, fetched plainly, with the settings now.
+    pub fn url(url: &str) -> Self {
+        Self {
+            source: url.into(),
+            base_url: JsValue::UNDEFINED,
+            fetcher: fetch::make_fetcher(&JsValue::UNDEFINED),
+            options: LoadOptions::current(),
+        }
+    }
+
+    /// From `loadModel`'s arguments (`LoadModelOptions`).
+    pub fn from_js(source: JsValue, options: &JsValue) -> Result<Self, Error> {
+        let ok = source.is_string()
+            || source.is_instance_of::<web_sys::Blob>()
+            || source.is_instance_of::<js_sys::ArrayBuffer>()
+            || js_sys::ArrayBuffer::is_view(&source);
+        if !ok {
+            return Err("loadModel: the source is a URL, a File / Blob or bytes".into());
+        }
+        let get = |k: &str| {
+            if options.is_object() {
+                js_sys::Reflect::get(options, &k.into()).unwrap_or(JsValue::UNDEFINED)
+            } else {
+                JsValue::UNDEFINED
+            }
+        };
+        let flag = |k: &str, default: bool| -> Result<bool, Error> {
+            let v = get(k);
+            if v.is_undefined() {
+                return Ok(default);
+            }
+            v.as_bool()
+                .ok_or_else(|| format!("loadModel: {k} is true or false").into())
+        };
+        let base_url = get("baseUrl");
+        if !(base_url.is_undefined() || base_url.is_string()) {
+            return Err("loadModel: baseUrl is a string".into());
+        }
+        // Bytes are copied: the app may reuse or transfer its buffer, and a
+        // reload after a context loss reads them again.
+        let source = if source.is_instance_of::<js_sys::ArrayBuffer>() {
+            js_sys::Uint8Array::new(&source).slice(0, u32::MAX).into()
+        } else if js_sys::ArrayBuffer::is_view(&source) {
+            let view: js_sys::Object = source.unchecked_into();
+            let get = |k: &str| {
+                js_sys::Reflect::get(&view, &k.into())
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0) as u32
+            };
+            let buffer = js_sys::Reflect::get(&view, &"buffer".into()).map_err(js_err)?;
+            js_sys::Uint8Array::new_with_byte_offset_and_length(
+                &buffer,
+                get("byteOffset"),
+                get("byteLength"),
+            )
+            .slice(0, u32::MAX)
+            .into()
+        } else {
+            source
+        };
+        let now = LoadOptions::current();
+        Ok(Self {
+            source,
+            base_url,
+            fetcher: fetch::make_fetcher(options),
+            options: LoadOptions {
+                vertex_compression: flag("vertexCompression", now.vertex_compression)?,
+                texture_compression: flag("textureCompression", now.texture_compression)?,
+            },
+        })
+    }
+
+    /// With these settings.
+    pub fn with_options(mut self, options: LoadOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    // The same again, for a reload: no signal, no progress.
+    fn for_reload(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            base_url: self.base_url.clone(),
+            fetcher: self.fetcher.for_reload(),
+            options: self.options,
+        }
+    }
+}
+
+impl Model {
+    /// What loads the model again as it was loaded (after a context loss:
+    /// `load_request` it, then `adopt` the result); none once its source is
+    /// forgotten.
+    pub fn reload_request(&self) -> Option<LoadRequest> {
+        self.request.as_ref().map(LoadRequest::for_reload)
+    }
 }
 
 /// The loader's settings a model is built with: taken when its load
@@ -630,25 +817,40 @@ impl Drop for WithOptions {
     }
 }
 
-/// `load_model` with the given settings (a reload: the model's own,
-/// `Model::load_options`).
-pub async fn load_model_with(
-    ctx: &Context,
-    url: &str,
-    options: LoadOptions,
-) -> Result<Model, Error> {
+/// Loads what `request` says.
+pub async fn load_request(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
+    let fetcher = request.fetcher.clone();
+    let result = load(ctx, request).await;
+    if result.is_err() {
+        // Requests still running (other buffers) stop, progress too.
+        fetcher.cancel();
+    }
+    result
+}
+
+async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
+    let options = request.options;
+    let fetcher = request.fetcher.clone();
     // The file itself goes as soon as it's parsed: a GLB's binary chunk is
     // copied out, and holding both would double the peak memory.
-    let (mut json, blob) = {
-        let bytes = fetch::fetch_bytes(url).await.map_err(js_err)?;
+    let (mut json, blob, base, name) = {
+        let (bytes, base, name) = fetcher
+            .main_file(&request.source, &request.base_url)
+            .await
+            .map_err(js_err)?;
         let _s = tracing::info_span!("gltf.parse", bytes = bytes.len()).entered();
-        split(&bytes)?
+        let (json, blob) = split(&bytes)?;
+        (json, blob, base, name)
     };
     let (webp, avif) = image_formats::support().await;
     patch_image_sources(&mut json, ktx2::has_transcoder(), webp, avif);
 
-    let base = fetch::absolute_base(url).map_err(js_err)?;
-    let mut buffers = buffers::resolve_buffers(&json, blob, &base)
+    let load = Load {
+        fetcher: fetcher.clone(),
+        base,
+        loading: fetch::Loading::new(),
+    };
+    let mut buffers = buffers::resolve_buffers(&json, blob, &load)
         .await
         .map_err(js_err)?;
     // Compressed geometry, decoded in place (meshopt) or into a buffer of
@@ -676,8 +878,12 @@ pub async fn load_model_with(
     draco::decode(&mut json, &mut buffers).await?;
     let document = {
         let _s = tracing::info_span!("gltf.document").entered();
-        document(&json)?
+        document(&json, &load.loading)?
     };
+    // Aborted while the files downloaded (or decoded): nothing is made.
+    if fetcher.aborted() {
+        return Err("loadModel: aborted".into());
+    }
 
     // Assemble textures, packing separate occlusion + metallic-roughness maps
     // into one ORM texture where safe; `remap` rewrites material texture indices
@@ -692,7 +898,7 @@ pub async fn load_model_with(
     let generation = ctx.generation();
     let _options = WithOptions::set(options);
     let _build = tracing::info_span!("gltf.build").entered();
-    let set = pack::build_texture_set(ctx, &document, &buffers, &base)?;
+    let set = pack::build_texture_set(ctx, &document, &buffers, &load)?;
     let mut materials: Vec<Material> = document
         .materials()
         .map(|m| material::translate(&m))
@@ -782,7 +988,9 @@ pub async fn load_model_with(
         mesh_count: geometry.mesh_count(),
         center,
         radius,
-        source: url.to_string(),
+        source: name,
+        request: Some(request.for_reload()),
+        loading: load.loading,
         generation,
         variants,
         options,
@@ -805,13 +1013,61 @@ fn split(bytes: &[u8]) -> Result<(serde_json::Value, Option<Vec<u8>>), Error> {
 
 // The validated document. Extensions we handle are dropped from
 // `extensionsRequired` first, which would otherwise reject them as
-// unsupported.
-fn document(json: &serde_json::Value) -> Result<gltf::Document, Error> {
+// unsupported. Problems the loader can go past are warnings (`tolerated`);
+// any other rejects the file.
+fn document(json: &serde_json::Value, loading: &fetch::Loading) -> Result<gltf::Document, Error> {
     let mut root: gltf::json::Root =
         serde_json::from_value(json.clone()).map_err(|e| format!("glTF parse failed: {e}"))?;
     root.extensions_required
         .retain(|e| !HANDLED_EXTENSIONS.contains(&e.as_str()));
-    gltf::Document::from_json(root).map_err(|e| format!("glTF invalid: {e}").into())
+    // The gltf crate's validation indexes accessors by a primitive's
+    // attributes unchecked (a panic): checked first.
+    for (m, mesh) in root.meshes.iter().enumerate() {
+        for (p, prim) in mesh.primitives.iter().enumerate() {
+            if let Some(bad) = prim
+                .attributes
+                .values()
+                .find(|a| a.value() >= root.accessors.len())
+            {
+                return Err(format!(
+                    "glTF invalid: meshes[{m}].primitives[{p}]: accessor {} out of range",
+                    bad.value()
+                )
+                .into());
+            }
+        }
+    }
+    // As `Document::from_json` validates, keeping the errors.
+    let mut errors = Vec::new();
+    {
+        use gltf::json::validation::Validate;
+        root.validate(&root, gltf::json::Path::new, &mut |path, e| {
+            errors.push((path(), e))
+        });
+    }
+    let document = gltf::Document::from_json_without_validation(root);
+    if errors.is_empty() {
+        return Ok(document);
+    }
+    let (past, fatal): (Vec<_>, Vec<_>) = errors
+        .iter()
+        .partition(|(path, _)| tolerated(path.as_str()));
+    if !fatal.is_empty() {
+        let list: Vec<String> = fatal.iter().map(|(p, e)| format!("{p}: {e}")).collect();
+        return Err(format!("glTF invalid: {}", list.join("; ")).into());
+    }
+    for (path, e) in past {
+        loading.warn(format!("glTF: {path}: {e} (ignored)"));
+    }
+    Ok(document)
+}
+
+// Validation problems the loader goes past (with a warning), as three.js
+// does: what this crate reads defensively. A POSITION accessor's missing or
+// malformed `min` / `max` (exporters drop them; bounds are computed then) —
+// the gltf crate's own bounding box would unwrap them, and it isn't used.
+fn tolerated(path: &str) -> bool {
+    path.ends_with("[\"POSITION\"].min") || path.ends_with("[\"POSITION\"].max")
 }
 
 // Image extensions, by preference (three.js' plugin order): a texture's
@@ -875,7 +1131,7 @@ fn read_skins(doc: &gltf::Document, buffers: &[Vec<u8>]) -> Vec<Skin> {
 }
 
 fn js_err(e: JsValue) -> Error {
-    e.as_string().unwrap_or_else(|| format!("{e:?}")).into()
+    message(&e).into()
 }
 
 // The material maps in `MAP_SLOTS` order: (texture index or -1, TEXCOORD set).
@@ -997,12 +1253,16 @@ mod tests {
         ];
         for name in HANDLED_EXTENSIONS.iter().chain(&crate_parsed) {
             assert!(
-                document(&split(doc(name).as_bytes()).unwrap().0).is_ok(),
+                document(
+                    &split(doc(name).as_bytes()).unwrap().0,
+                    &fetch::Loading::default()
+                )
+                .is_ok(),
                 "{name}"
             );
         }
         let unknown = split(doc("EXT_unknown_extension").as_bytes()).unwrap().0;
-        assert!(document(&unknown).is_err());
+        assert!(document(&unknown, &fetch::Loading::default()).is_err());
     }
 
     // A texture's source: WebP before AVIF where the browser decodes them,

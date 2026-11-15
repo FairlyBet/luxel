@@ -2,12 +2,13 @@
 //!
 //! A buffer's data lives in one of three places (glTF 2.0 §3.6.1.2): the GLB
 //! binary chunk (`Source::Bin`), a `data:` URI, or an external file referenced
-//! by URI. The whole load is async, so external buffers are fetched on demand.
+//! by URI. External buffers are all requested at once, through the load's
+//! fetcher.
 
 use base64::Engine;
 use wasm_bindgen::prelude::*;
 
-use crate::fetch::{fetch_bytes, resolve_url};
+use crate::fetch::{Load, resolve_url};
 
 /// One `Vec<u8>` per buffer of the glTF `json`, in index order. Read from
 /// the JSON, before the document is validated (Draco and meshopt files are
@@ -15,21 +16,25 @@ use crate::fetch::{fetch_bytes, resolve_url};
 pub async fn resolve_buffers(
     json: &serde_json::Value,
     glb_blob: Option<Vec<u8>>,
-    base: &str,
+    load: &Load,
 ) -> Result<Vec<Vec<u8>>, JsValue> {
     let mut blob = glb_blob;
     let list = json["buffers"].as_array().map_or(&[][..], Vec::as_slice);
-    let mut out = Vec::with_capacity(list.len());
+    // Every external one requested first, then each awaited in turn.
+    let mut external = Vec::new();
     for buffer in list {
+        external.push(match buffer["uri"].as_str() {
+            Some(uri) if !uri.starts_with("data:") && !is_fallback(buffer) => {
+                let abs = resolve_url(&load.base, uri)?;
+                Some(load.fetcher.start_bytes(&abs))
+            }
+            _ => None,
+        });
+    }
+    let mut out = Vec::with_capacity(list.len());
+    for (buffer, fetch) in list.iter().zip(external) {
         let length = buffer["byteLength"].as_u64().unwrap_or(0) as usize;
-        // A meshopt fallback buffer is what the compressed bufferViews
-        // decode into: zeroed, never fetched (its URI, if any, is for
-        // loaders without the extension).
-        let fallback = ["EXT_meshopt_compression", "KHR_meshopt_compression"]
-            .iter()
-            .filter_map(|e| buffer.get("extensions")?.get(e))
-            .any(|v| v.get("fallback").and_then(serde_json::Value::as_bool) == Some(true));
-        if fallback {
+        if is_fallback(buffer) {
             out.push(vec![0; length]);
             continue;
         }
@@ -38,17 +43,25 @@ pub async fn resolve_buffers(
             None => blob.take().ok_or_else(|| {
                 JsValue::from_str("glTF references a GLB buffer but none present")
             })?,
-            Some(uri) => match decode_data_uri(uri) {
-                Some(bytes) => bytes?,
-                None => {
-                    let abs = resolve_url(base, uri)?;
-                    fetch_bytes(&abs).await?
-                }
+            Some(uri) => match (decode_data_uri(uri), fetch) {
+                (Some(bytes), _) => bytes?,
+                (None, Some(fetch)) => fetch.await?,
+                (None, None) => return Err("buffer: not requested".into()),
             },
         };
         out.push(data);
     }
     Ok(out)
+}
+
+// A meshopt fallback buffer is what the compressed bufferViews decode into:
+// zeroed, never fetched (its URI, if any, is for loaders without the
+// extension).
+fn is_fallback(buffer: &serde_json::Value) -> bool {
+    ["EXT_meshopt_compression", "KHR_meshopt_compression"]
+        .iter()
+        .filter_map(|e| buffer.get("extensions")?.get(e))
+        .any(|v| v.get("fallback").and_then(serde_json::Value::as_bool) == Some(true))
 }
 
 /// Decode a `data:` URI's payload. Returns `None` if `uri` isn't a data URI.

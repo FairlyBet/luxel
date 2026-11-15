@@ -20,9 +20,18 @@ export async function check(canvas: HTMLCanvasElement, ctx: Context, scene: Scen
   await init();
   const model: Model = await loadModel(ctx, "a.glb");
   const root: Entity = scene.addModel(model);
+  const dropped = await loadModel(ctx, new File([], "a.gltf"), {
+    files: [new File([], "a.bin")],
+    signal: new AbortController().signal,
+    onProgress: (loaded, total) => loaded / total,
+  });
+  await dropped.whenLoaded();
+  const warnings: string[] = dropped.warnings();
+  // @ts-expect-error not an option
+  await loadModel(ctx, "a.glb", { vertexCompresion: true });
   const e: Entity = scene.spawn();
   scene.setParent(e, root);
-  const tex: TextureId = await scene.loadTexture("a.png", undefined);
+  const tex: TextureId = await scene.loadTexture("a.png");
   const mats: Handles<ParamGroupId> = scene.materials(root);
   const m: ParamGroupId = mats[0];
   scene.setMaterialTexture(m, "baseColor", tex, undefined);
@@ -48,5 +57,5 @@ export async function check(canvas: HTMLCanvasElement, ctx: Context, scene: Scen
   scene.setToneMapping("filmic");
   // @ts-expect-error a material isn't a program
   ctx.destroyProgram(m);
-  return [canvas, ready, name, bytes];
+  return [canvas, ready, name, bytes, warnings];
 }

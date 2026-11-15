@@ -19,8 +19,11 @@ use rswebgl::texture::{
     TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget, TextureWrap, failed_later,
 };
 
+use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
+
 use crate::buffers::{data_uri_mime, decode_data_uri};
-use crate::fetch::resolve_url;
+use crate::fetch::{Load, message, resolve_url};
 
 /// Create one GPU texture for `tex` and kick off its async image load.
 ///
@@ -32,22 +35,25 @@ use crate::fetch::resolve_url;
 /// (used by ORM packing to learn the decoded size). It comes exactly once and
 /// never synchronously — with `(0, 0)` when the image can't even be requested
 /// (a bad data URI or URL, a bufferView out of range). An error only when the
-/// texture itself can't be created (the context is lost).
+/// texture itself can't be created (the context is lost). The load waits for
+/// it (`Model::when_loaded`), and a failure is one of its warnings.
 pub(crate) fn build_texture(
     ctx: &Context,
     tex: &gltf::Texture,
     buffers: &[Vec<u8>],
-    base: &str,
+    load: &Load,
     srgb: bool,
     force_mips: bool,
     on_load: js_sys::Function,
 ) -> Result<TextureId, Error> {
+    let base = load.base.as_str();
     let sampler = tex.sampler();
     let (min, mips) = min_filter(sampler.min_filter());
     let generate_mipmaps = mips || force_mips;
     let mag = mag_filter(sampler.mag_filter());
 
     let out = ctx.create_texture(TextureTarget::Texture2D, min, mag)?;
+    let on_load = tracked(ctx, out, load, image_name(&tex.source()), on_load);
     ctx.texture_set_wrap_s(out, wrap(sampler.wrap_s()));
     ctx.texture_set_wrap_t(out, wrap(sampler.wrap_t()));
 
@@ -70,7 +76,7 @@ pub(crate) fn build_texture(
             out,
             &tex.source(),
             buffers,
-            base,
+            load,
             srgb,
             generate_mipmaps,
             on_load,
@@ -104,14 +110,34 @@ pub(crate) fn build_texture(
                 }
             } else {
                 match resolve_url(base, uri) {
-                    Ok(abs) => ctx.texture_load_image(
-                        out,
-                        &abs,
-                        &format,
-                        generate_mipmaps,
-                        flip_y,
-                        on_load,
-                    ),
+                    Ok(abs) => {
+                        // Fetched with the load's options, decoded as a Blob.
+                        let (ctx, fetcher) = (ctx.clone(), load.fetcher.clone());
+                        let mime = mime_type
+                            .map(str::to_string)
+                            .unwrap_or_else(|| mime_from_path(&abs).to_string());
+                        wasm_bindgen_futures::spawn_local(async move {
+                            match fetcher.fetch_blob(&abs, &mime).await {
+                                Ok(blob) => ctx.texture_load_blob(
+                                    out,
+                                    &blob,
+                                    &format,
+                                    generate_mipmaps,
+                                    flip_y,
+                                    on_load,
+                                ),
+                                Err(e) => {
+                                    if !fetcher.aborted() {
+                                        console::error(&format!(
+                                            "[rswebgl-gltf] image: {}",
+                                            message(&e)
+                                        ));
+                                    }
+                                    failed_later(on_load);
+                                }
+                            }
+                        });
+                    }
                     Err(e) => {
                         console::error(&format!("[rswebgl-gltf] image URL: {e:?}"));
                         failed_later(on_load);
@@ -166,7 +192,7 @@ fn load_ktx2(
     out: TextureId,
     image: &gltf::Image,
     buffers: &[Vec<u8>],
-    base: &str,
+    load: &Load,
     srgb: bool,
     mips: bool,
     on_load: js_sys::Function,
@@ -192,16 +218,22 @@ fn load_ktx2(
             None => {
                 // External: fetched, then transcoded.
                 let ctx = ctx.clone();
-                let url = resolve_url(base, uri);
+                let fetcher = load.fetcher.clone();
+                let url = resolve_url(&load.base, uri);
                 wasm_bindgen_futures::spawn_local(async move {
                     let fetched = match url {
-                        Ok(url) => crate::fetch::fetch_bytes(&url).await,
+                        Ok(url) => fetcher.start_bytes(&url).await,
                         Err(e) => Err(e),
                     };
                     match fetched {
                         Ok(bytes) => crate::ktx2::load(&ctx, out, bytes, srgb, mips, on_load),
                         Err(e) => {
-                            console::error(&format!("[rswebgl-gltf] KTX2 image: {e:?}"));
+                            if !fetcher.aborted() {
+                                console::error(&format!(
+                                    "[rswebgl-gltf] KTX2 image: {}",
+                                    message(&e)
+                                ));
+                            }
                             failed_later(on_load);
                         }
                     }
@@ -216,6 +248,59 @@ fn load_ktx2(
             console::error(&format!("[rswebgl-gltf] KTX2 image: {e}"));
             failed_later(on_load);
         }
+    }
+}
+
+// `on_load` as a job of the load: done once it has run; a failed image
+// (`(0, 0)`) is one of the load's warnings.
+fn tracked(
+    ctx: &Context,
+    tex: TextureId,
+    load: &Load,
+    name: String,
+    on_load: js_sys::Function,
+) -> js_sys::Function {
+    let job = load.loading.start();
+    let (ctx, fetcher) = (ctx.clone(), load.fetcher.clone());
+    Closure::once_into_js(move |w: f64, h: f64| {
+        // Not a failure: the model was destroyed or the context lost.
+        let torn_down = ctx.is_lost() || !ctx.texture_is_valid(tex);
+        if !(w > 0.0 && h > 0.0) && !torn_down {
+            let why = if fetcher.aborted() { " (aborted)" } else { "" };
+            job.loading().warn(format!("image {name} didn't load{why}"));
+        }
+        let _ = on_load.call2(&JsValue::NULL, &w.into(), &h.into());
+        drop(job);
+    })
+    .unchecked_into()
+}
+
+// How a warning names an image: its name, URI or index.
+fn image_name(image: &gltf::Image) -> String {
+    let index = image.index();
+    if let Some(name) = image.name() {
+        return format!("{index} \"{name}\"");
+    }
+    match image.source() {
+        gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => {
+            format!("{index} \"{uri}\"")
+        }
+        _ => index.to_string(),
+    }
+}
+
+// An image type from a path's extension (for a server that sends none).
+fn mime_from_path(url: &str) -> &'static str {
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match path.rsplit('.').next() {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("avif") => "image/avif",
+        _ => "image/png",
     }
 }
 
