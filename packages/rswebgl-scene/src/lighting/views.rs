@@ -37,12 +37,96 @@ pub(crate) struct ShadowView {
     /// World → the map's [0, 1]³ (texture coordinates, depth as stored).
     pub to_map: Mat4,
     /// The receiver's normal offset: world units, or per unit of depth
-    /// along the light (`perspective`).
+    /// for a perspective map (a spot's, a point light's faces).
     pub normal_bias: f32,
-    pub perspective: bool,
     pub state: LightShadow,
     /// An orthographic map's side in world units (0 for a spot's).
     pub extent: f32,
+    /// A point light's face: drawn into a quarter of a layer (`tile`).
+    pub quarter: bool,
+    /// Where it is drawn: the layer, and the part of it (texture
+    /// coordinates: x0, y0, x1, y1) — set when the maps are laid out.
+    pub layer: usize,
+    pub tile: [f32; 4],
+}
+
+impl ShadowView {
+    /// Drawn into `tile` of `layer`: world → map now lands in the tile.
+    pub fn place(&mut self, layer: usize, tile: [f32; 4]) {
+        let [x0, y0, x1, y1] = tile;
+        let into = Mat4::from_cols(
+            Vec4::new(x1 - x0, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, y1 - y0, 0.0, 0.0),
+            Vec4::Z,
+            Vec4::new(x0, y0, 0.0, 1.0),
+        );
+        self.to_map = into * self.to_map;
+        self.layer = layer;
+        self.tile = tile;
+    }
+}
+
+/// A point light's six faces (+X, −X, +Y, −Y, +Z, −Z), each a perspective
+/// map a little wider than 90° — two texels to spare at its edges, so the
+/// 3×3 filter of a point on a face's border stays on the face (Filament's
+/// point shadows are six such maps too). `size`: a face's side in texels.
+/// Its depth reaches the farthest caster (or the light's range). None when
+/// no caster is around it.
+pub(crate) fn point_views(
+    light: &Light,
+    world: &Mat4,
+    bounds: (Vec3, Vec3),
+    size: u32,
+    reverse_z: bool,
+    settings: LightShadow,
+) -> Option<Vec<ShadowView>> {
+    let (min, max) = bounds;
+    if !(min.is_finite() && max.is_finite()) || min.cmpgt(max).any() {
+        return None;
+    }
+    let eye = world.w_axis.truncate();
+    let mut far = box_corners(bounds)
+        .iter()
+        .map(|c| c.distance(eye))
+        .fold(0.0, f32::max);
+    if far <= 0.0 {
+        return None;
+    }
+    if light.range > 0.0 {
+        far = far.min(light.range);
+    }
+    far *= 1.01;
+    let near = far * 2e-3;
+    let texels = size.max(8) as f32;
+    // tan(fov / 2) with two texels to spare each side.
+    let half_tan = texels / (texels - 4.0);
+    let fov = 2.0 * half_tan.atan();
+    let proj = if reverse_z {
+        Mat4::perspective_rh(fov, 1.0, far, near)
+    } else {
+        Mat4::perspective_rh_gl(fov, 1.0, near, far)
+    };
+    // A texel's width one unit of depth away.
+    let bias = settings.normal_bias * 2.0 * half_tan / texels;
+    let faces = [
+        (Vec3::X, Vec3::Y),
+        (Vec3::NEG_X, Vec3::Y),
+        (Vec3::Y, Vec3::Z),
+        (Vec3::NEG_Y, Vec3::Z),
+        (Vec3::Z, Vec3::Y),
+        (Vec3::NEG_Z, Vec3::Y),
+    ];
+    Some(
+        faces
+            .iter()
+            .map(|&(dir, up)| {
+                let view = Mat4::look_at_rh(eye, eye + dir, up);
+                let mut v = finish(proj * view, bias, settings, 0.0, reverse_z);
+                v.quarter = true;
+                v
+            })
+            .collect(),
+    )
 }
 
 /// The camera the cascades split: its world matrix and projection.
@@ -99,14 +183,7 @@ pub(crate) fn shadow_view(
             let proj = ortho(l, r, b, t, near, far, reverse_z);
             let extent = (r - l).max(t - b);
             let bias = settings.normal_bias * extent / texels;
-            Some(finish(
-                proj * view,
-                bias,
-                false,
-                settings,
-                extent,
-                reverse_z,
-            ))
+            Some(finish(proj * view, bias, settings, extent, reverse_z))
         }
         LightKind::Spot { outer_cone, .. } => {
             let eye = world.w_axis.truncate();
@@ -131,7 +208,7 @@ pub(crate) fn shadow_view(
             // A texel's width one unit of depth away.
             let texel = 2.0 * (fov * 0.5).tan() / texels;
             let bias = settings.normal_bias * texel;
-            Some(finish(proj * view, bias, true, settings, 0.0, reverse_z))
+            Some(finish(proj * view, bias, settings, 0.0, reverse_z))
         }
         LightKind::Point => None,
     }
@@ -225,14 +302,8 @@ pub(crate) fn cascade_views(
         let view = Mat4::from_translation(Vec3::new(-cx, -cy, 0.0)) * light_from_world;
         let proj = ortho(-h, h, -h, h, n, f, reverse_z);
         let bias = settings.normal_bias * texel;
-        out.views.push(finish(
-            proj * view,
-            bias,
-            false,
-            settings,
-            diameter,
-            reverse_z,
-        ));
+        out.views
+            .push(finish(proj * view, bias, settings, diameter, reverse_z));
         let last = i + 1 == count;
         out.far_bounds.push(if last { f32::MAX } else { slice_far });
         // The next slice starts inside this one: the shader blends there.
@@ -348,7 +419,6 @@ fn ortho(l: f32, r: f32, b: f32, t: f32, near: f32, far: f32, reverse_z: bool) -
 fn finish(
     view_proj: Mat4,
     normal_bias: f32,
-    perspective: bool,
     state: LightShadow,
     extent: f32,
     reverse_z: bool,
@@ -364,9 +434,11 @@ fn finish(
         view_proj,
         to_map: window * view_proj,
         normal_bias,
-        perspective,
         state,
         extent,
+        quarter: false,
+        layer: 0,
+        tile: [0.0, 0.0, 1.0, 1.0],
     }
 }
 
@@ -508,6 +580,68 @@ mod tests {
         assert!(
             (d - d.round()).abs().max_element() < 1e-2,
             "moved {d} texels"
+        );
+    }
+
+    // Every direction from a point light lands on the face its largest
+    // axis picks (as the shader does), inside the face's quarter with the
+    // filter's two texels to spare — no seams between faces.
+    #[test]
+    fn point_faces_cover_every_direction_with_room_to_filter() {
+        let light = Light::point(Vec3::ONE, 1.0, 0.0);
+        let eye = Vec3::new(0.3, 1.0, -0.2);
+        let world = Mat4::from_translation(eye);
+        let bounds = (Vec3::splat(-5.0), Vec3::splat(5.0));
+        let map = 1024;
+        let mut views = point_views(
+            &light,
+            &world,
+            bounds,
+            map / 2,
+            false,
+            LightShadow::default(),
+        )
+        .unwrap();
+        let tiles = [
+            [0.0, 0.0, 0.5, 0.5],
+            [0.5, 0.0, 1.0, 0.5],
+            [0.0, 0.5, 0.5, 1.0],
+            [0.5, 0.5, 1.0, 1.0],
+            [0.0, 0.0, 0.5, 0.5],
+            [0.5, 0.0, 1.0, 0.5],
+        ];
+        for (v, t) in views.iter_mut().zip(tiles) {
+            v.place(0, t);
+        }
+        let spare = 2.0 / map as f32;
+        let mut worst = f32::INFINITY;
+        for i in 0..2000 {
+            // Directions spread over the sphere (a golden spiral).
+            let z = 1.0 - 2.0 * (i as f32 + 0.5) / 2000.0;
+            let r = (1.0 - z * z).sqrt();
+            let phi = i as f32 * 2.399_963;
+            let d = Vec3::new(r * phi.cos(), r * phi.sin(), z);
+            let a = d.abs();
+            let face = if a.x >= a.y && a.x >= a.z {
+                if d.x > 0.0 { 0 } else { 1 }
+            } else if a.y >= a.z {
+                if d.y > 0.0 { 2 } else { 3 }
+            } else if d.z > 0.0 {
+                4
+            } else {
+                5
+            };
+            let v = &views[face];
+            let p = v.to_map.project_point3(eye + d * 2.0);
+            let [x0, y0, x1, y1] = v.tile;
+            let room = (p.x - x0).min(x1 - p.x).min(p.y - y0).min(y1 - p.y);
+            worst = worst.min(room);
+            assert!(p.z > 0.0 && p.z < 1.0, "{d}: depth {}", p.z);
+        }
+        assert!(
+            worst >= spare * 0.99,
+            "closest to a tile's edge: {} texels",
+            worst * map as f32
         );
     }
 }

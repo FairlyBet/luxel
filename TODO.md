@@ -40,8 +40,10 @@ blending, the display's divide, TAA, the glass copy).
    (`lighting/cache.rs`: a signature per map; material edits through the
    scene invalidate them all); `setShadowsFrozen` bakes them once, fitted
    to the whole scene, and keeps them (`shadowMaps` / `shadowMapsDrawn`
-   count them). Left: point lights (6 layers); batching casters into
-   instanced draws;
+   count them). Point lights: six faces a little wider than 90°, a
+   quarter of a layer each (`Pass::set_clear_rect` clears just its tile),
+   the shader picking the face by the largest axis. Left: batching casters
+   into instanced draws;
    a per-light map size (an atlas). Then screen-space contact shadows (a
    short march toward the light through the depth buffer; MSAA needs a
    resolved depth). For environment-only scenes: GTAO (XeGTAO, as Godot /
@@ -212,7 +214,8 @@ its owner.
   with HDR output only. A compensation curve or metering mask would be
   next if scenes need them.
 - Lights are capped at 8 per frame (all reach every draw, a file's lights
-  included); spot lights untested by pixels; no shadows.
+  included); shadow maps at 16 views in 8 layers (a spot 1, a directional
+  light 1–4 cascades, a point light 6 quarter-layer faces).
 - Transparent draws sort per object (bounds center): intersecting or concave
   blended meshes can show order errors. They draw one by one (no
   instancing).

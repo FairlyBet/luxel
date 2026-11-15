@@ -342,3 +342,76 @@ async fn still_shadow_maps_are_kept_and_frozen_ones_held() {
     assert!(left < right / 4, "baked again: {left} vs {right}");
     scene.destroy();
 }
+
+// A point light and a spot light over the square: its shadow falls on the
+// floor away from the light (a point light: in its −Z face, a quarter of a
+// layer).
+#[wasm_bindgen_test]
+async fn point_and_spot_lights_cast_shadows() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    // At (0.6, 0, 2): the square (|x| ≤ 0.2 at z = 1) shades the floor
+    // over x ≈ −1 … −0.2; x = 0.5 sees the light.
+    let lamp = scene.spawn();
+    scene.look_at(lamp, &[0.6, 0.0, 2.0], &[0.6, 0.0, 0.0]);
+    let light = |json: &str| js_sys::JSON::parse(json).unwrap();
+
+    for (name, json) in [
+        (
+            "point",
+            r#"{ "type": "point", "intensity": 40, "castShadow": true }"#,
+        ),
+        (
+            "spot",
+            r#"{ "type": "spot", "intensity": 40, "outerConeAngle": 1.2, "castShadow": true }"#,
+        ),
+    ] {
+        scene
+            .set_light(lamp, light(&json.replace("true", "false")))
+            .unwrap();
+        let (left, right) = sides(&gl, &mut scene, camera).await;
+        assert!(left > 30 && right > 30, "{name} unshadowed: {left} {right}");
+        scene.set_light(lamp, light(json)).unwrap();
+        let (shadowed, lit) = sides(&gl, &mut scene, camera).await;
+        assert!(
+            (lit as i32 - right as i32).abs() <= 3,
+            "{name}: the lit side stays: {lit} (was {right})"
+        );
+        assert!(
+            shadowed < left / 4,
+            "{name}: shadowed {shadowed} (was {left})"
+        );
+        let maps = if name == "point" { 6 } else { 1 };
+        assert_eq!(scene.shadow_maps(), maps, "{name}");
+    }
+    scene.destroy();
+}

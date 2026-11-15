@@ -273,3 +273,41 @@ async fn reads_in_flight_share_one_timer() {
     assert!(timers < N, "{timers} timers for {N} reads");
     assert_eq!(f.ctx.poll_timers_pending(), 0);
 }
+
+// A clear rectangle clears only inside it, even with no render state
+// scissoring, and the draws after it aren't scissored by it.
+#[wasm_bindgen_test]
+fn a_clear_rect_clears_only_its_rectangle() {
+    let f = fixture();
+    let red = solid_program(&f, "1.0, 0.0, 0.0, 1.0");
+    draw_middle(&f, CANVAS, red);
+    let mut pass = Pass::new(CANVAS);
+    pass.set_clear(&ClearMask::color());
+    pass.set_clear_rect(&rswebgl::draw::Viewport::new(MID.0, MID.1, 1, 1));
+    f.ctx.render(&pass);
+    let row = f
+        .ctx
+        .read_pixels(CANVAS, 0, MID.0 - 1, MID.1, 3, 1, ReadFormat::Rgba8)
+        .unwrap();
+    assert_eq!(&row[..4], &RED, "left of it: kept");
+    assert_eq!(&row[4..8], &BLACK, "inside: cleared");
+    assert_eq!(&row[8..], &RED, "right of it: kept");
+    // The next pass draws its whole quad again (no scissor left on).
+    let mut again = Pass::new(CANVAS);
+    again.push(
+        red,
+        state(&f),
+        f.quad,
+        NULL,
+        NULL,
+        NULL,
+        quad(&f, 1),
+        &quad_cmd(),
+    );
+    f.ctx.render(&again);
+    let px = f
+        .ctx
+        .read_pixels(CANVAS, 0, MID.0, MID.1, 1, 1, ReadFormat::Rgba8)
+        .unwrap();
+    assert_eq!(px, RED);
+}

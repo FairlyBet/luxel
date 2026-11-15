@@ -10,7 +10,7 @@ use super::{Scene, options};
 use crate::camera::Camera;
 use crate::environment::{EnvBaker, PendingEnvironment};
 use crate::hdr::{RgbeImage, decode_hdr_rgbe};
-use crate::lighting::{Light, LightKind, LightShadow};
+use crate::lighting::{Light, LightShadow};
 
 #[wasm_bindgen]
 impl Scene {
@@ -100,9 +100,6 @@ impl Scene {
             }
         };
         let cast = options::bool_or(&light, "castShadow", false)?;
-        if cast && matches!(l.kind, LightKind::Point) {
-            console::warn_once("[rswebgl-scene] setLight: point lights cast no shadows yet");
-        }
         if cast {
             let d = LightShadow::default();
             let shadow = LightShadow {

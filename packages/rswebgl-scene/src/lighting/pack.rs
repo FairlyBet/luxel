@@ -14,7 +14,7 @@ use rswebgl_ecs::{Entity, World};
 
 use super::ShadowSlot;
 use super::light::Light;
-use super::maps::MAX_SHADOW_LAYERS;
+use super::maps::MAX_SHADOW_VIEWS;
 use super::views::ShadowView;
 use crate::render::{Visible, hidden};
 use crate::transform::WorldMatrix;
@@ -44,15 +44,12 @@ impl LightsBlock {
                 .field("u_light_count", UniformType::Vec4)
                 .array("u_light_shadows", UniformType::Vec4, MAX_LIGHTS as u32)
                 .array("u_shadow_splits", UniformType::Vec4, MAX_LIGHTS as u32)
-                .array(
-                    "u_shadow_layers",
-                    UniformType::Vec4,
-                    MAX_SHADOW_LAYERS as u32,
-                )
+                .array("u_shadow_views", UniformType::Vec4, MAX_SHADOW_VIEWS as u32)
+                .array("u_shadow_tiles", UniformType::Vec4, MAX_SHADOW_VIEWS as u32)
                 .array(
                     "u_shadow_matrices",
                     UniformType::Mat4,
-                    MAX_SHADOW_LAYERS as u32,
+                    MAX_SHADOW_VIEWS as u32,
                 ),
             BufferUsage::DynamicDraw,
         )?;
@@ -102,12 +99,12 @@ impl LightsBlock {
                     break;
                 }
                 lights.extend(light.packed(&m.0));
-                // x its first layer (−1: none), y how many, z 1 for a
-                // perspective (spot) one.
+                // x its first view (−1: none), y how many, z its kind (0
+                // orthographic, 1 spot, 2 point).
                 match slots.get(&e) {
                     Some(slot) => {
-                        let persp = if slot.perspective { 1.0 } else { 0.0 };
-                        shadows.push(Vec4::new(slot.first as f32, slot.count as f32, persp, 0.0));
+                        let (first, count) = (slot.first as f32, slot.count as f32);
+                        shadows.push(Vec4::new(first, count, slot.kind, 0.0));
                         splits.push(Vec4::from_array(slot.splits));
                     }
                     None => {
@@ -125,11 +122,17 @@ impl LightsBlock {
         data.push(Vec4::new(count as f32, debug, overlap, 0.0));
         data.extend(shadows);
         data.extend(splits);
-        for i in 0..MAX_SHADOW_LAYERS {
-            let bias = views.get(i).map_or(0.0, |v| v.normal_bias);
-            data.push(Vec4::new(bias, 0.0, 0.0, 0.0));
+        for i in 0..MAX_SHADOW_VIEWS {
+            let (bias, layer) = views
+                .get(i)
+                .map_or((0.0, 0.0), |v| (v.normal_bias, v.layer as f32));
+            data.push(Vec4::new(bias, layer, 0.0, 0.0));
         }
-        for i in 0..MAX_SHADOW_LAYERS {
+        for i in 0..MAX_SHADOW_VIEWS {
+            let tile = views.get(i).map_or([0.0, 0.0, 1.0, 1.0], |v| v.tile);
+            data.push(Vec4::from_array(tile));
+        }
+        for i in 0..MAX_SHADOW_VIEWS {
             let m = views.get(i).map_or(Mat4::IDENTITY, |v| v.to_map);
             data.extend([m.x_axis, m.y_axis, m.z_axis, m.w_axis]);
         }
@@ -151,7 +154,8 @@ impl LightsBlock {
         for (name, n) in [
             ("u_light_shadows", MAX_LIGHTS),
             ("u_shadow_splits", MAX_LIGHTS),
-            ("u_shadow_layers", MAX_SHADOW_LAYERS),
+            ("u_shadow_views", MAX_SHADOW_VIEWS),
+            ("u_shadow_tiles", MAX_SHADOW_VIEWS),
         ] {
             for i in 0..n {
                 let v = data[at + i];
@@ -159,7 +163,7 @@ impl LightsBlock {
             }
             at += n;
         }
-        for i in 0..MAX_SHADOW_LAYERS {
+        for i in 0..MAX_SHADOW_VIEWS {
             let m = at + i * 4;
             let cols: Vec<f32> = data[m..m + 4].iter().flat_map(|c| c.to_array()).collect();
             ctx.ubo_set_mat(ubo, &format!("u_shadow_matrices[{i}]"), &cols);

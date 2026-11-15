@@ -26,12 +26,15 @@ use super::settings::LightShadow;
 use super::views::ShadowView;
 use crate::render::FRAME_BLOCK;
 
-/// Shadow-map layers a frame draws: a spot light takes one, a directional
-/// light one per cascade (lights past them shine unshadowed).
+/// Layers of the shadow maps' depth array: a spot light takes one, a
+/// directional light one per cascade, a point light's six faces fill a
+/// quarter each (lights past them shine unshadowed).
 pub const MAX_SHADOW_LAYERS: usize = 8;
+/// Shadow maps (views) a frame draws: a layer or a quarter of one each.
+pub const MAX_SHADOW_VIEWS: usize = 16;
 
-/// The GPU side: the depth array (one layer per shadowing light), a
-/// framebuffer, frame block and pass per layer.
+/// The GPU side: the depth array, a framebuffer per layer, and a frame
+/// block and pass per view (a layer, or a point light face's quarter).
 pub(crate) struct ShadowMaps {
     /// Side of each layer (1 until a light needs them), how many, and
     /// whether their depth is 16-bit (else 24).
@@ -43,9 +46,9 @@ pub(crate) struct ShadowMaps {
     ubos: Vec<UniformBufferId>,
     groups: Vec<ParamGroupId>,
     pub passes: Vec<Pass>,
-    /// This frame's shadowing lights, by layer.
+    /// This frame's views.
     pub views: Vec<ShadowView>,
-    // The signature (`cache`) of what each layer holds (None: nothing
+    // The signature (`cache`) of what each view holds (None: nothing
     // yet), and whether it is drawn again this frame.
     drawn: Vec<Option<u64>>,
     dirty: Vec<bool>,
@@ -64,7 +67,7 @@ impl ShadowMaps {
         let mut undo = rswebgl::undo::Undo::new(ctx);
         let mut ubos = Vec::new();
         let mut groups = Vec::new();
-        for _ in 0..MAX_SHADOW_LAYERS {
+        for _ in 0..MAX_SHADOW_VIEWS {
             let ubo = ctx.create_uniform_buffer(
                 &UboLayout::new()
                     .field("u_view", UniformType::Mat4)
@@ -91,7 +94,7 @@ impl ShadowMaps {
             fbs: Vec::new(),
             ubos,
             groups,
-            passes: (0..MAX_SHADOW_LAYERS).map(|_| Pass::to_default()).collect(),
+            passes: (0..MAX_SHADOW_VIEWS).map(|_| Pass::to_default()).collect(),
             views: Vec::new(),
             drawn: Vec::new(),
             dirty: Vec::new(),
@@ -120,7 +123,7 @@ impl ShadowMaps {
         self.depth16
     }
 
-    /// The frame group of layer `i`'s pass.
+    /// The frame group of view `i`'s pass.
     pub fn group(&self, i: usize) -> ParamGroupId {
         self.groups[i]
     }
@@ -178,7 +181,7 @@ impl ShadowMaps {
         self.depth16 = depth16;
         self.layers = layers;
         self.reverse_z = ctx.reverse_z();
-        self.drawn = vec![None; layers];
+        self.drawn = vec![None; MAX_SHADOW_VIEWS];
         self.dirty.clear();
         // Every layer cleared to the far plane once: a layer no light draws
         // into this frame (the placeholder, a hidden light's) reads as lit.
@@ -238,8 +241,8 @@ impl ShadowMaps {
         self.dirty.iter().filter(|d| **d).count()
     }
 
-    /// Layer `i` drawn from `view`: its frame block written, its pass
-    /// aimed at the layer and cleared.
+    /// View `i` drawn from `view`: its frame block written, its pass
+    /// aimed at its layer's tile and that cleared.
     pub fn prepare(&mut self, ctx: &Context, i: usize, view: &ShadowView) {
         let ubo = self.ubos[i];
         ctx.ubo_set_mat(ubo, "u_view", &Mat4::IDENTITY.to_cols_array());
@@ -247,10 +250,13 @@ impl ShadowMaps {
         ctx.ubo_set_mat(ubo, "u_view_proj", &view.view_proj.to_cols_array());
         ctx.ubo_set_vec4(ubo, "u_camera_pos", 0.0, 0.0, 0.0, 1.0);
         let pass = &mut self.passes[i];
-        pass.set_target(self.fbs[i]);
-        let side = self.size as i32;
-        pass.set_viewport(&Viewport::new(0, 0, side, side));
+        pass.set_target(self.fbs[view.layer]);
+        let side = self.size as f32;
+        let [x0, y0, x1, y1] = view.tile.map(|t| (t * side).round() as i32);
+        let rect = Viewport::new(x0, y0, x1 - x0, y1 - y0);
+        pass.set_viewport(&rect);
         pass.set_clear(&ClearMask::depth());
+        pass.set_clear_rect(&rect);
     }
 
     /// The casters' render state for `light`'s biases: depth only, both

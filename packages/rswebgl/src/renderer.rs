@@ -227,13 +227,19 @@ fn run_pass(
             .and_then(|id| render_states.get(id.0))
             .filter(|rs| !rs.has_target_overrides());
         let opened = open_for_clear(gl, pass.clear, cur);
+        // A clear rectangle: scissored to it, then the scissor left for the
+        // next draw's state to set in full.
+        if let Some(r) = pass.clear_rect {
+            gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
+            gl.scissor(r.x, r.y, r.width, r.height);
+        }
         match target {
             Some(f) => f.clear(gl, pass.clear, st.reverse_z),
             None => clear_default(default_fb, gl, pass.clear, st.reverse_z),
         }
         match cur {
-            Some(rs) => opened.restore(gl, rs),
-            None => st.forget_render_state(),
+            Some(rs) if pass.clear_rect.is_none() => opened.restore(gl, rs),
+            _ => st.forget_render_state(),
         }
     }
 

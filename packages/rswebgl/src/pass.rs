@@ -185,6 +185,8 @@ pub struct Pass {
     // None = the target's full size.
     pub(crate) viewport: Option<Viewport>,
     pub(crate) clear: ClearMask,
+    // Some = the clear only within this rectangle (scissored).
+    pub(crate) clear_rect: Option<Viewport>,
     pub(crate) invalidate: InvalidateMask,
     // Some(NULL) = resolve into the canvas.
     pub(crate) resolve: Option<FramebufferId>,
@@ -201,6 +203,7 @@ impl Pass {
             target,
             viewport: None,
             clear: ClearMask::none(),
+            clear_rect: None,
             invalidate: InvalidateMask::none(),
             resolve: None,
             timer: QueryId::NULL,
@@ -280,6 +283,15 @@ impl Pass {
     #[wasm_bindgen(js_name = setClear)]
     pub fn set_clear(&mut self, mask: &ClearMask) {
         self.clear = *mask;
+    }
+
+    /// Limits the clear to `rect` (in the target's pixels), whatever the
+    /// draws' scissor: for passes that each fill a tile of one target (a
+    /// shadow atlas). Default: the clear covers the whole target (within
+    /// the current scissor, if a render state left one on).
+    #[wasm_bindgen(js_name = setClearRect)]
+    pub fn set_clear_rect(&mut self, rect: &Viewport) {
+        self.clear_rect = Some(*rect);
     }
 
     /// Attachments to discard after drawing (the store op) via

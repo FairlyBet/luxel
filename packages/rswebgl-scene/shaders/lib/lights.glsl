@@ -3,7 +3,7 @@
 // spot (KHR_lights_punctual).
 
 #define MAX_LIGHTS 8
-#define MAX_SHADOW_LAYERS 8
+#define MAX_SHADOW_VIEWS 16
 struct Light {
     vec4 position;  // xyz world position (point, spot)
     vec4 direction; // xyz world direction the light points (directional, spot)
@@ -15,14 +15,18 @@ layout(std140) uniform Lights {
     Light u_lights[MAX_LIGHTS];
     vec4 u_light_count; // x lights in u_lights, y 1: cascades tinted,
                         // z how far cascades reach into the one before
-    // Light i's shadow: x its first shadow-map layer (< 0: none), y how
-    // many (a directional light's cascades), z 1 for a spot's perspective.
+    // Light i's shadow: x its first shadow map (view; < 0: none), y how
+    // many (a directional light's cascades, a point light's 6 faces), z its
+    // kind: 0 orthographic, 1 a spot's perspective, 2 a point's faces.
     vec4 u_light_shadows[MAX_LIGHTS];
     // Its cascades' far bounds: depth along the view (the last: all).
     vec4 u_shadow_splits[MAX_LIGHTS];
-    // Layer i's x normal bias (world units; per unit of depth for a spot).
-    vec4 u_shadow_layers[MAX_SHADOW_LAYERS];
-    mat4 u_shadow_matrices[MAX_SHADOW_LAYERS]; // world → shadow map [0, 1]³
+    // Map i: x its normal bias (world units; per unit of depth for a
+    // perspective one), y its layer of u_shadow_map; the part of the layer
+    // it fills (x0, y0, x1, y1); world → that part's coordinates and depth.
+    vec4 u_shadow_views[MAX_SHADOW_VIEWS];
+    vec4 u_shadow_tiles[MAX_SHADOW_VIEWS];
+    mat4 u_shadow_matrices[MAX_SHADOW_VIEWS];
 };
 // The environment and the output (the renderer's block).
 layout(std140) uniform Lighting {

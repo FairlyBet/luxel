@@ -21,7 +21,9 @@ export interface LightOptions {
   /** Spot cone, radians from the axis; defaults 0 and π/4. */
   innerConeAngle?: number;
   outerConeAngle?: number;
-  /** Directional and spot: cast shadows (`setShadowMapSize`); default false. */
+  /** Cast shadows (`setShadowMapSize`): a map for a spot light, one per
+   *  cascade for a directional light, six (a quarter layer each) for a
+   *  point light; default false. */
   castShadow?: boolean;
   /** Shadow biases (Filament's defaults): receivers moved along their
    *  normal by this many shadow-map texels (1); casters pushed back by
