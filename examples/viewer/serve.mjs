@@ -29,17 +29,45 @@ const types = {
   ".json": "application/json",
 };
 
-createServer(async (req, res) => {
+// Reports are a few MB; anything far past that isn't one.
+const MAX_UPLOAD = 64 * 1024 * 1024;
+
+const server = createServer((req, res) => {
+  handle(req, res).catch((e) => {
+    // A bad request or a failed write answers 400/500; the server goes on.
+    console.error(`request failed: ${e instanceof Error ? e.message : e}`);
+    if (!res.headersSent) res.writeHead(e instanceof URIError ? 400 : 500);
+    res.end();
+  });
+});
+
+async function handle(/** @type {import("node:http").IncomingMessage} */ req, /** @type {import("node:http").ServerResponse} */ res) {
   if (req.method === "POST") {
     const url = new URL(req.url ?? "/", "http://x");
     if (url.pathname !== "/trace") {
       res.writeHead(404).end();
       return;
     }
+    // From the viewer's own pages only: another site's page can't post here
+    // (a cross-origin form or fetch says where it comes from).
+    const origin = req.headers.origin;
+    if (origin && new URL(origin).host !== req.headers.host) {
+      res.writeHead(403).end();
+      return;
+    }
     const chunks = [];
-    for await (const c of req) chunks.push(c);
+    let size = 0;
+    for await (const c of req) {
+      size += c.length;
+      if (size > MAX_UPLOAD) {
+        res.writeHead(413).end();
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    }
     // A plain file name in traces/, nothing else.
-    const name = (url.searchParams.get("name") ?? "trace").replace(/[^\w.-]+/g, "_").replace(/^\.+/, "").replace(/(\.json)?$/, ".json");
+    const name = (url.searchParams.get("name") ?? "trace").replace(/[^\w.-]+/g, "_").replace(/^\.+/, "").slice(0, 120).replace(/(\.json)?$/, ".json");
     await mkdir(traces, { recursive: true });
     const file = join(traces, name);
     await writeFile(file, Buffer.concat(chunks));
@@ -63,7 +91,9 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end();
   }
-}).listen(port, lan ? "0.0.0.0" : "127.0.0.1", () => {
+}
+
+server.listen(port, lan ? "0.0.0.0" : "127.0.0.1", () => {
   console.log(`http://127.0.0.1:${port}/`);
   if (lan) {
     for (const list of Object.values(networkInterfaces())) {

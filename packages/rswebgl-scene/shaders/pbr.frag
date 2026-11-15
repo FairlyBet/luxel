@@ -280,11 +280,20 @@ ShadingFrame shading_frame() {
     vec3 dp1perp = cross(f.ng, dp1);
     f.t = dp2perp * duv1.x + dp1perp * duv2.x;
     f.b = dp2perp * duv1.y + dp1perp * duv2.y;
-    float inv = inversesqrt(max(dot(f.t, f.t), dot(f.b, f.b)) + 1e-12);
-    f.t *= inv;
-    f.b *= inv;
-    // UVs that don't vary across the pixel give no direction: any will do.
-    if (dot(f.t, f.t) < 1e-8) {
+    // Normalized by their own size (Schüler's frame has no epsilon here: a
+    // fixed one shortened them on small or far objects, flattening the
+    // bumps). UVs that don't vary across the pixel give no direction: any
+    // will do.
+    float len2 = max(dot(f.t, f.t), dot(f.b, f.b));
+    if (len2 > 1e-36) {
+        float inv = inversesqrt(len2);
+        f.t *= inv;
+        f.b *= inv;
+        // A back face mirrors the frame, as the tangent path does (t, b and
+        // n flipped): ∇u, ∇v come out the same on both sides.
+        if (!gl_FrontFacing) { f.t = -f.t; f.b = -f.b; }
+    }
+    if (!(dot(f.t, f.t) > 1e-8)) {
         f.t = normalize(abs(f.ng.y) < 0.999 ? cross(vec3(0.0, 1.0, 0.0), f.ng)
                                             : cross(vec3(1.0, 0.0, 0.0), f.ng));
         f.b = cross(f.ng, f.t);

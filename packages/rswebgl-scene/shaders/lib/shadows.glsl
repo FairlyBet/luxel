@@ -21,8 +21,12 @@ float shadow_view(int view, float depth, vec3 position, vec3 ng, float sin_t) {
     vec4 sp = u_shadow_matrices[view] * vec4(position + ng * (sin_t * bias), 1.0);
     vec3 p = sp.xyz / sp.w;
     vec4 tile = u_shadow_tiles[view];
-    // Outside what the map covers: lit.
-    if (any(lessThan(p, vec3(tile.xy, 0.0))) || any(greaterThan(p, vec3(tile.zw, 1.0)))) return 1.0;
+    // Outside what the map covers across: lit. Beyond its depth range (a
+    // receiver past every caster, or nearer than the near plane): compared
+    // at the range's end, as Filament and three.js clamp it — what lies
+    // behind the casters is in their shadow.
+    if (any(lessThan(p.xy, tile.xy)) || any(greaterThan(p.xy, tile.zw))) return 1.0;
+    p.z = clamp(p.z, 0.0, 1.0);
 
     float layer = info.y;
     vec2 size = vec2(textureSize(u_shadow_map, 0).xy);

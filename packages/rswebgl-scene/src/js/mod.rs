@@ -85,6 +85,9 @@ pub struct Scene {
     // A `createProgram` handle from before a loss → its recompiled shader
     // (`currentProgram`; setMesh and addModelWithProgram take either).
     program_aliases: HashMap<ProgramId, ProgramId>,
+    // `loadTexture` handles from before a context loss → the reloaded
+    // texture (as `program_aliases`).
+    texture_aliases: HashMap<rswebgl::ids::TextureId, rswebgl::ids::TextureId>,
     // Whether models are fetched again after a loss (`setRestoreModels`).
     restore_models: bool,
     // The `.hdr` bytes and cube size of the environment, baked again after
@@ -195,6 +198,7 @@ impl Scene {
             generation: ctx.generation(),
             scene_programs: Vec::new(),
             program_aliases: HashMap::new(),
+            texture_aliases: HashMap::new(),
             restore_models: true,
             env_source: None,
             compact_environment: true,
@@ -237,7 +241,13 @@ impl Scene {
 
     /// A new entity with an identity transform.
     pub fn spawn(&mut self) -> Entity {
-        let e = self.world.spawn();
+        // A panic would poison the module: the pool full says so instead.
+        let Some(e) = self.world.try_spawn() else {
+            console::error_once(
+                "[rswebgl-scene] spawn: too many entities (about 1M); null returned",
+            );
+            return Entity::NULL;
+        };
         self.world.insert(e, Transform::IDENTITY);
         e
     }
@@ -246,6 +256,8 @@ impl Scene {
     /// despawned by its root, frees its GPU resources and materials too).
     /// Returns how many entities went.
     pub fn despawn(&mut self, e: Entity) -> usize {
+        // Frozen shadows are baked again without it.
+        self.renderer.rebake_shadows();
         // Every model root in the subtree, not just `e`: a model hung under a
         // group goes with the group.
         if !self.models.is_empty() {
@@ -275,12 +287,18 @@ impl Scene {
 
     #[wasm_bindgen(js_name = setTranslation)]
     pub fn set_translation(&mut self, e: Entity, x: f32, y: f32, z: f32) {
+        if !options::finite("setTranslation", &[x, y, z]) {
+            return;
+        }
         self.edit_transform(e, "setTranslation", |t| t.translation = Vec3::new(x, y, z));
     }
 
     /// A unit quaternion (x, y, z, w); normalized on the way in.
     #[wasm_bindgen(js_name = setRotation)]
     pub fn set_rotation(&mut self, e: Entity, x: f32, y: f32, z: f32, w: f32) {
+        if !options::finite("setRotation", &[x, y, z, w]) {
+            return;
+        }
         let q = Quat::from_xyzw(x, y, z, w).normalize();
         self.edit_transform(e, "setRotation", |t| t.rotation = q);
     }
@@ -288,12 +306,18 @@ impl Scene {
     /// Rotation from Euler angles in radians, applied Y, then X, then Z.
     #[wasm_bindgen(js_name = setRotationEuler)]
     pub fn set_rotation_euler(&mut self, e: Entity, x: f32, y: f32, z: f32) {
+        if !options::finite("setRotationEuler", &[x, y, z]) {
+            return;
+        }
         let q = Quat::from_euler(glam::EulerRot::YXZ, y, x, z);
         self.edit_transform(e, "setRotationEuler", |t| t.rotation = q);
     }
 
     #[wasm_bindgen(js_name = setScale)]
     pub fn set_scale(&mut self, e: Entity, x: f32, y: f32, z: f32) {
+        if !options::finite("setScale", &[x, y, z]) {
+            return;
+        }
         self.edit_transform(e, "setScale", |t| t.scale = Vec3::new(x, y, z));
     }
 
@@ -472,6 +496,8 @@ impl Scene {
         #[wasm_bindgen(unchecked_param_type = "MeshOptions")] mesh: JsValue,
         draw: &DrawCommand,
     ) -> Result<(), Error> {
+        // Frozen shadows are baked again with it.
+        self.renderer.rebake_shadows();
         let mesh = MeshRenderer {
             program: self
                 .current_program(ProgramId::from_raw(options::u32_or(&mesh, "program", 0)?)),
@@ -563,6 +589,8 @@ impl Scene {
             self.refresh_shadow_caster(e);
         }
         self.keep_model(root, model);
+        // Loaded before a context loss it missed: fetched again now.
+        self.reload_model(root);
         root
     }
 
@@ -578,6 +606,7 @@ impl Scene {
         let root = spawn_model(&mut self.world, &model, |_| Some(program));
         self.register_materials(&model);
         self.keep_model(root, model);
+        self.reload_model(root);
         root
     }
 
@@ -840,7 +869,10 @@ impl Scene {
     /// a model whole; resolves at once where compiles are synchronous. Also
     /// waits for an environment bake under way (`setEnvironmentHdr`).
     #[wasm_bindgen(js_name = whenReady)]
-    pub fn when_ready(&self) -> js_sys::Promise {
+    pub fn when_ready(&mut self) -> js_sys::Promise {
+        // After a restore: the rebuilt programs, not the lost ones' handles
+        // (which read as done).
+        self.sync_context();
         let mut programs: Vec<ProgramId> = self
             .world
             .storage::<MeshRenderer>()

@@ -211,6 +211,16 @@ impl LightingSystem {
         self.ground.invalidate();
     }
 
+    /// Takes `old`'s settings (map size and depth, cascade tint, frozen,
+    /// the ground shadow): a rebuild after a context loss keeps them.
+    pub fn keep_settings(&mut self, old: &LightingSystem) {
+        self.options = old.options;
+        self.debug_cascades = old.debug_cascades;
+        self.frozen = old.frozen;
+        self.ground.settings = old.ground.settings;
+        self.ground_on = old.ground_on;
+    }
+
     /// The ground shadow on (with these settings) or off.
     pub fn set_ground_shadow(&mut self, settings: Option<GroundShadow>) {
         self.ground_on = settings.is_some();
@@ -385,6 +395,14 @@ impl LightingSystem {
         self.draw_calls = 0;
         for (d, &object) in draws.iter().zip(objects) {
             if object.is_null() {
+                // Its map would hold less than its signature says: drawn
+                // again next frame (and a frozen bake isn't done).
+                if d.view == GROUND_VIEW {
+                    self.ground.invalidate();
+                } else {
+                    self.maps.forget(d.view);
+                }
+                self.baked = false;
                 continue;
             }
             let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];

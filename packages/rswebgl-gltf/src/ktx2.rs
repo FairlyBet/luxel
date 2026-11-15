@@ -104,6 +104,9 @@ pub(crate) fn load(
             Ok(r) => upload(&ctx, out, &r, srgb, mips),
             Err(e) => Err(e),
         };
+        if matches!(result, Ok((w, _)) if w > 0) {
+            ctx.note_content_changed();
+        }
         let (w, h) = result.unwrap_or_else(|e| {
             let msg = e
                 .dyn_ref::<js_sys::Error>()

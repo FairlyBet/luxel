@@ -129,12 +129,13 @@ pub fn spawn_model(
             Transform::from_matrix(Mat4::from_cols_array(&item.instance_cols())),
         );
         world.insert(e, Parent(node));
-        // A skinned mesh moves with its joints: its rest bounds don't hold,
-        // so it isn't culled.
+        // A skinned mesh moves with its joints, a morphing one with its
+        // targets: their rest bounds don't hold, so they aren't culled.
         match item.skin().and_then(|s| skins.get(s)) {
             Some(skin) => {
                 world.insert(e, skin.clone());
             }
+            None if item.morph().is_some() => {}
             None => {
                 let (min, max) = item.local_bounds();
                 world.insert(e, Bounds::new(Vec3::from(min), Vec3::from(max)));

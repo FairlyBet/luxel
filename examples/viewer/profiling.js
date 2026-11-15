@@ -90,6 +90,7 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     $("trace-download").disabled = true;
     $("trace-send").disabled = true;
     $("trace-record").disabled = true;
+    $("cost-measure").disabled = true;
     $("trace-summary").textContent = `Recording ${seconds} s…`;
     reportName = `rswebgl-${(meta.model ?? "trace").replace(/[^\w.-]+/g, "_")}-${meta.date.replace(/[:.]/g, "-")}.json`;
     Trace.start();
@@ -101,13 +102,20 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     Trace.stop();
     report = Trace.report();
     $("trace-record").disabled = false;
+    $("cost-measure").disabled = false;
     $("trace-download").disabled = false;
     $("trace-send").disabled = false;
     $("trace-summary").textContent = summarize(intervals) + `\n${Trace.eventCount()} events, ${(report.length / 1e6).toFixed(1)} MB`;
   }
 
   $("trace-record").onclick = start;
-  $("cost-measure").onclick = () => measureView().catch((e) => ($("trace-summary").textContent = `Failed: ${e}`));
+  $("cost-measure").onclick = () =>
+    measureView().catch((e) => {
+      // Whatever it left behind: the recording stopped, the buttons back.
+      Trace.stop();
+      for (const id of ["cost-measure", "trace-record"]) $(id).disabled = false;
+      $("trace-summary").textContent = `Failed: ${e}`;
+    });
 
   // What this view costs, and what each feature adds: frames rendered
   // back to back, each waited for (a one-pixel read of the canvas, which
@@ -115,7 +123,7 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
   // so a time is the whole frame's CPU + GPU work. Settings are switched one at a time, then
   // restored.
   async function measureView() {
-    if (!scene) return;
+    if (!scene || until > 0) return; // not while a recording runs
     const gl = /** @type {WebGL2RenderingContext} */ (canvas.getContext("webgl2"));
     const cam = viewCamera();
     const root = getRoot();
@@ -201,7 +209,7 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
       await time("+ FXAA");
       scene.setFxaa(false);
     }
-    if (root) {
+    if (root && root === getRoot()) {
       scene.setVisible(root, false);
       await time("model hidden (background only)");
       scene.setVisible(root, true);

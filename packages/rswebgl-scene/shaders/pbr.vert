@@ -123,7 +123,10 @@ void main() {
 #ifdef HAS_NORMAL
     v_normal = normal_matrix * normal;
 #ifdef HAS_TANGENT
-    v_tangent = vec4(mat3(model) * tangent, a_tangent.w);
+    // A mirroring transform (negative determinant) flips the bitangent the
+    // fragment stage rebuilds: its sign follows.
+    float mirror = determinant(mat3(model)) < 0.0 ? -1.0 : 1.0;
+    v_tangent = vec4(mat3(model) * tangent, a_tangent.w * mirror);
 #endif
 #endif
 #ifdef HAS_UV0

@@ -26,7 +26,10 @@ uniform float u_auto_grey;
 
 float full_exposure() {
     if (u_auto_grey <= 0.0) return u_exposure;
-    return u_exposure / (texelFetch(u_auto_exposure, ivec2(0), 0).r / u_auto_grey);
+    // Nothing measured yet (a new chain's zeroed result): the set exposure.
+    float measured = texelFetch(u_auto_exposure, ivec2(0), 0).r;
+    if (!(measured > 0.0)) return u_exposure;
+    return u_exposure / (measured / u_auto_grey);
 }
 
 // Interleaved gradient noise (Jimenez 2014): a per-pixel value in [0, 1).

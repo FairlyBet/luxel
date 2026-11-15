@@ -178,6 +178,20 @@ impl Scene {
             }
         }
         self.remap_textures(&remap, &HashMap::new());
+        // The app's handles from before (this loss or earlier ones) lead to
+        // the new textures.
+        for target in self.texture_aliases.values_mut() {
+            if let Some(&new) = remap.get(target) {
+                *target = new;
+            }
+        }
+        self.texture_aliases
+            .extend(remap.iter().map(|(&old, &new)| (old, new)));
+    }
+
+    // A `loadTexture` handle as it is now (the reloaded one after a loss).
+    pub(crate) fn current_texture(&self, t: TextureId) -> TextureId {
+        self.texture_aliases.get(&t).copied().unwrap_or(t)
     }
 
     // Points every material (groups and the scene's records) at new textures.
@@ -198,9 +212,21 @@ impl Scene {
 
     // Starts fetching every model again; its meshes wait meanwhile.
     fn reload_models(&mut self) {
-        for (&root, model) in &self.models {
+        let roots: Vec<Entity> = self.models.keys().copied().collect();
+        for root in roots {
+            self.reload_model(root);
+        }
+    }
+
+    // Starts fetching `root`'s model again if its GPU objects are from a
+    // lost context.
+    pub(crate) fn reload_model(&mut self, root: Entity) {
+        {
+            let Some(model) = self.models.get(&root) else {
+                return;
+            };
             if !model.is_lost(&self.ctx) {
-                continue;
+                return;
             }
             if !self.restore_models || model.source().is_empty() {
                 // The app reloads it (setRestoreModels(false)).
@@ -213,7 +239,7 @@ impl Scene {
                         self.world.insert(e, Reloading);
                     }
                 }
-                continue;
+                return;
             }
             for e in descendants(&self.world, root) {
                 if self.world.get::<MeshRenderer>(e).is_some() {
@@ -242,6 +268,7 @@ impl Scene {
             return;
         }
         let done = std::mem::take(&mut *self.reloads.borrow_mut());
+        self.ctx.note_content_changed();
         for (root, result) in done {
             let fresh = match result {
                 Ok(fresh) => fresh,

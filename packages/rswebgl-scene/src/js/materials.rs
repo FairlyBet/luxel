@@ -364,6 +364,7 @@ impl Scene {
     /// drawing (reported): set another texture, or none, first.
     #[wasm_bindgen(js_name = destroyTexture)]
     pub fn destroy_texture(&mut self, texture: TextureId) {
+        let texture = self.current_texture(texture);
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         match self.textures.iter().position(|t| t.id == texture) {
@@ -401,6 +402,8 @@ impl Scene {
         texture: TextureId,
         #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: JsValue,
     ) -> Result<(), Error> {
+        self.sync_context();
+        let texture = self.current_texture(texture);
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         let slot = MAP_NAMES

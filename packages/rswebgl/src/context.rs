@@ -218,6 +218,9 @@ pub(crate) struct Core {
     // Set by a context-loss event that arrived while `res` was borrowed; the
     // pools are cleared on the next access instead.
     forget_pending: Cell<bool>,
+    // Bumped by work that changes what's drawn after it was asked for
+    // (`content_version`).
+    content_version: Cell<u32>,
     pub(crate) default_fb: DefaultFramebuffer,
     pub(crate) validate: Cell<Validation>,
     pub(crate) loss: LossState,
@@ -299,6 +302,24 @@ pub struct Context {
 
 #[wasm_bindgen]
 impl Context {
+    /// Grows whenever work started earlier lands and changes what a frame
+    /// would show — an image or KTX2 texture filled in, a texture swapped
+    /// for its compressed form, an environment baked, models reloaded after
+    /// a context loss. An app that stops drawing a still view (or shows the
+    /// last frame again) draws again when it moves. Wraps around.
+    #[wasm_bindgen(js_name = contentVersion)]
+    pub fn content_version(&self) -> u32 {
+        self.core.content_version.get()
+    }
+
+    /// Marks such a change (for work outside the core: a loader's texture
+    /// upload, a scene's bake).
+    #[wasm_bindgen(js_name = noteContentChanged)]
+    pub fn note_content_changed(&self) {
+        let v = &self.core.content_version;
+        v.set(v.get().wrapping_add(1));
+    }
+
     #[wasm_bindgen(js_name = fromGl)]
     pub fn from_gl(gl: WebGl2RenderingContext) -> Context {
         let default_fb = DefaultFramebuffer::new(gl.clone(), Viewport::new(0, 0, 0, 0), None);
@@ -468,6 +489,7 @@ impl Context {
             gl,
             res: RefCell::new(Resources::default()),
             forget_pending: Cell::new(false),
+            content_version: Cell::new(0),
             default_fb,
             validate: Cell::new(Validation {
                 blocks: true,

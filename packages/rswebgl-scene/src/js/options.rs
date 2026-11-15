@@ -168,16 +168,39 @@ fn get(obj: &JsValue, key: &str) -> Result<Option<JsValue>, Error> {
 pub(crate) fn f32_or(obj: &JsValue, key: &str, default: f32) -> Result<f32, Error> {
     match get(obj, key)? {
         None => Ok(default),
+        // NaN and the infinities would reach the shaders (and TAA's
+        // history) as they are.
         Some(v) => v
             .as_f64()
+            .filter(|x| x.is_finite())
             .map(|x| x as f32)
-            .ok_or_else(|| format!("\"{key}\" must be a number").into()),
+            .ok_or_else(|| format!("\"{key}\" must be a finite number").into()),
     }
 }
 
+/// Whether `values` are all finite; if not, says so (once per setter) and
+/// the setter leaves things as they were — NaN or an infinity would reach
+/// the shaders, and TAA's history would keep it.
+pub(crate) fn finite(op: &str, values: &[f32]) -> bool {
+    if values.iter().all(|x| x.is_finite()) {
+        return true;
+    }
+    rswebgl::console::error_once(&format!(
+        "[rswebgl-scene] {op}: not a finite number; ignored"
+    ));
+    false
+}
+
 pub(crate) fn u32_or(obj: &JsValue, key: &str, default: u32) -> Result<u32, Error> {
-    let x = f32_or(obj, key, default as f32)?;
-    if x < 0.0 || x.fract() != 0.0 {
+    // As f64: a handle (generation << 20 | index) past 2^24 isn't exact in
+    // f32, and would round to another object's.
+    let x = match get(obj, key)? {
+        None => return Ok(default),
+        Some(v) => v
+            .as_f64()
+            .ok_or_else(|| Error::from(format!("\"{key}\" must be a number")))?,
+    };
+    if !(0.0..=f64::from(u32::MAX)).contains(&x) || x.fract() != 0.0 {
         return Err(format!("\"{key}\" must be a handle (a non-negative integer)").into());
     }
     Ok(x as u32)
@@ -215,14 +238,20 @@ pub(crate) fn vec3_or(obj: &JsValue, key: &str, default: Vec3) -> Result<Vec3, E
 /// A number or an array-like of numbers as floats (None for anything else).
 pub(crate) fn numbers(v: &JsValue) -> Option<Vec<f32>> {
     if let Some(x) = v.as_f64() {
-        return Some(vec![x as f32]);
+        return x.is_finite().then(|| vec![x as f32]);
     }
     if !v.is_object() {
         return None;
     }
     let len = Reflect::get(v, &"length".into()).ok()?.as_f64()? as u32;
     (0..len)
-        .map(|i| Reflect::get_u32(v, i).ok()?.as_f64().map(|x| x as f32))
+        .map(|i| {
+            Reflect::get_u32(v, i)
+                .ok()?
+                .as_f64()
+                .filter(|x| x.is_finite())
+                .map(|x| x as f32)
+        })
         .collect()
 }
 

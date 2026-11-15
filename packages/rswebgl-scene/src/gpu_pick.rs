@@ -84,11 +84,16 @@ pub(crate) struct GpuPicker {
 
 impl GpuPicker {
     pub(crate) fn new(ctx: &Context) -> Result<Self, Error> {
+        // What's made so far is freed if a later step fails.
+        let mut undo = rswebgl::undo::Undo::new(ctx);
         let program = ctx.create_program(VERT, FRAG)?;
+        undo.push(move |c| c.destroy_program(program));
         let layout = ctx.create_param_layout(
             &ParamLayoutBuilder::new().uniform("u_pick_view_proj", UniformType::Mat4),
         )?;
+        undo.push(move |c| c.destroy_param_layout(layout));
         let group = ctx.create_param_group(layout)?;
+        undo.push(move |c| c.destroy_param_group(group));
         let target = || -> Result<TextureId, Error> {
             let t = ctx.create_texture(
                 TextureTarget::Texture2D,
@@ -98,9 +103,14 @@ impl GpuPicker {
             ctx.texture_storage_2d(t, 1, &R32UI, 1, 1);
             Ok(t)
         };
-        let (entity_tex, depth_tex) = (target()?, target()?);
+        let entity_tex = target()?;
+        undo.push(move |c| c.destroy_texture(entity_tex));
+        let depth_tex = target()?;
+        undo.push(move |c| c.destroy_texture(depth_tex));
         let depth_rb = ctx.create_renderbuffer(RenderbufferFormat::Depth24, 1, 1)?;
+        undo.push(move |c| c.destroy_renderbuffer(depth_rb));
         let fb = ctx.create_framebuffer(1, 1)?;
+        undo.push(move |c| c.destroy_framebuffer(fb));
         ctx.framebuffer_attach_color_texture_2d(fb, 0, entity_tex, 0);
         ctx.framebuffer_attach_color_texture_2d(fb, 1, depth_tex, 0);
         ctx.framebuffer_attach_depth_renderbuffer(fb, depth_rb);
@@ -110,6 +120,7 @@ impl GpuPicker {
         let mut state = RenderState::new();
         state.depth_test = true;
         state.depth_func = DepthFunc::LessEqual;
+        undo.keep();
         Ok(Self {
             fb,
             entity_tex,
@@ -210,6 +221,12 @@ impl GpuPicker {
         ctx.destroy_texture(self.depth_tex);
         ctx.destroy_renderbuffer(self.depth_rb);
         ctx.destroy_program(self.program);
+        ctx.destroy_param_group(self.group);
+        ctx.destroy_param_layout(self.layout);
+    }
+
+    /// After a context loss: only its CPU-side group and layout are left.
+    pub(crate) fn destroy_lost(self, ctx: &Context) {
         ctx.destroy_param_group(self.group);
         ctx.destroy_param_layout(self.layout);
     }

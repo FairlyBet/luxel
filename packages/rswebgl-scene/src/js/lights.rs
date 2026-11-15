@@ -56,6 +56,9 @@ impl Scene {
     /// pass of yours (`renderFrame` sets it from the canvas).
     #[wasm_bindgen(js_name = setCameraAspect)]
     pub fn set_camera_aspect(&mut self, e: Entity, aspect: f32) {
+        if !options::finite("setCameraAspect", &[aspect]) {
+            return;
+        }
         match self.world.get_mut::<Camera>(e) {
             Some(mut c) => c.aspect = aspect,
             None => console::error_once(
@@ -275,6 +278,9 @@ impl Scene {
     /// Scales radiance before tone mapping. Default 1.
     #[wasm_bindgen(js_name = setExposure)]
     pub fn set_exposure(&mut self, exposure: f32) {
+        if !options::finite("setExposure", &[exposure]) {
+            return;
+        }
         self.renderer.set_exposure(exposure);
     }
 
@@ -285,6 +291,9 @@ impl Scene {
     /// Default off (0, 0.2); Filament's is (0.15, 0.2).
     #[wasm_bindgen(js_name = setSpecularAntialiasing)]
     pub fn set_specular_antialiasing(&mut self, variance: f32, threshold: f32) {
+        if !options::finite("setSpecularAntialiasing", &[variance, threshold]) {
+            return;
+        }
         self.renderer.set_specular_antialiasing(variance, threshold);
     }
 
@@ -303,6 +312,9 @@ impl Scene {
     /// is kept).
     #[wasm_bindgen(js_name = setEnvironmentIntensity)]
     pub fn set_environment_intensity(&mut self, r: f32, g: f32, b: f32) {
+        if !options::finite("setEnvironmentIntensity", &[r, g, b]) {
+            return;
+        }
         let rgb = Vec3::new(r, g, b);
         self.renderer.set_environment_intensity(rgb);
         if self.env_pending.is_some() {
@@ -344,8 +356,14 @@ impl Scene {
         self.compact_environment = on;
         if let Some((bytes, size)) = self.env_source.clone() {
             self.sync_context();
+            // The bake comes back at the intensity it has now (or was to
+            // get once baked), not the default a new environment starts at.
+            let keep = self
+                .env_intensity_after_bake
+                .unwrap_or_else(|| self.renderer.environment_intensity());
             let image = decode_hdr_rgbe(&bytes)?;
             self.start_environment(&image, size)?;
+            self.env_intensity_after_bake = Some(keep);
         }
         Ok(())
     }
@@ -376,12 +394,18 @@ impl Scene {
     /// Turns the environment (light and background) about +Y, in radians.
     #[wasm_bindgen(js_name = setEnvironmentRotation)]
     pub fn set_environment_rotation(&mut self, radians: f32) {
+        if !options::finite("setEnvironmentRotation", &[radians]) {
+            return;
+        }
         self.renderer.set_environment_rotation(radians);
     }
 
     /// Shows the environment behind the scene, `blur` 0 (sharp) … 1.
     #[wasm_bindgen(js_name = setBackground)]
     pub fn set_background(&mut self, blur: f32) {
+        if !options::finite("setBackground", &[blur]) {
+            return;
+        }
         self.renderer.set_background(Some(blur));
         // Start compiling now; `whenReady` waits for it.
         self.renderer.background_program(&self.ctx);
@@ -438,6 +462,7 @@ impl Scene {
             return;
         };
         self.env_pending = None;
+        self.ctx.note_content_changed();
         match result {
             Ok(env) => {
                 if self.compact_environment {

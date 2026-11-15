@@ -832,6 +832,15 @@ impl SceneRenderer {
                 (Dest::Late, Some(late), _) => late,
                 _ => &mut *opaque,
             };
+            // As many copies as have instance slots (4096 at most).
+            let mut cmd = mesh.command;
+            if kind != ProgramKind::Uniforms && cmd.is_instanceable() {
+                cmd.instance_count = cmd.instance_count.clamp(1, 4096);
+            }
+            let mesh = &MeshRenderer {
+                command: cmd,
+                ..*mesh
+            };
             if mesh.transparent {
                 // After every default key, farthest first: the key grows as
                 // the distance shrinks (a non-negative float's bits order
@@ -1096,6 +1105,9 @@ impl SceneRenderer {
                 continue;
             }
             let Some(group) = self.ensure_object_group(ctx, e, &m, worlds.changed_tick(row)) else {
+                // Not drawn: its map is told (drawn again next frame).
+                out.push(*d);
+                objects.push(ParamGroupId::NULL);
                 continue;
             };
             if !self.frame_bases.contains_key(&e) {
@@ -1118,7 +1130,9 @@ impl SceneRenderer {
                 self.instances.push(m);
             }
             let Some(group) = self.batch_group(ctx, batch_groups_used + i) else {
-                break;
+                out.push(*d);
+                objects.push(ParamGroupId::NULL);
+                continue;
             };
             ctx.param_set_i32(group, self.f_instance_base, base);
             let mut d = *d;
@@ -1233,6 +1247,7 @@ impl SceneRenderer {
         fresh.background = self.background;
         fresh.display_output = self.display_output;
         fresh.tone_mapping = self.tone_mapping;
+        fresh.lights.keep_settings(&self.lights);
         if matches!(self.skybox, Some(Ok(_))) {
             fresh.background_program(ctx);
         }
@@ -1265,6 +1280,9 @@ impl SceneRenderer {
         ctx.destroy_param_layout(self.frame_layout);
         ctx.destroy_param_layout(self.object_layout);
         if self.generation != ctx.generation() {
+            if let Some(p) = self.picker {
+                p.destroy_lost(ctx);
+            }
             return;
         }
         ctx.destroy_uniform_buffer(self.frame_ubo);
@@ -1409,7 +1427,13 @@ impl SceneRenderer {
     fn write_object(&mut self, ctx: &Context, group: ParamGroupId, m: &Mat4) {
         let upper = Mat3::from_mat4(*m);
         // A zero scale has no inverse; fall back rather than upload NaNs.
-        let normal = if upper.determinant().abs() > f32::EPSILON {
+        let normal = if upper.determinant() != 0.0
+            && upper
+                .inverse()
+                .to_cols_array()
+                .iter()
+                .all(|x| x.is_finite())
+        {
             upper.inverse().transpose()
         } else {
             upper

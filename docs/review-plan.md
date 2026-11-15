@@ -90,3 +90,9 @@ only reachable where nothing is left to break):
   generated tangents).
 - Core: the profiler's slot reuse depends on `update()` vs `time()` call
   order; error paths that leak only while the context is lost.
+- Scene: `whenReady` doesn't wait for models reloading after a context
+  loss; morphing meshes aren't culled at all (their bounds don't include
+  the targets' deltas); point / spot shadow near planes can clip a caster
+  very close to the light.
+- Shading: under the OpenPBR model a glTF specularFactor < 1 becomes an IOR
+  change (the grazing reflection stays at 1), as the OpenPBR mapping says.

@@ -33,6 +33,23 @@ pub const MAX_SHADOW_LAYERS: usize = 8;
 /// Shadow maps (views) a frame draws: a layer or a quarter of one each.
 pub const MAX_SHADOW_VIEWS: usize = 16;
 
+/// What a view's region holds: the signature drawn, and where.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Held {
+    signature: u64,
+    layer: usize,
+    // Texture coordinates' bits (exact compare).
+    tile: [u32; 4],
+}
+
+impl Held {
+    fn overlaps(&self, other: &Held) -> bool {
+        let [a0, a1, a2, a3] = self.tile.map(f32::from_bits);
+        let [b0, b1, b2, b3] = other.tile.map(f32::from_bits);
+        self.layer == other.layer && a0 < b2 && b0 < a2 && a1 < b3 && b1 < a3
+    }
+}
+
 /// The GPU side: the depth array, a framebuffer per layer, and a frame
 /// block and pass per view (a layer, or a point light face's quarter).
 pub(crate) struct ShadowMaps {
@@ -50,7 +67,9 @@ pub(crate) struct ShadowMaps {
     pub views: Vec<ShadowView>,
     // The signature (`cache`) of what each view holds (None: nothing
     // yet), and whether it is drawn again this frame.
-    drawn: Vec<Option<u64>>,
+    // Held with where it was drawn (layer, tile): the same signature in
+    // another place isn't the same map.
+    drawn: Vec<Option<Held>>,
     dirty: Vec<bool>,
     // Whether the comparison is set for reverse-Z.
     reverse_z: bool,
@@ -214,12 +233,43 @@ impl ShadowMaps {
     pub fn mark(&mut self, signatures: &[u64]) {
         self.dirty.clear();
         for (i, &sig) in signatures.iter().enumerate() {
+            let Some(view) = self.views.get(i) else {
+                continue;
+            };
+            let now = Held {
+                signature: sig,
+                layer: view.layer,
+                tile: view.tile.map(f32::to_bits),
+            };
             let held = self.drawn.get_mut(i);
-            let stale = held.as_deref() != Some(&Some(sig));
+            let stale = held.as_deref() != Some(&Some(now));
             if let Some(h) = held {
-                *h = Some(sig);
+                *h = Some(now);
             }
             self.dirty.push(stale);
+        }
+        // What a map drawn now covers no longer holds another (one absent
+        // this frame, a hidden light's): it is drawn again when it's back.
+        for i in 0..self.dirty.len() {
+            if !self.dirty[i] {
+                continue;
+            }
+            let Some(Some(drawn)) = self.drawn.get(i).copied() else {
+                continue;
+            };
+            for (j, other) in self.drawn.iter_mut().enumerate() {
+                if j != i && other.is_some_and(|o| o.overlaps(&drawn)) {
+                    *other = None;
+                }
+            }
+        }
+    }
+
+    /// View `i` doesn't hold what its signature says (a caster couldn't be
+    /// drawn into it): drawn again next frame.
+    pub fn forget(&mut self, i: usize) {
+        if let Some(h) = self.drawn.get_mut(i) {
+            *h = None;
         }
     }
 

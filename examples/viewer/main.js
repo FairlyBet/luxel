@@ -313,18 +313,27 @@ function zoom(/** @type {number} */ factor) {
 let root = 0;
 let modelLabel = "";
 let modelUrl = "";
+// The model asked for last (still loading, perhaps).
+let wantedUrl = "";
+let wantedLabel = "";
 Object.assign(/** @type {any} */ (globalThis).viewer, { root: () => root });
 let loading = 0;
 async function load(/** @type {string} */ url, /** @type {string} */ label) {
   const ticket = ++loading;
+  wantedUrl = url;
+  wantedLabel = label;
   status(`Loading ${label}…`);
   const t0 = performance.now();
   try {
     const model = await loadModel(ctx, url);
     if (ticket !== loading) {
       model.destroy(ctx); // a newer load won
+      if (url.startsWith("blob:") && url !== wantedUrl) URL.revokeObjectURL(url);
       return;
     }
+    // An opened file's object URL is kept while its model shows (a reload
+    // after a context loss fetches it again), freed once replaced.
+    if (modelUrl.startsWith("blob:") && modelUrl !== url) URL.revokeObjectURL(modelUrl);
     Trace.instant(`model: ${label}`);
     if (root) scene.despawn(root);
     root = scene.addModel(model);
@@ -391,7 +400,7 @@ variantSelect.addEventListener("change", () => {
 $("texture-compression").checked = textureCompression();
 $("texture-compression").addEventListener("change", () => {
   setTextureCompression($("texture-compression").checked);
-  if (modelUrl) load(modelUrl, modelLabel);
+  if (wantedUrl) load(wantedUrl, wantedLabel);
 });
 
 // The model's own cameras (glTF `cameras`) as alternatives to the orbit.
@@ -435,10 +444,14 @@ addEventListener("drop", (e) => {
 // --- environment ---------------------------------------------------------------
 
 let envIntensity = 1;
+let envTicket = 0;
 async function loadEnv(/** @type {string} */ name, /** @type {string} */ label) {
+  const ticket = ++envTicket;
   status(`Loading ${label}…`);
   try {
     const bytes = new Uint8Array(await (await fetch(`${HDRS}/${name}.hdr`)).arrayBuffer());
+    // A later pick (or the first one racing the startup's) wins.
+    if (ticket !== envTicket) return;
     scene.setEnvironmentHdr(bytes, 256);
     scene.setEnvironmentIntensity(envIntensity, envIntensity, envIntensity);
     status("");
@@ -640,7 +653,12 @@ function inspect(/** @type {number} */ part, /** @type {string} */ partName) {
   }
   const material = scene.meshMaterial(part);
   const title = document.createElement("div");
-  title.innerHTML = `<b>${partName}</b><div class="note">material: ${scene.materialName(material) ?? `#${material}`} — edits change every part that shares it</div>`;
+  const bold = document.createElement("b");
+  bold.textContent = partName;
+  const note = document.createElement("div");
+  note.className = "note";
+  note.textContent = `material: ${scene.materialName(material) ?? `#${material}`} — edits change every part that shares it`;
+  title.append(bold, note);
   box.append(title);
   const own = document.createElement("button");
   own.textContent = "Give this part its own copy";
@@ -711,7 +729,7 @@ let lastStats = 0;
 const SETTLE_FRAMES = 30; // TAA's 8-frame jitter cycle, a few times over
 let settle = SETTLE_FRAMES;
 let lastView = "";
-let lastCompression = "";
+let lastContent = -1;
 let still = false;
 const invalidate = () => {
   settle = SETTLE_FRAMES;
@@ -745,6 +763,13 @@ function frame(/** @type {number} */ now) {
     lastView = view;
     invalidate();
   }
+  // Work landing since (textures filled in or compressed, an environment
+  // baked, models back after a context loss) changes the picture.
+  const content = ctx.contentVersion();
+  if (content !== lastContent) {
+    lastContent = content;
+    invalidate();
+  }
   const animating = root !== 0 && Number(animSelect.value) >= 0;
   const changing =
     animating || settle > 0 || scene.pending() > 0 || $("auto-exposure").checked || $("idle-redraw").checked;
@@ -761,12 +786,7 @@ function frame(/** @type {number} */ now) {
   if (now - lastStats > 250) {
     lastStats = now;
     Trace.begin("viewer.stats");
-    // Textures compressed in the background since: draw them.
     const compression = textureCompressionStats();
-    if (compression !== lastCompression) {
-      lastCompression = compression;
-      invalidate();
-    }
     const recent = frameTimes.slice(-60);
     const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
     const worst = Math.max(...recent);

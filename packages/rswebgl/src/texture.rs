@@ -620,6 +620,7 @@ impl Context {
         self.reattach_texture(tex);
         self.gl().delete_texture(Some(&old));
         self.gl_state().forget_texture(tex);
+        self.note_content_changed();
     }
 
     /// The texture's target, or None for a stale handle.
@@ -1551,6 +1552,7 @@ impl Context {
                 Ok(bitmap) => {
                     let size = ctx.fill_from_bitmap(tex, &bitmap, &format, generate_mipmaps);
                     bitmap.close();
+                    ctx.note_content_changed();
                     size
                 }
                 Err(_) if !ctx.texture_is_valid(tex) => (0, 0),
@@ -1657,6 +1659,7 @@ impl Context {
                         ..PixelUnpack::default()
                     };
                     ctx.texture_sub_image_2d_from_image(tex, 0, 0, 0, &img_cb, &format, &unpack);
+                    ctx.note_content_changed();
                     if generate_mipmaps {
                         ctx.texture_generate_mipmaps(tex);
                     }

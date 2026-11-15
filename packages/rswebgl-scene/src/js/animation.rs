@@ -4,7 +4,7 @@ use rswebgl::error::Error;
 use rswebgl_ecs::Entity;
 use wasm_bindgen::prelude::*;
 
-use super::Scene;
+use super::{Scene, options};
 use crate::animation::{ModelAnimations, Playback, advance, apply};
 
 #[wasm_bindgen]
@@ -81,6 +81,9 @@ impl Scene {
     /// negative plays backwards; a non-finite speed counts as 1).
     #[wasm_bindgen(js_name = setAnimationSpeed)]
     pub fn set_animation_speed(&mut self, root: Entity, speed: f32) {
+        if !options::finite("setAnimationSpeed", &[speed]) {
+            return;
+        }
         if let Some(mut a) = self.world.get_mut::<ModelAnimations>(root)
             && let Some(p) = a.playing.as_mut()
         {
@@ -121,6 +124,9 @@ impl Scene {
     /// playing on its model overwrites them).
     #[wasm_bindgen(js_name = setMorphWeights)]
     pub fn set_morph_weights(&mut self, e: Entity, weights: Vec<f32>) {
+        if !options::finite("setMorphWeights", &weights) {
+            return;
+        }
         if self.world.is_alive(e) {
             self.world
                 .insert(e, crate::animation::MorphWeights(weights));

@@ -15,7 +15,9 @@
 
 // Estevez & Kulla 2017; `roughness` perceptual (α = roughness²).
 float D_Charlie(float roughness, float NdotH) {
-    float alpha = max(roughness, 1e-6);
+    // Floored as Filament's MIN_PERCEPTUAL_ROUGHNESS: at 0, 1/α is 1e12 and
+    // grazing pixels spike to ~1e11.
+    float alpha = max(roughness, 0.045);
     alpha *= alpha;
     float inv = 1.0 / alpha;
     float sin2 = 1.0 - NdotH * NdotH;

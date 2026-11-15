@@ -92,7 +92,11 @@ pub fn decode_hdr_rgbe(bytes: &[u8]) -> Result<RgbeImage, String> {
 
     let data = &bytes[pos..];
     let (w, h) = (width as usize, height as usize);
-    let mut rgbe = vec![0u8; w * h * 4];
+    // A header can claim more than memory holds: an error, not an abort.
+    let mut rgbe = Vec::new();
+    rgbe.try_reserve_exact(w * h * 4)
+        .map_err(|_| format!("HDR: {width}×{height} doesn't fit in memory"))?;
+    rgbe.resize(w * h * 4, 0u8);
     let mut at = 0;
     for row in rgbe.chunks_exact_mut(w * 4) {
         at = read_scanline(data, at, row, w)?;
@@ -156,6 +160,9 @@ fn read_scanline(data: &[u8], mut at: usize, out: &mut [u8], w: usize) -> Result
         if p[0] == 1 && p[1] == 1 && p[2] == 1 {
             if x == 0 {
                 return Err("HDR: run before any pixel".into());
+            }
+            if shift >= 24 {
+                return Err("HDR: too many run markers in a row".into());
             }
             let run = (p[3] as usize) << shift;
             if x + run > w {

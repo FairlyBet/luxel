@@ -60,7 +60,10 @@ float max3(vec3 c) { return max(c.r, max(c.g, c.b)); }
 // The display's exposure, auto exposure included.
 float exposure() {
     if (u_auto_grey <= 0.0) return u_taa.w;
-    return u_taa.w / (texelFetch(u_auto_exposure, ivec2(0), 0).r / u_auto_grey);
+    // Nothing measured yet (a new chain's zeroed result): the set exposure.
+    float measured = texelFetch(u_auto_exposure, ivec2(0), 0).r;
+    if (!(measured > 0.0)) return u_taa.w;
+    return u_taa.w / (measured / u_auto_grey);
 }
 vec3 tonemap(vec3 c) { c *= exposure(); return c / (max3(c) + 1.0); }
 vec3 reverse_tonemap(vec3 c) { return c / max(1.0 - max3(c), 1e-4) / exposure(); }

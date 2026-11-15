@@ -99,6 +99,7 @@ impl Scene {
     /// but blending happens after tone mapping). Returns whether HDR is on.
     #[wasm_bindgen(js_name = setHdr)]
     pub fn set_hdr(&mut self, on: bool) -> bool {
+        self.last_frame = None;
         self.hdr_wanted = on && HdrOutput::supported(&self.ctx);
         if !self.hdr_wanted
             && let Some(out) = self.hdr.take()
@@ -165,6 +166,7 @@ impl Scene {
     /// whether it is on (needs HDR output).
     #[wasm_bindgen(js_name = setFxaa)]
     pub fn set_fxaa(&mut self, on: bool) -> bool {
+        self.sync_context();
         self.fxaa = on;
         // Compiled now when the target exists, else at the next frame.
         if let Some(out) = &mut self.hdr
@@ -188,6 +190,7 @@ impl Scene {
     /// compensation. Returns whether it is on.
     #[wasm_bindgen(js_name = setAutoExposure)]
     pub fn set_auto_exposure(&mut self, on: bool) -> bool {
+        self.sync_context();
         self.auto_exposure = on;
         if let Some(out) = &mut self.hdr
             && let Err(e) = out.set_auto_exposure(&self.ctx, on)
@@ -209,6 +212,9 @@ impl Scene {
     /// physically lit scenes).
     #[wasm_bindgen(js_name = setAutoExposureOptions)]
     pub fn set_auto_exposure_options(&mut self, grey: f32, min: f32, max: f32, speed: f32) {
+        if !options::finite("setAutoExposureOptions", &[grey, min, max, speed]) {
+            return;
+        }
         let ok = |v: f32, d: f32| if v.is_finite() { v } else { d };
         self.auto_exposure_options = [
             ok(grey, 0.4),
@@ -223,6 +229,7 @@ impl Scene {
     /// `antialias: false` with HDR on: it isn't used.
     #[wasm_bindgen(js_name = setSamples)]
     pub fn set_samples(&mut self, samples: i32) {
+        self.last_frame = None;
         self.samples = samples.max(0);
         if let Some(out) = self.hdr.take() {
             out.destroy(&self.ctx); // remade at the next frame
@@ -242,6 +249,9 @@ impl Scene {
     /// With HDR output only.
     #[wasm_bindgen(js_name = setSharpening)]
     pub fn set_sharpening(&mut self, amount: f32) {
+        if !options::finite("setSharpening", &[amount]) {
+            return;
+        }
         self.sharpness = if amount.is_finite() {
             amount.clamp(0.0, 1.0)
         } else {
@@ -259,6 +269,9 @@ impl Scene {
     /// what shows through glass gets blurrier. With HDR output.
     #[wasm_bindgen(js_name = setTransmissionResolution)]
     pub fn set_transmission_resolution(&mut self, scale: f32) {
+        if !options::finite("setTransmissionResolution", &[scale]) {
+            return;
+        }
         self.transmission_scale = if scale.is_finite() {
             scale.clamp(0.25, 1.0)
         } else {
@@ -382,6 +395,10 @@ impl Scene {
 
     // TAA off for good (`isTaa` answers false); HDR output stays.
     fn give_up_taa(&mut self, e: &Error) {
+        // Lost: everything fails until the restore, which rebuilds it.
+        if self.ctx.is_lost() {
+            return;
+        }
         console::warn(&format!(
             "[rswebgl-scene] TAA unavailable ({e}); HDR output without it"
         ));
@@ -392,6 +409,9 @@ impl Scene {
 
     // FXAA off for good (`isFxaa` answers false).
     fn give_up_auto_exposure(&mut self, e: &Error) {
+        if self.ctx.is_lost() {
+            return;
+        }
         console::warn(&format!(
             "[rswebgl-scene] auto exposure unavailable ({e}); the set exposure only"
         ));
@@ -399,6 +419,9 @@ impl Scene {
     }
 
     fn give_up_fxaa(&mut self, e: &Error) {
+        if self.ctx.is_lost() {
+            return;
+        }
         console::warn(&format!(
             "[rswebgl-scene] FXAA unavailable ({e}); output without it"
         ));
@@ -406,6 +429,9 @@ impl Scene {
     }
 
     fn give_up_hdr(&mut self, e: &Error) {
+        if self.ctx.is_lost() {
+            return;
+        }
         console::warn(&format!(
             "[rswebgl-scene] HDR output unavailable ({e}); drawing straight to the canvas"
         ));
@@ -451,8 +477,10 @@ impl Scene {
             match crate::occlusion::Occlusion::new(&self.ctx) {
                 Ok(o) => self.occlusion = Some(o),
                 Err(e) => {
-                    console::error_once(&format!("[rswebgl-scene] ambient occlusion: {e}"));
-                    self.ambient_occlusion = None;
+                    if !self.ctx.is_lost() {
+                        console::error_once(&format!("[rswebgl-scene] ambient occlusion: {e}"));
+                        self.ambient_occlusion = None;
+                    }
                     return;
                 }
             }

@@ -105,7 +105,7 @@ async fn baked_directions_match_the_equirect_map() {
         .expect("bake");
     assert!(scene.has_environment());
     scene.set_background(0.0);
-    ready(&scene).await;
+    ready(&mut scene).await;
 
     let red = |p: [u8; 4]| p[0] > 128;
     let green = |p: [u8; 4]| p[1] > 128;
@@ -212,7 +212,7 @@ async fn a_baked_uniform_environment_lights_like_the_constant_one() {
     scene.insert_camera(camera, Camera::orthographic(2.0, 1.0, 0.1, 100.0));
     scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
     scene.add_model(load_model(&ctx, &quads_url()).await.expect("load"));
-    ready(&scene).await;
+    ready(&mut scene).await;
 
     let frame = |scene: &mut Scene| -> [[u8; 4]; 3] {
         let mut pass = Pass::to_default();
@@ -242,7 +242,7 @@ async fn a_baked_uniform_environment_lights_like_the_constant_one() {
     // …and a baked environment that is 0.5 everywhere.
     let flat = encode_hdr(16, 8, &[0.5; 16 * 8 * 3]);
     scene.set_environment_hdr(&flat, 64).expect("bake");
-    ready(&scene).await;
+    ready(&mut scene).await;
     let baked = frame(&mut scene);
     for (c, b) in constant.iter().zip(&baked) {
         for i in 0..3 {
@@ -267,7 +267,7 @@ async fn a_baked_uniform_environment_lights_like_the_constant_one() {
         .expect("bake");
     scene.set_environment_intensity(0.01, 0.01, 0.01);
     // Set while it bakes: kept over the swap.
-    ready(&scene).await;
+    ready(&mut scene).await;
     let sun = frame(&mut scene);
     assert!(sun[0][0] > 60 && sun[1][0] > 30, "{sun:?}");
     for p in &sun {
@@ -280,7 +280,7 @@ async fn a_baked_uniform_environment_lights_like_the_constant_one() {
 }
 
 // Shaders link in the background; wait for them before reading pixels.
-async fn ready(scene: &Scene) {
+async fn ready(scene: &mut Scene) {
     wasm_bindgen_futures::JsFuture::from(scene.when_ready())
         .await
         .unwrap();
@@ -356,7 +356,7 @@ async fn specular_antialiasing_spreads_highlights_on_turning_normals() {
     scene
         .set_environment_hdr(&encode_hdr(w as u32, h as u32, &sky), 64)
         .expect("bake");
-    ready(&scene).await;
+    ready(&mut scene).await;
 
     let lit = |scene: &mut Scene| -> usize {
         let mut pass = Pass::to_default();
@@ -396,7 +396,7 @@ async fn environments_bake_in_the_background() {
     let camera = scene.spawn();
     scene.insert_camera(camera, Camera::perspective(1.0, 1.0, 0.1, 100.0));
     scene.set_background(0.0);
-    ready(&scene).await;
+    ready(&mut scene).await;
     let flat = |v: f32| encode_hdr(8, 4, &[v; 8 * 4 * 3]);
     let sky = |scene: &mut Scene| look(scene, &ctx, &gl, camera, [0.0, 0.0, -1.0]);
     let before = sky(&mut scene); // the default: white at 0.2
@@ -406,12 +406,12 @@ async fn environments_bake_in_the_background() {
     assert_eq!(sky(&mut scene), before, "the old one shows while baking");
     scene.set_environment_hdr(&flat(0.8), 32).expect("start");
     scene.set_environment_intensity(0.5, 0.5, 0.5);
-    ready(&scene).await;
+    ready(&mut scene).await;
     let after = sky(&mut scene);
 
     // The same as 0.4 at intensity 1.
     scene.set_environment_hdr(&flat(0.4), 32).expect("start");
-    ready(&scene).await;
+    ready(&mut scene).await;
     let expected = sky(&mut scene);
     assert!(after[0] > before[0] + 20, "{after:?} vs before {before:?}");
     assert!(
@@ -469,11 +469,11 @@ async fn subsurface_wraps_light_and_coat_anisotropy_stretches_highlights() {
     // The quad spans pixels 24..40; its left quarter faces away from the
     // light.
     let away = |r: &[u8]| r[24..28].iter().map(|&v| v as u32).sum::<u32>();
-    ready(&scene).await;
+    ready(&mut scene).await;
     let plain = row(&mut scene);
     set(&mut scene, "subsurface_weight", "1");
     set(&mut scene, "subsurface_color", "[1, 1, 1]");
-    ready(&scene).await;
+    ready(&mut scene).await;
     let sss = row(&mut scene);
     assert!(away(&plain) <= 4, "dark without subsurface: {plain:?}");
     assert!(
@@ -489,10 +489,10 @@ async fn subsurface_wraps_light_and_coat_anisotropy_stretches_highlights() {
     scene.look_at(light, &[0.0, 0.0, 1.0], &[0.0, 0.0, 0.0]);
     let bright = js_sys::JSON::parse(r#"{ "type": "directional", "intensity": 40 }"#).unwrap();
     scene.set_light(light, bright).unwrap();
-    ready(&scene).await;
+    ready(&mut scene).await;
     let round = row(&mut scene);
     set(&mut scene, "coat_roughness_anisotropy", "0.9");
-    ready(&scene).await;
+    ready(&mut scene).await;
     let stretched = row(&mut scene);
     let diff: u32 = round
         .iter()
