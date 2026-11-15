@@ -39,10 +39,12 @@ blending, the display's divide, TAA, the glass copy).
 2. **Runtime texture compression**: BC done (`TextureCompressor`,
    `setTextureCompression`, on by default: BC1 / BC3 / BC5 from Betsy,
    encoded in fragment shaders, PBO to compressed storage on the GPU;
-   DamagedHelmet 90 → 14 MB of textures, PSNR 47 dB). Left: ETC2 / EAC for
-   phones (Betsy's `etc2_rgb.glsl`, `eac.glsl` from darksylinc/betsy: RGB8,
-   RGBA8 EAC, RG11 for normals), BC6H for the IBL cubes on desktop, and
-   extension maps (sheen, clearcoat, specular: some keep data in alpha).
+   DamagedHelmet 90 → 14 MB of textures, PSNR 47 dB) and ETC2 / EAC on phones
+   (ETC2 RGB / RGBA, RG11; Mali-G57: the helmet's 4 maps in 93 ms). Left:
+   ETC2's T / H / P modes (Betsy) if ETC1 quality falls short; ASTC where
+   the device has it (the Mali-G57 does: better quality than ETC2); BC6H for
+   the IBL cubes on desktop; extension maps (sheen, clearcoat, specular:
+   some keep data in alpha).
 3. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
    Mali-G57 MC2, Chrome 157, 1000 draws × 80 bytes, CPU submit / fence ms):
    one upload of a big UBO 1.31 / 13.0; a `bufferSubData` per draw into it
