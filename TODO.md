@@ -47,11 +47,21 @@ blending, the display's divide, TAA, the glass copy).
    its own map size (`shadowMapSize`), packed with the others' into the
    layers largest first (`lighting/atlas.rs`, a buddy allocator). A ground
    shadow (`setGroundShadow`, three.js' contact shadows: the casters seen
-   from below, blurred, on a plane under them; cached like the maps). Left:
-   screen-space contact shadows (a
-   short march toward the light through the depth buffer; MSAA needs a
-   resolved depth). For environment-only scenes: GTAO (XeGTAO, as Godot /
-   Bevy).
+   from below, blurred, on a plane under them; cached like the maps).
+   Next: screen-space contact shadows and GTAO, as post-passes over the
+   opaque scene's depth (as three.js' GTAOPass / SAOPass): the darkening
+   multiplies the lit image — direct light and reflections too, not only
+   the light it belongs to — for no extra pass over the geometry.
+
+   Later, maybe: a depth prepass (the opaque scene's depth drawn first,
+   then shaded with `depth_func` EQUAL). The lit shaders could then read
+   the frame's depth while shading, so AO darkens only the environment's
+   diffuse light and a contact shadow only its own light's (as Filament's
+   structure pass, Bevy's prepass, Godot's depth prepass). Costs a second
+   pass over the opaque geometry (vertex work twice — felt on phones) and
+   touches the renderer (an extra pass and state per material, MSAA:
+   prepass and colour pass share the multisampled depth; TAA: jittered
+   alike). Worth it if the post-pass's darkening of highlights shows.
 2. **Runtime texture compression**: done (`TextureCompressor`,
    `setTextureCompression`, on by default; fragment-shader encoders, PBO to
    compressed storage on the GPU). BC1 / BC3 / BC5 on desktops (Betsy), ETC2
