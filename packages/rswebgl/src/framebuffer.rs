@@ -185,6 +185,13 @@ struct DefaultFramebufferInner {
     dpr_query: Option<web_sys::MediaQueryList>,
     #[allow(dead_code)]
     dpr_closure: Option<Closure<dyn FnMut()>>,
+    // The drawing buffer's size relative to the device pixels it covers
+    // (`setResolutionScale`), and a cap on device pixels per CSS pixel
+    // (`setMaxPixelRatio`).
+    resolution_scale: f64,
+    max_pixel_ratio: f64,
+    // The device-pixel size last observed, to apply a new scale at once.
+    device_size: Option<(i32, i32)>,
 }
 
 impl DefaultFramebufferInner {
@@ -262,11 +269,23 @@ fn context_attribute(gl: &WebGl2RenderingContext, name: &str) -> Option<bool> {
 fn resize_to_display(
     inner: &Rc<RefCell<DefaultFramebufferInner>>,
     canvas: &HtmlCanvasElement,
-    (w, h): (i32, i32),
+    (dw, dh): (i32, i32),
 ) {
-    if w <= 0 || h <= 0 {
+    if dw <= 0 || dh <= 0 {
         return;
     }
+    // The device pixels scaled: by the resolution scale, and down to the
+    // pixel ratio cap.
+    let factor = {
+        let mut s = inner.borrow_mut();
+        s.device_size = Some((dw, dh));
+        let dpr = web_sys::window()
+            .map_or(1.0, |w| w.device_pixel_ratio())
+            .max(1e-3);
+        s.resolution_scale.min(s.max_pixel_ratio / dpr)
+    };
+    let w = ((dw as f64 * factor).round() as i32).max(1);
+    let h = ((dh as f64 * factor).round() as i32).max(1);
     if canvas.width() != w as u32 {
         canvas.set_width(w as u32);
     }
@@ -299,6 +318,21 @@ pub struct DefaultFramebuffer {
 }
 
 impl DefaultFramebuffer {
+    // Resizes to the last observed size with the scale and cap now (auto
+    // resize only).
+    fn apply_resolution(&self) {
+        let (canvas, size, observing) = {
+            let s = self.inner.borrow();
+            (s.canvas.clone(), s.device_size, s.observer.is_some())
+        };
+        if let (Some(canvas), true) = (canvas, observing) {
+            let size = size.unwrap_or_else(|| device_size(None, &canvas));
+            resize_to_display(&self.inner, &canvas, size);
+        }
+    }
+}
+
+impl DefaultFramebuffer {
     pub(crate) fn new(
         gl: WebGl2RenderingContext,
         viewport: Viewport,
@@ -316,6 +350,9 @@ impl DefaultFramebuffer {
                 resize_closure: None,
                 dpr_query: None,
                 dpr_closure: None,
+                resolution_scale: 1.0,
+                max_pixel_ratio: f64::INFINITY,
+                device_size: None,
             })),
         }
     }
@@ -443,6 +480,40 @@ impl DefaultFramebuffer {
         s.dpr_closure = Some(dpr_closure);
         arm_dpr_query(&mut s);
         Ok(())
+    }
+
+    /// With auto-resize: the drawing buffer at `scale` × the device pixels
+    /// the canvas covers (0.1–2; default 1). Below 1 draws fewer pixels —
+    /// the browser stretches them to the canvas — for speed on dense
+    /// screens or slow GPUs; above 1 supersamples. Applies at once.
+    #[wasm_bindgen(js_name = setResolutionScale)]
+    pub fn set_resolution_scale(&self, scale: f64) {
+        if !scale.is_finite() {
+            return;
+        }
+        self.inner.borrow_mut().resolution_scale = scale.clamp(0.1, 2.0);
+        self.apply_resolution();
+    }
+
+    #[wasm_bindgen(js_name = resolutionScale)]
+    pub fn resolution_scale(&self) -> f64 {
+        self.inner.borrow().resolution_scale
+    }
+
+    /// With auto-resize: at most `ratio` drawing-buffer pixels per CSS pixel
+    /// (three.js' `setPixelRatio(Math.min(devicePixelRatio, ratio))`):
+    /// e.g. 2 keeps a 3× phone from drawing 9 pixels per CSS pixel. Infinity
+    /// (the default) or a non-positive value: no cap. Applies at once.
+    #[wasm_bindgen(js_name = setMaxPixelRatio)]
+    pub fn set_max_pixel_ratio(&self, ratio: f64) {
+        let ratio = if ratio > 0.0 { ratio } else { f64::INFINITY };
+        self.inner.borrow_mut().max_pixel_ratio = ratio;
+        self.apply_resolution();
+    }
+
+    #[wasm_bindgen(js_name = maxPixelRatio)]
+    pub fn max_pixel_ratio(&self) -> f64 {
+        self.inner.borrow().max_pixel_ratio
     }
 
     #[wasm_bindgen(js_name = disableAutoResize)]

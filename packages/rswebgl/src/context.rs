@@ -364,7 +364,10 @@ impl Context {
 
     /// JS: called when the context is lost. Every handle is dead from here on.
     #[wasm_bindgen(js_name = setOnLost)]
-    pub fn set_on_lost(&self, #[wasm_bindgen(unchecked_param_type = "() => void")] f: js_sys::Function) {
+    pub fn set_on_lost(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "() => void")] f: js_sys::Function,
+    ) {
         self.on_lost(move |_| {
             let _ = f.call0(&JsValue::NULL);
         });

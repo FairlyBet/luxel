@@ -1297,3 +1297,20 @@ async fn needs_render_follows_changes() {
     }
     assert!(frames > 8, "{frames}");
 }
+
+// Quality presets set the settings they name, and frames still draw.
+#[wasm_bindgen_test]
+async fn quality_presets() {
+    let mut s = setup().await;
+    s.scene.set_hdr(true);
+    s.scene.set_quality("high").unwrap();
+    assert!(s.scene.is_taa() && s.scene.ambient_occlusion());
+    assert_eq!(s.scene.shadow_map_size(), 2048);
+    assert_eq!(s.ctx.default_framebuffer().max_pixel_ratio(), 2.0);
+    s.frame().await;
+    s.scene.set_quality("low").unwrap();
+    assert!(!s.scene.is_taa() && s.scene.is_fxaa() && !s.scene.ambient_occlusion());
+    assert_eq!(s.scene.shadow_map_size(), 1024);
+    s.frame().await;
+    assert!(s.scene.set_quality("ultra").is_err());
+}

@@ -12,6 +12,49 @@ use crate::output::{HdrOutput, ToneMapping};
 
 #[wasm_bindgen]
 impl Scene {
+    /// A preset of the settings that trade quality for speed — a starting
+    /// point, each still settable after:
+    /// - "low": no MSAA or TAA, FXAA; 1024² shadow maps; no ambient
+    ///   occlusion or contact shadows; transmission at half resolution; at
+    ///   most 1 pixel per CSS pixel.
+    /// - "medium": 4× MSAA; 2048² shadow maps; no ambient occlusion or
+    ///   contact shadows; transmission at half resolution; at most 1.5.
+    /// - "high": TAA; 2048² shadow maps; ambient occlusion and contact
+    ///   shadows; full-resolution transmission; at most 2.
+    ///
+    /// The pixel cap is the canvas's (`defaultFramebuffer().setMaxPixelRatio`,
+    /// with auto-resize). Throws on another name.
+    #[wasm_bindgen(js_name = setQuality)]
+    pub fn set_quality(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "QualityName")] name: &str,
+    ) -> Result<(), Error> {
+        let (taa, fxaa, samples, shadow, effects, transmission, ratio) = match name {
+            "low" => (false, true, 0, 1024, false, 0.5, 1.0),
+            "medium" => (false, false, 4, 2048, false, 0.5, 1.5),
+            "high" => (true, false, 4, 2048, true, 1.0, 2.0),
+            other => {
+                return Err(format!("setQuality: \"{other}\" isn't low, medium or high").into());
+            }
+        };
+        self.set_taa(taa);
+        self.set_fxaa(fxaa);
+        self.set_samples(samples);
+        self.set_shadow_map_size(shadow);
+        let on = |on: bool| {
+            if on {
+                js_sys::Object::new().into()
+            } else {
+                JsValue::NULL
+            }
+        };
+        self.set_ambient_occlusion(on(effects))?;
+        self.set_contact_shadows(on(effects))?;
+        self.set_transmission_resolution(transmission);
+        self.ctx.default_framebuffer().set_max_pixel_ratio(ratio);
+        Ok(())
+    }
+
     /// Screen-space ambient occlusion (GTAO) over the opaque scene, as a
     /// post-pass (three.js' GTAOPass): `AmbientOcclusionOptions`, or null
     /// to turn it off (off by default). With HDR output only (it reads the

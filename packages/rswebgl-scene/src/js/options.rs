@@ -131,6 +131,9 @@ export interface MaterialTextureOptions {
 /** `setToneMapping`'s names. */
 export type ToneMappingName = "none" | "neutral" | "aces" | "agx";
 
+/** `setQuality`'s presets. */
+export type QualityName = "low" | "medium" | "high";
+
 /** `setShadingModel`'s names. */
 export type ShadingModelName = "openpbr" | "gltf";
 
