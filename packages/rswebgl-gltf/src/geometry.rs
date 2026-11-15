@@ -206,7 +206,7 @@ impl GeometryCache {
         } else {
             accessor_bounds(&pos_accessor)
         };
-        let (aabb_min, aabb_max) = bounds.unwrap_or_else(|| {
+        let (mut aabb_min, mut aabb_max) = bounds.unwrap_or_else(|| {
             // Bounds are required by the spec for POSITION; compute if absent.
             let mut min = [f32::INFINITY; 3];
             let mut max = [f32::NEG_INFINITY; 3];
@@ -221,6 +221,31 @@ impl GeometryCache {
             }
             (min, max)
         });
+
+        // Morph targets move vertices by their weighted deltas: the box
+        // grows by each target's, toward both sides (any mix of weights
+        // 0–1 stays inside; three.js grows it the same way).
+        for target in primitive.morph_targets() {
+            let Some(deltas) = target
+                .positions()
+                .and_then(|a| crate::accessor::read_vecs::<3>(&a, buffers))
+            else {
+                continue;
+            };
+            let (mut lo, mut hi) = ([0.0f32; 3], [0.0f32; 3]);
+            for d in deltas {
+                for k in 0..3 {
+                    if d[k].is_finite() {
+                        lo[k] = lo[k].min(d[k]);
+                        hi[k] = hi[k].max(d[k]);
+                    }
+                }
+            }
+            for k in 0..3 {
+                aabb_min[k] += lo[k];
+                aabb_max[k] += hi[k];
+            }
+        }
 
         let vao = match ctx.create_vertex_array() {
             Ok(v) => v,

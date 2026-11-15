@@ -364,3 +364,39 @@ async fn a_texture_in_two_colour_spaces_is_made_twice() {
     assert_eq!(model.warnings(), Vec::<String>::new());
     model.destroy(&ctx);
 }
+
+// A morph target's deltas widen the primitive's bounds (weights 0–1).
+#[wasm_bindgen_test]
+async fn morph_targets_widen_the_bounds() {
+    let ctx = context();
+    let mut data = bin(); // positions 0..36, indices 36..42 (+2 pad)
+    for d in [0.0f32, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, -3.0, 0.0] {
+        data.extend_from_slice(&d.to_le_bytes()); // deltas: 44..80
+    }
+    let json = format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "buffers": [{{ "byteLength": 80, "uri": "data:application/octet-stream;base64,{b}" }}],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
+    {{ "buffer": 0, "byteOffset": 36, "byteLength": 6 }},
+    {{ "buffer": 0, "byteOffset": 44, "byteLength": 36 }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0] }},
+    {{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }},
+    {{ "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, -3, 0], "max": [2, 0, 0] }}
+  ],
+  "meshes": [{{ "primitives": [{{ "attributes": {{ "POSITION": 0 }}, "indices": 1,
+                                  "targets": [{{ "POSITION": 2 }}] }}], "weights": [0] }}],
+  "nodes": [{{ "mesh": 0 }}],
+  "scenes": [{{ "nodes": [0] }}],
+  "scene": 0
+}}"#,
+        b = b64(&data)
+    );
+    let model = load(&ctx, bytes(json.as_bytes()), JsValue::UNDEFINED).await;
+    let (min, max) = model.items()[0].local_bounds();
+    assert_eq!((min, max), ([0.0, -3.0, 0.0], [3.0, 1.0, 0.0]));
+    model.destroy(&ctx);
+}
