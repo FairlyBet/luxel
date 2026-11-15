@@ -43,6 +43,7 @@ mod vertex_format;
 pub use animation::{Animation, AnimationChannel, AnimationPath, Interpolation};
 pub use draco::set_draco_decoder_path;
 pub use fetch::{Fetcher, Loading};
+pub use geometry::VertexKey;
 pub use ktx2::set_ktx2_transcoder_path;
 pub use material::{
     AlphaMode, EXTERNAL_TEXTURE, MAP_COUNT, MAP_NAMES, MAP_SLOTS, MapSlot, Material, PROPERTIES,
@@ -138,6 +139,10 @@ pub struct DrawItem {
     // Morph target deltas (NULL without), and how many targets.
     pub(crate) morph_texture: TextureId,
     pub(crate) morph_targets: u32,
+    // What `vao` was built for, and the vertex arrays for the variants'
+    // materials that need others (needs, vertex array, ATTR_* bits).
+    pub(crate) key: geometry::VertexKey,
+    pub(crate) alternates: Vec<(geometry::VertexKey, VertexArrayId, u32)>,
     // KHR_materials_variants: (variant, material index).
     pub(crate) variants: Vec<(u32, i32)>,
 }
@@ -491,6 +496,7 @@ impl Model {
             mine.vao = theirs.vao;
             mine.state_id = theirs.state_id;
             mine.morph_texture = theirs.morph_texture;
+            mine.alternates = theirs.alternates.clone();
         }
         for &g in &fresh.material_groups {
             ctx.destroy_param_group(g);
@@ -551,6 +557,23 @@ impl Model {
 }
 
 impl Model {
+    /// The vertex array draw item `item` draws with under a material that
+    /// needs `key` (`Material::vertex_key`: its TEXCOORD sets, tangents for
+    /// its normal map) and its `ATTR_*` bits. The item's own for its own
+    /// material and those needing the same; built for its variants'
+    /// materials; None for a need none was built for (draw with the item's
+    /// own then).
+    pub fn vertex_array_for(&self, item: usize, key: VertexKey) -> Option<(VertexArrayId, u32)> {
+        let item = self.items.get(item)?;
+        if key == item.key {
+            return Some((item.vao, item.attributes));
+        }
+        item.alternates
+            .iter()
+            .find(|a| a.0 == key)
+            .map(|&(_, vao, attributes)| (vao, attributes))
+    }
+
     /// All draw items (Rust convenience; JS uses `draw_item_count`/`draw_item`).
     pub fn items(&self) -> &[DrawItem] {
         &self.items

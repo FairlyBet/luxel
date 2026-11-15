@@ -328,6 +328,9 @@ impl Scene {
                     m.texture = texture;
                 }
                 self.world.remove::<Reloading>(e);
+                // A material other than the item's own (a variant, setMaterial):
+                // its render state and vertex array again, not the item's.
+                self.refit_material(e);
             }
         }
     }

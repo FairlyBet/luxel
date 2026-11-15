@@ -1277,7 +1277,10 @@ async fn needs_render_follows_changes() {
     );
     assert!(s.scene.needs_render(Some(other.to_raw())), "another camera");
     s.scene.render_frame(other);
-    assert!(!s.scene.needs_render(Some(other.to_raw())), "drawn through it");
+    assert!(
+        !s.scene.needs_render(Some(other.to_raw())),
+        "drawn through it"
+    );
     s.scene.render_frame(s.camera);
 
     type Change = (&'static str, fn(&mut Setup));
@@ -1367,4 +1370,89 @@ async fn capture_takes_a_picture_at_its_own_size() {
     let v: Vec<f64> = got.iter().map(|x| x.as_f64().unwrap()).collect();
     assert_eq!(&v[..2], &[192.0, 64.0]);
     assert_eq!(&v[2..], &YELLOW.map(f64::from), "{v:?}");
+}
+
+// A quad with only TEXCOORD_2 (no TEXCOORD_0): its own material untextured
+// (white), its "blue" variant textured through TEXCOORD_2. The variant
+// needs a vertex array with that set in a UV slot — not the quad's own.
+fn variant_uv_quad_url() -> String {
+    let mut bin = Vec::new();
+    #[rustfmt::skip]
+    let positions = [-0.5f32, -0.5, 0.0, 0.5, -0.5, 0.0, 0.5, 0.5, 0.0, -0.5, 0.5, 0.0];
+    // The right texel of a red | blue texture (read at (0, 0) — red — when
+    // the set isn't bound).
+    let uvs = [0.75f32, 0.5, 0.75, 0.5, 0.75, 0.5, 0.75, 0.5];
+    for v in positions.iter().chain(&uvs) {
+        bin.extend_from_slice(&v.to_le_bytes());
+    }
+    for i in [0u16, 1, 2, 0, 2, 3] {
+        bin.extend_from_slice(&i.to_le_bytes());
+    }
+    let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+    let json = format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "extensionsUsed": ["KHR_materials_unlit", "KHR_materials_variants"],
+  "extensions": {{ "KHR_materials_variants": {{ "variants": [{{ "name": "blue" }}] }} }},
+  "buffers": [{{ "byteLength": {len}, "uri": "data:application/octet-stream;base64,{bin}" }}],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 48 }},
+    {{ "buffer": 0, "byteOffset": 48, "byteLength": 32 }},
+    {{ "buffer": 0, "byteOffset": 80, "byteLength": 12, "target": 34963 }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3",
+       "min": [-0.5, -0.5, 0], "max": [0.5, 0.5, 0] }},
+    {{ "bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC2" }},
+    {{ "bufferView": 2, "componentType": 5123, "count": 6, "type": "SCALAR" }}
+  ],
+  "images": [{{ "uri": "{png}" }}],
+  "samplers": [{{ "magFilter": 9728, "minFilter": 9728 }}],
+  "textures": [{{ "source": 0, "sampler": 0 }}],
+  "materials": [
+    {{ "name": "Plain", "extensions": {{ "KHR_materials_unlit": {{}} }} }},
+    {{ "name": "Blue", "pbrMetallicRoughness": {{ "baseColorTexture": {{ "index": 0, "texCoord": 2 }} }},
+       "extensions": {{ "KHR_materials_unlit": {{}} }} }}
+  ],
+  "meshes": [
+    {{ "primitives": [{{ "attributes": {{ "POSITION": 0, "TEXCOORD_2": 1 }}, "indices": 2,
+       "material": 0,
+       "extensions": {{ "KHR_materials_variants": {{ "mappings": [{{ "variants": [0], "material": 1 }}] }} }} }}] }}
+  ],
+  "nodes": [{{ "name": "quad", "mesh": 0 }}],
+  "scenes": [{{ "nodes": [0] }}],
+  "scene": 0
+}}"#,
+        len = bin.len(),
+        bin = b64(&bin),
+        png = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png_rgba(2, 1, &[RED, BLUE]))
+        ),
+    );
+    format!("data:model/gltf+json;base64,{}", b64(json.as_bytes()))
+}
+
+#[wasm_bindgen_test]
+async fn a_variant_reads_its_own_texcoord_set() {
+    let mut s = setup().await;
+    let quad = load_model(&s.ctx, &variant_uv_quad_url()).await.unwrap();
+    let quad = s.scene.add_model(quad);
+    s.scene.set_translation(quad, 0.0, 0.0, 0.5);
+    assert_eq!(s.frame().await[1], WHITE);
+    s.scene
+        .set_material_variant(quad, Some("blue".into()))
+        .unwrap();
+    // The texture decodes after the load: until it shows.
+    let mut px = s.frame().await[1];
+    for _ in 0..50 {
+        if px == BLUE {
+            break;
+        }
+        sleep_ms(20).await;
+        px = s.frame().await[1];
+    }
+    assert_eq!(px, BLUE);
+    s.scene.set_material_variant(quad, None).unwrap();
+    assert_eq!(s.frame().await[1], WHITE);
 }

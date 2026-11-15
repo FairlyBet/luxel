@@ -53,6 +53,11 @@ pub struct MorphGpu {
     pub targets: u32,
 }
 
+/// What a material needs of a primitive's vertex array: the TEXCOORD sets in
+/// its two UV slots, and the UV slot its normal map reads (MikkTSpace
+/// tangents are made where the primitive has no TANGENT).
+pub type VertexKey = ([u32; 2], Option<u32>);
+
 /// One primitive on the GPU, plus its local-space bounds.
 #[derive(Clone)]
 pub struct PrimitiveGpu {
@@ -67,6 +72,11 @@ pub struct PrimitiveGpu {
     pub morph: Option<MorphGpu>,
     /// KHR_materials_variants: (variant, material index) mappings.
     pub variants: Vec<(u32, i32)>,
+    /// What `vao` was built for (the primitive's own material's needs).
+    pub key: VertexKey,
+    /// More vertex arrays over the same buffers, for the variants'
+    /// materials that need others: (needs, vertex array, `ATTR_*` bits).
+    pub alternates: Vec<(VertexKey, VertexArrayId, u32)>,
 }
 
 /// GPU buffers created so far, by accessor index, and the vertex arrays built
@@ -102,9 +112,25 @@ impl GeometryCache {
             .chain(self.tangents.values().copied())
     }
 
-    /// Every vertex array created, one per primitive of each built mesh.
+    /// Every vertex array created: one per primitive of each built mesh,
+    /// and those for its variants' materials.
     pub fn vertex_arrays(&self) -> impl Iterator<Item = VertexArrayId> + '_ {
-        self.meshes.values().flatten().map(|p| p.vao)
+        self.meshes
+            .values()
+            .flatten()
+            .flat_map(|p| std::iter::once(p.vao).chain(p.alternates.iter().map(|a| a.1)))
+    }
+
+    /// What material `m` (-1: the default) needs of a vertex array (as
+    /// `Material::vertex_key` of it, once its UV slots are assigned).
+    pub fn key(&self, m: i32) -> VertexKey {
+        let Ok(m) = usize::try_from(m) else {
+            return ([0, 1], None);
+        };
+        (
+            self.uv_sets.get(m).copied().unwrap_or([0, 1]),
+            self.normal_slots.get(m).copied().flatten(),
+        )
     }
 
     /// Every morph texture created (to destroy with the model).
@@ -140,18 +166,9 @@ impl GeometryCache {
         buffers: &[Vec<u8>],
     ) -> &[PrimitiveGpu] {
         if !self.meshes.contains_key(&mesh.index()) {
-            let uv_sets = self.uv_sets.clone();
             let prims = mesh
                 .primitives()
-                .filter_map(|p| {
-                    let uv = p
-                        .material()
-                        .index()
-                        .and_then(|m| uv_sets.get(m))
-                        .copied()
-                        .unwrap_or([0, 1]);
-                    self.build_primitive(ctx, &p, buffers, uv)
-                })
+                .filter_map(|p| self.build_primitive(ctx, &p, buffers))
                 .collect();
             self.meshes.insert(mesh.index(), prims);
         }
@@ -165,8 +182,9 @@ impl GeometryCache {
         ctx: &Context,
         primitive: &gltf::Primitive,
         buffers: &[Vec<u8>],
-        uv: [u32; 2],
     ) -> Option<PrimitiveGpu> {
+        let material = primitive.material().index().map_or(-1, |i| i as i32);
+        let key = self.key(material);
         let reader = primitive.reader(|b| buffers.get(b.index()).map(|v| v.as_slice()));
         let Some(pos_accessor) = primitive.get(&gltf::Semantic::Positions) else {
             console::warn("[rswebgl-gltf] primitive has no POSITION; skipped");
@@ -212,6 +230,84 @@ impl GeometryCache {
             }
         };
 
+        let mut attributes = self.bind_attributes(ctx, primitive, buffers, &reader, vao, key);
+        let morph = morph_texture(ctx, primitive, buffers, vertex_count as usize, attributes);
+        if let Some((_, kinds)) = &morph {
+            attributes |= kinds;
+        }
+
+        let mode = draw_mode(primitive.mode());
+        let index = match primitive.indices() {
+            Some(accessor) => match self.index_buffer(ctx, &reader, &accessor) {
+                Some((buf, ty)) => Some((buf, ty, accessor.count() as i32)),
+                None => {
+                    ctx.destroy_vertex_array(vao);
+                    // Made already, and not cached with the primitive.
+                    if let Some((m, _)) = &morph {
+                        ctx.destroy_texture(m.texture);
+                    }
+                    return None;
+                }
+            },
+            None => None,
+        };
+        let draw = match index {
+            Some((buf, ty, count)) => {
+                ctx.vertex_array_set_index_buffer(vao, buf);
+                DrawCommand::elements(mode, count, ty, 0)
+            }
+            None => DrawCommand::arrays(mode, 0, vertex_count),
+        };
+
+        // The variants' materials that need other attributes: a vertex array
+        // each (over the same buffers), with the same morph kinds.
+        let morph_kinds = morph.as_ref().map_or(0, |(_, k)| *k);
+        let variants = variant_mappings(primitive);
+        let mut alternates: Vec<(VertexKey, VertexArrayId, u32)> = Vec::new();
+        for &(_, m) in &variants {
+            let k = self.key(m);
+            if k == key || alternates.iter().any(|a| a.0 == k) {
+                continue;
+            }
+            let Ok(alt) = ctx.create_vertex_array() else {
+                continue;
+            };
+            let bits = self.bind_attributes(ctx, primitive, buffers, &reader, alt, k);
+            if let Some((buf, _, _)) = index {
+                ctx.vertex_array_set_index_buffer(alt, buf);
+            }
+            alternates.push((k, alt, bits | morph_kinds));
+        }
+
+        Some(PrimitiveGpu {
+            vao,
+            draw,
+            material,
+            attributes,
+            aabb_min,
+            aabb_max,
+            morph: morph.map(|(m, _)| m),
+            variants,
+            key,
+            alternates,
+        })
+    }
+
+    // Binds `primitive`'s attributes into `vao` as material needs `key`
+    // say (which TEXCOORD sets, whether tangents are made); returns the
+    // `ATTR_*` bits bound (morph targets aside).
+    fn bind_attributes<'a, 's, F>(
+        &mut self,
+        ctx: &Context,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+        reader: &gltf::mesh::Reader<'a, 's, F>,
+        vao: VertexArrayId,
+        (uv, normal_slot): VertexKey,
+    ) -> u32
+    where
+        F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
+    {
         // (location, semantic, ATTR_* bit)
         let attrs = [
             (0, gltf::Semantic::Positions, 0),
@@ -226,7 +322,7 @@ impl GeometryCache {
             let Some(accessor) = primitive.get(&semantic) else {
                 continue;
             };
-            let Some((buf, attr)) = self.vertex_buffer(ctx, buffers, &reader, &accessor, &semantic)
+            let Some((buf, attr)) = self.vertex_buffer(ctx, buffers, reader, &accessor, &semantic)
             else {
                 continue;
             };
@@ -235,10 +331,6 @@ impl GeometryCache {
         }
         // A normal map without TANGENT: MikkTSpace tangents, as glTF 2.0
         // §3.7.2.1 asks (the shader's derivative frame otherwise).
-        let normal_slot = primitive
-            .material()
-            .index()
-            .and_then(|m| self.normal_slots.get(m).copied().flatten());
         if attributes & ATTR_TANGENT == 0
             && attributes & ATTR_NORMAL != 0
             && primitive.mode() == gltf::mesh::Mode::Triangles
@@ -257,9 +349,9 @@ impl GeometryCache {
             let more = primitive
                 .get(&gltf::Semantic::Joints(1))
                 .zip(primitive.get(&gltf::Semantic::Weights(1)));
-            let j = self.vertex_buffer(ctx, buffers, &reader, &j, &gltf::Semantic::Joints(0));
+            let j = self.vertex_buffer(ctx, buffers, reader, &j, &gltf::Semantic::Joints(0));
             let j1 = more.as_ref().and_then(|(j1, _)| {
-                self.vertex_buffer(ctx, buffers, &reader, j1, &gltf::Semantic::Joints(1))
+                self.vertex_buffer(ctx, buffers, reader, j1, &gltf::Semantic::Joints(1))
             });
             let w = self.skin_weights(ctx, buffers, &w, more.as_ref().map(|(_, w1)| w1));
             if let (Some(j), Some((w, w1))) = (j, w) {
@@ -273,41 +365,7 @@ impl GeometryCache {
                 }
             }
         }
-        let morph = morph_texture(ctx, primitive, buffers, vertex_count as usize, attributes);
-        if let Some((_, kinds)) = &morph {
-            attributes |= kinds;
-        }
-
-        let mode = draw_mode(primitive.mode());
-        let draw = match primitive.indices() {
-            Some(accessor) => match self.index_buffer(ctx, &reader, &accessor) {
-                Some((buf, ty)) => {
-                    ctx.vertex_array_set_index_buffer(vao, buf);
-                    DrawCommand::elements(mode, accessor.count() as i32, ty, 0)
-                }
-                None => {
-                    ctx.destroy_vertex_array(vao);
-                    // Made already, and not cached with the primitive.
-                    if let Some((m, _)) = &morph {
-                        ctx.destroy_texture(m.texture);
-                    }
-                    return None;
-                }
-            },
-            None => DrawCommand::arrays(mode, 0, vertex_count),
-        };
-
-        let material = primitive.material().index().map_or(-1, |i| i as i32);
-        Some(PrimitiveGpu {
-            vao,
-            draw,
-            material,
-            attributes,
-            aabb_min,
-            aabb_max,
-            morph: morph.map(|(m, _)| m),
-            variants: variant_mappings(primitive),
-        })
+        attributes
     }
 
     // MikkTSpace tangents (bevy_mikktspace, a byte-identical port of the

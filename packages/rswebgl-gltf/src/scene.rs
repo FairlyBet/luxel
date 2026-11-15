@@ -150,6 +150,20 @@ fn walk(
                     morph_texture: geo.morph.map_or(TextureId::NULL, |m| m.texture),
                     morph_targets: geo.morph.map_or(0, |m| m.targets),
                     variants: geo.variants.clone(),
+                    key: geo.key,
+                    // Skin bits as the item's own (none without a skin).
+                    alternates: geo
+                        .alternates
+                        .iter()
+                        .map(|&(k, vao, bits)| {
+                            let bits = if node.skin().is_some() {
+                                bits
+                            } else {
+                                bits & !(crate::ATTR_SKIN | crate::ATTR_SKIN8)
+                            };
+                            (k, vao, bits)
+                        })
+                        .collect(),
                 });
             }
         }

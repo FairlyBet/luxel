@@ -33,6 +33,9 @@ pub struct Material {
     pub(crate) double_sided: bool,
     // Each map's (texture index or -1, TEXCOORD set), in `MAP_SLOTS` order.
     pub(crate) maps: [(i32, u32); MAP_COUNT],
+    // The TEXCOORD sets in the shader's two UV slots (`assign_uv_slots`);
+    // the maps' sets above are slots once assigned.
+    pub(crate) uv_sets: [u32; 2],
     // Each map's KHR_texture_transform (`UV_IDENTITY` without one).
     pub(crate) uv_transforms: [[f32; 5]; MAP_COUNT],
     pub(crate) normal_scale: f32,
@@ -655,6 +658,14 @@ impl Material {
         }
     }
 
+    /// What it needs of a primitive's vertex array (`Model::vertex_array_for`):
+    /// the TEXCOORD sets in its two UV slots, and the slot its normal map
+    /// reads (for tangents), if it has one.
+    pub fn vertex_key(&self) -> crate::VertexKey {
+        let normal = self.maps[2];
+        (self.uv_sets, (normal.0 >= 0).then_some(normal.1))
+    }
+
     /// Every map's (texture index or −1, TEXCOORD set), `MAP_SLOTS` order.
     pub fn maps(&self) -> [(i32, u32); MAP_COUNT] {
         self.maps
@@ -831,6 +842,7 @@ pub fn translate(mat: &gltf::Material) -> Material {
         alpha_cutoff: mat.alpha_cutoff().unwrap_or(0.5),
         double_sided: mat.double_sided(),
         maps: doc_maps(mat).map(|m| m.map_or((-1, 0), |m| (m.texture as i32, m.tex_coord))),
+        uv_sets: [0, 1],
         uv_transforms: doc_maps(mat).map(|m| m.map_or(UV_IDENTITY, |m| m.transform)),
         normal_scale: mat.normal_texture().map_or(1.0, |i| i.scale()),
         occlusion_strength: mat.occlusion_texture().map_or(1.0, |i| i.strength()),
@@ -940,6 +952,7 @@ pub fn default_material() -> Material {
         alpha_cutoff: 0.5,
         double_sided: false,
         maps: [(-1, 0); MAP_COUNT],
+        uv_sets: [0, 1],
         uv_transforms: [UV_IDENTITY; MAP_COUNT],
         normal_scale: 1.0,
         occlusion_strength: 1.0,
@@ -1074,6 +1087,7 @@ pub(crate) fn assign_uv_slots(m: &mut Material) -> [u32; 2] {
             *set = slots.iter().position(|&s| s == *set).unwrap_or(0) as u32;
         }
     }
+    m.uv_sets = slots;
     slots
 }
 

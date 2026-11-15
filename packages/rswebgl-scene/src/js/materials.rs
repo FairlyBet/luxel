@@ -580,9 +580,80 @@ impl Scene {
         }
     }
 
+    // The model mesh `e` belongs to: the nearest ancestor (or itself) that
+    // is a model root.
+    fn model_root_of(&self, mut e: Entity) -> Option<Entity> {
+        for _ in 0..=self.world.len() {
+            if self.models.contains_key(&e) {
+                return Some(e);
+            }
+            e = self.world.get::<crate::transform::Parent>(e)?.0;
+        }
+        None
+    }
+
+    // After a reload: mesh `e`'s render state from the material it draws
+    // with now (its item's own was put back), and the vertex array for it.
+    pub(super) fn refit_material(&mut self, e: Entity) {
+        let (Some(mesh), Some(prim)) = (
+            self.world.get::<MeshRenderer>(e).copied(),
+            self.world.get::<Primitive>(e).copied(),
+        ) else {
+            return;
+        };
+        let Some(record) = self.materials.get(&mesh.material) else {
+            return;
+        };
+        let mirrored = self
+            .model_root_of(e)
+            .and_then(|r| self.models.get(&r))
+            .and_then(|m| m.items().get(prim.item as usize))
+            .is_some_and(|i| i.render_state().front_face == FrontFace::Cw);
+        let state = render_state_for(&record.material, mirrored);
+        let id = self.ctx.render_state(&state);
+        if let Some(mut m) = self.world.get_mut::<MeshRenderer>(e) {
+            m.state = id;
+            m.transparent = state.blend;
+        }
+        self.fit_vertex_array(e);
+    }
+
+    // A glTF mesh draws with the vertex array its material needs (its
+    // TEXCOORD sets, tangents for its normal map): a variant's, built at
+    // load, or its own.
+    fn fit_vertex_array(&mut self, e: Entity) {
+        let (Some(mesh), Some(prim)) = (
+            self.world.get::<MeshRenderer>(e).copied(),
+            self.world.get::<Primitive>(e).copied(),
+        ) else {
+            return;
+        };
+        let Some(record) = self.materials.get(&mesh.material) else {
+            return;
+        };
+        let key = record.material.vertex_key();
+        let Some(model) = self.model_root_of(e).and_then(|r| self.models.get(&r)) else {
+            return;
+        };
+        let Some((vao, attributes)) = model.vertex_array_for(prim.item as usize, key) else {
+            return;
+        };
+        if mesh.vao != vao
+            && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
+        {
+            m.vao = vao;
+        }
+        if prim.attributes != attributes
+            && let Some(mut p) = self.world.get_mut::<Primitive>(e)
+        {
+            p.attributes = attributes;
+        }
+    }
+
     // A glTF mesh on the built-in PBR: its program follows its material's
     // variant.
     fn update_variant(&mut self, e: Entity) {
+        self.fit_vertex_array(e);
         let Some(mesh) = self.world.get::<MeshRenderer>(e).copied() else {
             return;
         };
