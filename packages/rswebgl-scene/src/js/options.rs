@@ -67,6 +67,22 @@ export interface GroundShadowOptions {
   size?: number;
 }
 
+/** Ambient occlusion (`setAmbientOcclusion`, GTAO). Lengths in world units. */
+export interface AmbientOcclusionOptions {
+  /** How far around a point occluders count; default 0: a twentieth of
+   *  the scene's size. */
+  radius?: number;
+  /** How far in front of a point an occluder may be and still count;
+   *  default 0: four radii. */
+  thickness?: number;
+  /** How much of the darkening shows, 0..1; default 1. */
+  intensity?: number;
+  /** The visibility raised to this (above 1: darker creases); default 1. */
+  power?: number;
+  /** Computed at half resolution (cheaper, softer); default true. */
+  halfResolution?: boolean;
+}
+
 /** A camera. It looks down its entity's −Z, +Y up. */
 export type CameraOptions =
   | { type: "perspective"; /** radians; default π/4 */ yfov?: number; znear?: number; zfar?: number }

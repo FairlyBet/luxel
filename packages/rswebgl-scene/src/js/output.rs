@@ -7,11 +7,52 @@ use rswebgl::error::Error;
 use rswebgl::pass::Pass;
 use wasm_bindgen::prelude::*;
 
-use super::Scene;
+use super::{Scene, options};
 use crate::output::{HdrOutput, ToneMapping};
 
 #[wasm_bindgen]
 impl Scene {
+    /// Screen-space ambient occlusion (GTAO) over the opaque scene, as a
+    /// post-pass (three.js' GTAOPass): `AmbientOcclusionOptions`, or null
+    /// to turn it off (off by default). With HDR output only (it reads the
+    /// scene's depth). Darkens creases and contacts under environment
+    /// light — and, being applied to the lit image, under the lights too.
+    #[wasm_bindgen(js_name = setAmbientOcclusion)]
+    pub fn set_ambient_occlusion(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "AmbientOcclusionOptions | null")] options: JsValue,
+    ) -> Result<(), Error> {
+        if options.is_null() || options.is_undefined() {
+            self.ambient_occlusion = None;
+            return Ok(());
+        }
+        let d = crate::occlusion::AmbientOcclusion::default();
+        let s = crate::occlusion::AmbientOcclusion {
+            radius: options::f32_or(&options, "radius", d.radius)?,
+            thickness: options::f32_or(&options, "thickness", d.thickness)?,
+            intensity: options::f32_or(&options, "intensity", d.intensity)?,
+            power: options::f32_or(&options, "power", d.power)?,
+            half_resolution: options::bool_or(&options, "halfResolution", d.half_resolution)?,
+        };
+        if !(s.radius >= 0.0
+            && s.thickness >= 0.0
+            && (0.0..=1.0).contains(&s.intensity)
+            && s.power > 0.0)
+        {
+            return Err(
+                "setAmbientOcclusion: radius, thickness ≥ 0, intensity in 0..1, power > 0".into(),
+            );
+        }
+        self.ambient_occlusion = Some(s);
+        Ok(())
+    }
+
+    /// Whether ambient occlusion is on.
+    #[wasm_bindgen(js_name = ambientOcclusion)]
+    pub fn ambient_occlusion(&self) -> bool {
+        self.ambient_occlusion.is_some()
+    }
+
     /// HDR rendering on or off (on by default where the device renders
     /// half-float targets). On, the scene shades linear radiance into an
     /// offscreen target and tone maps it once; off, it draws straight to the
@@ -333,5 +374,58 @@ impl Scene {
         if let Some(out) = self.hdr.take() {
             out.destroy(&self.ctx);
         }
+    }
+}
+
+impl Scene {
+    // Ambient occlusion over the opaque scene in the HDR target (after the
+    // opaque pass): its passes made on first use, or again after a context
+    // loss.
+    pub(super) fn apply_occlusion(&mut self) {
+        let Some(settings) = self.ambient_occlusion else {
+            return;
+        };
+        let Some(out) = self.hdr.as_mut() else {
+            return;
+        };
+        if self
+            .occlusion
+            .as_ref()
+            .is_some_and(|o| o.is_lost(&self.ctx))
+            && let Some(old) = self.occlusion.take()
+        {
+            old.destroy(&self.ctx);
+        }
+        if self.occlusion.is_none() {
+            match crate::occlusion::Occlusion::new(&self.ctx) {
+                Ok(o) => self.occlusion = Some(o),
+                Err(e) => {
+                    console::error_once(&format!("[rswebgl-scene] ambient occlusion: {e}"));
+                    self.ambient_occlusion = None;
+                    return;
+                }
+            }
+        }
+        let Some(depth) = out.screen_depth(&self.ctx) else {
+            return;
+        };
+        let (target, size) = out.draw_target();
+        // The auto radius: a twentieth of the shadow casters' box.
+        let radius = crate::lighting::scene_bounds(&self.world)
+            .map_or(0.1, |(lo, hi)| ((hi - lo).length() / 20.0).max(1e-4));
+        let proj = self.renderer.drawn_projection();
+        if let Some(o) = self.occlusion.as_mut() {
+            o.render(
+                &self.ctx,
+                &settings,
+                depth,
+                target,
+                size,
+                &proj,
+                radius,
+                self.taa_frame,
+            );
+        }
+        out.resolve_again(&self.ctx);
     }
 }

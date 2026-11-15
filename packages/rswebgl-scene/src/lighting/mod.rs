@@ -42,6 +42,7 @@ pub use maps::{MAX_SHADOW_LAYERS, MAX_SHADOW_VIEWS};
 pub use pack::MAX_LIGHTS;
 pub use settings::{LightShadow, ShadowCaster};
 pub use views::MAX_CASCADES;
+pub(crate) use views::caster_bounds as scene_bounds;
 
 use ground::Ground;
 use maps::ShadowMaps;

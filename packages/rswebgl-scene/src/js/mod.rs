@@ -107,6 +107,10 @@ pub struct Scene {
     // displayed.
     hdr_wanted: bool,
     hdr: Option<crate::output::HdrOutput>,
+    // Ambient occlusion: its settings while on, and its passes (made on
+    // first use, again after a context loss).
+    ambient_occlusion: Option<crate::occlusion::AmbientOcclusion>,
+    occlusion: Option<crate::occlusion::Occlusion>,
     // HDR off and a canvas without depth: the target direct frames draw
     // into (made on need); the canvas's depth, read once.
     direct: Option<crate::direct::DirectTarget>,
@@ -197,6 +201,8 @@ impl Scene {
             reloads: Reloads::default(),
             hdr_wanted: crate::output::HdrOutput::supported(ctx),
             hdr: None,
+            ambient_occlusion: None,
+            occlusion: None,
             direct: None,
             canvas_depth: ctx.default_framebuffer().has_depth(),
             last_frame: None,
@@ -727,6 +733,12 @@ impl Scene {
             if !peeling && let Some(out) = &mut self.hdr {
                 out.release_peel(&self.ctx);
             }
+            // Ambient occlusion over the opaque scene, before TAA averages
+            // its noise and before glass and transparent meshes.
+            if self.ambient_occlusion.is_some() {
+                let _s = tracing::info_span!("scene.ao").entered();
+                self.apply_occlusion();
+            }
             // TAA resolves the opaque scene alone; transmissive and
             // transparent meshes then draw over it unjittered (and see an
             // antialiased copy of it).
@@ -1100,6 +1112,9 @@ impl Scene {
         }
         for model in self.models.into_values() {
             model.destroy(&self.ctx);
+        }
+        if let Some(o) = self.occlusion.take() {
+            o.destroy(&self.ctx);
         }
         if let Some(d) = self.direct {
             d.destroy(&self.ctx);

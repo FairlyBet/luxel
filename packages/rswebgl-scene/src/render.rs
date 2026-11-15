@@ -987,6 +987,18 @@ impl SceneRenderer {
         self.lights.programs()
     }
 
+    /// The projection this frame's opaque pass drew with (TAA's jitter
+    /// in it while it lasts).
+    pub fn drawn_projection(&self) -> Mat4 {
+        let jitter = Mat4::from_cols(
+            Vec4::X,
+            Vec4::Y,
+            Vec4::Z,
+            Vec4::new(self.jitter.x, self.jitter.y, 0.0, 1.0),
+        );
+        jitter * self.frame_proj
+    }
+
     /// The ground shadow on (with these settings) or off (None).
     pub fn set_ground_shadow(&mut self, settings: Option<crate::lighting::GroundShadow>) {
         self.lights.set_ground_shadow(settings);

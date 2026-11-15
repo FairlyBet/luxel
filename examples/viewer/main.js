@@ -230,6 +230,12 @@ $("shadows").addEventListener("change", () => {
   castShadow = $("shadows").checked;
   setLight();
 });
+const setAo = () => scene.setAmbientOcclusion($("ambient-occlusion").checked ? {} : null);
+setAo();
+$("ambient-occlusion").addEventListener("change", () => {
+  setAo();
+  invalidate();
+});
 const setGround = () => scene.setGroundShadow($("ground-shadow").checked ? {} : null);
 setGround();
 $("ground-shadow").addEventListener("change", () => {

@@ -48,8 +48,11 @@ blending, the display's divide, TAA, the glass copy).
    layers largest first (`lighting/atlas.rs`, a buddy allocator). A ground
    shadow (`setGroundShadow`, three.js' contact shadows: the casters seen
    from below, blurred, on a plane under them; cached like the maps).
-   Next: screen-space contact shadows and GTAO, as post-passes over the
-   opaque scene's depth (as three.js' GTAOPass / SAOPass): the darkening
+   GTAO (`setAmbientOcclusion`, three.js' GTAOShader) at half resolution,
+   smoothed by depth, multiplied into the opaque scene before TAA. Next:
+   screen-space contact shadows, a post-pass over the same depth. Both as
+   post-passes over the opaque scene's depth (as three.js' GTAOPass /
+   SAOPass): the darkening
    multiplies the lit image — direct light and reflections too, not only
    the light it belongs to — for no extra pass over the geometry.
 

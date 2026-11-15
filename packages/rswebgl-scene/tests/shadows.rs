@@ -597,3 +597,89 @@ async fn the_ground_shadow_darkens_under_the_casters() {
     );
     scene.destroy();
 }
+
+// Ambient occlusion (GTAO): the floor just beside the square floating
+// over it darkens (the square hides part of its sky); the background and
+// a far corner barely change; off again, the floor is as before.
+#[wasm_bindgen_test]
+async fn ambient_occlusion_darkens_under_the_square() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    assert!(scene.set_hdr(true), "HDR output");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.3, 0.3, 0.3);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    wasm_bindgen_futures::JsFuture::from(scene.when_ready())
+        .await
+        .unwrap();
+    let read = |gl: &Gl, x: i32| {
+        let mut px = [0u8; 4];
+        gl.read_pixels_with_opt_u8_array(
+            x,
+            SIZE / 2,
+            1,
+            1,
+            Gl::RGBA,
+            Gl::UNSIGNED_BYTE,
+            Some(&mut px),
+        )
+        .unwrap();
+        px[0] as i32
+    };
+    let frames = |scene: &mut Scene| {
+        for _ in 0..3 {
+            scene.render_frame(camera);
+        }
+    };
+    frames(&mut scene);
+    // Beside the square (x ≈ 0.28: it covers |x| ≤ 0.2), and the floor's
+    // far edge (x ≈ 0.97).
+    let (near, far) = (read(&gl, 20), read(&gl, 31));
+    assert!(near > 60 && near < 240, "lit by the environment: {near}");
+
+    scene
+        .set_ambient_occlusion(js_sys::JSON::parse(r#"{ "radius": 1.5 }"#).unwrap())
+        .unwrap();
+    frames(&mut scene);
+    let (near_ao, far_ao) = (read(&gl, 20), read(&gl, 31));
+    assert!(
+        near_ao < near * 95 / 100,
+        "beside the square: {near_ao} (was {near})"
+    );
+    assert!(
+        near_ao < far_ao,
+        "darker beside the square than at the edge: {near_ao} {far_ao}"
+    );
+    assert!(far_ao >= far * 8 / 10, "the edge: {far_ao} (was {far})");
+
+    scene.set_ambient_occlusion(JsValue::NULL).unwrap();
+    frames(&mut scene);
+    assert_eq!(read(&gl, 20), near, "off again");
+    scene.destroy();
+}

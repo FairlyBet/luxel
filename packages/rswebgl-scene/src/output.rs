@@ -387,6 +387,9 @@ pub struct HdrOutput {
     generation: u32,
     // Depth peeling's targets, made on first use (`peel`).
     peel: Option<PeelTargets>,
+    // The opaque scene's depth, single-sampled, for screen-space effects
+    // (`screen_depth`): made on first use.
+    screen_depth: Option<(TextureId, FramebufferId)>,
     // Temporal antialiasing, when on (instead of multisampling).
     taa: Option<Taa>,
     // FXAA after the display pass, when on.
@@ -540,6 +543,7 @@ impl HdrOutput {
             state: ctx.render_state(&state),
             generation: ctx.generation(),
             peel: None,
+            screen_depth: None,
             taa,
             fxaa: None,
             auto: None,
@@ -1019,6 +1023,69 @@ impl HdrOutput {
         Ok(())
     }
 
+    /// The opaque pass's depth as a single-sampled texture (resolved from the
+    /// multisampled target), for screen-space effects reading it — after
+    /// the opaque pass. None if it can't be made.
+    pub fn screen_depth(&mut self, ctx: &Context) -> Option<TextureId> {
+        // TAA draws into a depth texture already.
+        if let Some(taa) = &self.taa
+            && !taa.depth.is_null()
+        {
+            return Some(taa.depth);
+        }
+        let (w, h) = self.size;
+        if self.screen_depth.is_none() {
+            let format = self.depth_format();
+            let t = ctx
+                .create_texture(
+                    TextureTarget::Texture2D,
+                    TextureMinFilter::Nearest,
+                    TextureMagFilter::Nearest,
+                )
+                .ok()?;
+            ctx.texture_storage_2d(t, 1, &format, w, h);
+            let Ok(fb) = ctx.create_framebuffer(w, h) else {
+                ctx.destroy_texture(t);
+                return None;
+            };
+            ctx.framebuffer_attach_depth_texture(fb, t, 0);
+            self.screen_depth = Some((t, fb));
+        }
+        let (t, fb) = self.screen_depth?;
+        let r = Viewport::new(0, 0, w, h);
+        ctx.blit_framebuffer(
+            self.fb,
+            &r,
+            fb,
+            &r,
+            &ClearMask::depth(),
+            TextureMagFilter::Nearest,
+        );
+        Some(t)
+    }
+
+    /// What the scene draws into (multisampled or not), and its size.
+    pub fn draw_target(&self) -> (FramebufferId, (i32, i32)) {
+        (self.fb, self.size)
+    }
+
+    /// Resolves the multisampled target into the color again (after
+    /// drawing into it past its pass's resolve); nothing without samples.
+    pub fn resolve_again(&self, ctx: &Context) {
+        if self.fb != self.resolve_fb {
+            let (w, h) = self.size;
+            let r = Viewport::new(0, 0, w, h);
+            ctx.blit_framebuffer(
+                self.fb,
+                &r,
+                self.resolve_fb,
+                &r,
+                &ClearMask::color(),
+                TextureMagFilter::Nearest,
+            );
+        }
+    }
+
     /// Copies the opaque pass's depth (resolved from the multisampled
     /// target) for peeling. After the opaque pass, before `peel_layer`.
     pub fn keep_opaque_depth(&self, ctx: &Context) {
@@ -1329,6 +1396,10 @@ impl HdrOutput {
         }
         if let Some(peel) = self.peel.take() {
             peel.free(ctx);
+        }
+        if let Some((t, fb)) = self.screen_depth.take() {
+            ctx.destroy_framebuffer(fb);
+            ctx.destroy_texture(t);
         }
         if self.fb != self.resolve_fb && !self.fb.is_null() {
             ctx.destroy_framebuffer(self.fb);

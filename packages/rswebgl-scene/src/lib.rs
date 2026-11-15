@@ -42,6 +42,7 @@ mod js;
 mod lighting;
 mod model;
 mod motion;
+mod occlusion;
 mod output;
 mod pbr;
 mod pick;
@@ -63,6 +64,7 @@ pub use lighting::{
     MAX_SHADOW_LAYERS, SHADOW_MAP, ShadowCaster,
 };
 pub use model::{Morph, Name, Primitive, Skin, find_by_name, spawn_model};
+pub use occlusion::AmbientOcclusion;
 pub use output::{HdrOutput, ToneMapping};
 pub use pbr::{PbrKey, PbrShaders, ShadingModel};
 pub use pick::{Hit, Ray, pick_bounds, ray_aabb};
