@@ -1,11 +1,12 @@
-//! Screen-space ambient occlusion: GTAO over the opaque scene's depth, as a
-//! post-pass (three.js' GTAOPass): computed at half resolution, smoothed
+//! Screen-space occlusion over the opaque scene's depth, as a post-pass
+//! (three.js' GTAOPass): ambient occlusion (GTAO) and one light's contact
+//! shadows (Filament's), computed together at half resolution, smoothed
 //! with a depth-aware blur, multiplied into the opaque scene before TAA,
 //! glass and transparent meshes. It darkens the whole lit image there —
-//! direct light and reflections too — where a depth prepass would let it
-//! darken only the environment's light (TODO.md: for later).
+//! direct light and reflections too — where a depth prepass would let each
+//! darken only its own light (TODO.md: for later).
 
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use rswebgl::context::Context;
 use rswebgl::draw::{DrawCommand, DrawMode, Viewport};
 use rswebgl::error::Error;
@@ -56,6 +57,34 @@ impl Default for AmbientOcclusion {
     }
 }
 
+/// One light's contact shadows: what its shadow map is too coarse to show
+/// (a cup on a table, a ring's prongs) found by a short ray toward it
+/// through the scene's depth. Lengths in world units (view space).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContactShadows {
+    /// How far toward the light the ray looks (0: a fiftieth of the
+    /// scene's size).
+    pub length: f32,
+    /// How deep a surface in front of the ray may be and still shadow it
+    /// (0: a quarter of the length).
+    pub thickness: f32,
+    /// How much of the shadow shows (0..1).
+    pub intensity: f32,
+    /// Steps along the ray (1..64).
+    pub steps: u32,
+}
+
+impl Default for ContactShadows {
+    fn default() -> Self {
+        Self {
+            length: 0.0,
+            thickness: 0.0,
+            intensity: 1.0,
+            steps: 16,
+        }
+    }
+}
+
 /// The occlusion's targets and passes.
 pub(crate) struct Occlusion {
     gtao: (ProgramId, ParamLayoutId, ParamGroupId),
@@ -93,7 +122,9 @@ impl Occlusion {
                 .uniform("u_proj", UniformType::Mat4)
                 .uniform("u_inv_proj", UniformType::Mat4)
                 .uniform("u_gtao", UniformType::Vec4)
-                .uniform("u_gtao_frame", UniformType::Vec4),
+                .uniform("u_gtao_frame", UniformType::Vec4)
+                .uniform("u_contact", UniformType::Vec4)
+                .uniform("u_contact_steps", UniformType::Vec4),
         )?;
         let denoise = make(
             "gtao_denoise.frag",
@@ -142,20 +173,27 @@ impl Occlusion {
 
     /// Computes the occlusion of the opaque scene whose depth is `depth`
     /// (`size`, drawn with projection `proj`) and multiplies it into
-    /// `target`. `radius`: the auto radius (the settings' 0). `frame` moves
-    /// the noise.
+    /// `target`: ambient occlusion with `ao`, a light's contact shadows
+    /// with `contact` (and its direction toward the light, view space).
+    /// `scene_size`: the scene's (for the auto lengths). `frame` moves the
+    /// noise.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         ctx: &Context,
-        settings: &AmbientOcclusion,
+        ao: Option<&AmbientOcclusion>,
+        contact: Option<(&ContactShadows, Vec3)>,
         depth: TextureId,
         target: FramebufferId,
         size: (i32, i32),
         proj: &Mat4,
-        radius: f32,
+        scene_size: f32,
         frame: u32,
     ) {
+        if ao.is_none() && contact.is_none() {
+            return;
+        }
+        let settings = ao.copied().unwrap_or_default();
         let (w, h) = size;
         let scale = if settings.half_resolution { 2 } else { 1 };
         let ao_size = (
@@ -172,7 +210,7 @@ impl Occlusion {
         let radius = if settings.radius > 0.0 {
             settings.radius
         } else {
-            radius
+            scene_size / 20.0
         };
         let thickness = if settings.thickness > 0.0 {
             settings.thickness
@@ -185,10 +223,31 @@ impl Occlusion {
         ctx.param_set_floats_by_name(g, "u_proj", &proj.to_cols_array());
         ctx.param_set_floats_by_name(g, "u_inv_proj", &proj.inverse().to_cols_array());
         ctx.param_set_floats_by_name(g, "u_gtao", &[radius, thickness, 1.0, 1.0]);
+        let with_ao = if ao.is_some() { 1.0 } else { 0.0 };
         ctx.param_set_floats_by_name(
             g,
             "u_gtao_frame",
-            &[settings.power, reverse, (frame % 64) as f32, 0.0],
+            &[settings.power, reverse, (frame % 64) as f32, with_ao],
+        );
+        let (c, toward) = match contact {
+            Some((c, l)) => (*c, l.normalize_or_zero()),
+            None => (ContactShadows::default(), Vec3::Z),
+        };
+        let length = match contact {
+            None => 0.0,
+            Some(_) if c.length > 0.0 => c.length,
+            Some(_) => scene_size / 50.0,
+        };
+        let thickness = if c.thickness > 0.0 {
+            c.thickness
+        } else {
+            length * 0.25
+        };
+        ctx.param_set_floats_by_name(g, "u_contact", &[toward.x, toward.y, toward.z, length]);
+        ctx.param_set_floats_by_name(
+            g,
+            "u_contact_steps",
+            &[thickness, c.steps.clamp(1, 64) as f32, 0.0, 0.0],
         );
         self.fullscreen(ctx, program, g, self.plain, self.raw.1, ao_size);
 
@@ -200,7 +259,9 @@ impl Occlusion {
 
         let (program, _, g) = self.apply;
         ctx.param_set_texture_by_name(g, "u_ao", self.smooth.0);
-        ctx.param_set_floats_by_name(g, "u_apply", &[settings.intensity, 0.0, 0.0, 0.0]);
+        let ao_intensity = ao.map_or(0.0, |a| a.intensity);
+        let contact_intensity = contact.map_or(0.0, |(c, _)| c.intensity);
+        ctx.param_set_floats_by_name(g, "u_apply", &[ao_intensity, contact_intensity, 0.0, 0.0]);
         self.fullscreen(ctx, program, g, self.multiply, target, size);
     }
 
@@ -236,7 +297,7 @@ impl Occlusion {
                 TextureMinFilter::Linear,
                 TextureMagFilter::Linear,
             )?;
-            ctx.texture_storage_2d(t, 1, &TextureFormat::r8(), w, h);
+            ctx.texture_storage_2d(t, 1, &TextureFormat::rg8(), w, h);
             ctx.texture_set_wrap_s(t, TextureWrap::ClampToEdge);
             ctx.texture_set_wrap_t(t, TextureWrap::ClampToEdge);
             let fb = match ctx.create_framebuffer(w, h) {

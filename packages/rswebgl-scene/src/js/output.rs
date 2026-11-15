@@ -47,6 +47,45 @@ impl Scene {
         Ok(())
     }
 
+    /// Screen-space contact shadows of the brightest directional light, as
+    /// a post-pass over the opaque scene's depth (Filament's): the small
+    /// shadows its map is too coarse for, where things touch. `ContactShadowsOptions`,
+    /// or null to turn them off (off by default). HDR output only.
+    #[wasm_bindgen(js_name = setContactShadows)]
+    pub fn set_contact_shadows(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "ContactShadowsOptions | null")] options: JsValue,
+    ) -> Result<(), Error> {
+        if options.is_null() || options.is_undefined() {
+            self.contact_shadows = None;
+            return Ok(());
+        }
+        let d = crate::occlusion::ContactShadows::default();
+        let s = crate::occlusion::ContactShadows {
+            length: options::f32_or(&options, "length", d.length)?,
+            thickness: options::f32_or(&options, "thickness", d.thickness)?,
+            intensity: options::f32_or(&options, "intensity", d.intensity)?,
+            steps: options::u32_or(&options, "steps", d.steps)?,
+        };
+        if !(s.length >= 0.0
+            && s.thickness >= 0.0
+            && (0.0..=1.0).contains(&s.intensity)
+            && (1..=64).contains(&s.steps))
+        {
+            return Err(
+                "setContactShadows: length, thickness ≥ 0, intensity in 0..1, steps 1..64".into(),
+            );
+        }
+        self.contact_shadows = Some(s);
+        Ok(())
+    }
+
+    /// Whether contact shadows are on.
+    #[wasm_bindgen(js_name = contactShadows)]
+    pub fn contact_shadows(&self) -> bool {
+        self.contact_shadows.is_some()
+    }
+
     /// Whether ambient occlusion is on.
     #[wasm_bindgen(js_name = ambientOcclusion)]
     pub fn ambient_occlusion(&self) -> bool {
@@ -381,10 +420,22 @@ impl Scene {
     // Ambient occlusion over the opaque scene in the HDR target (after the
     // opaque pass): its passes made on first use, or again after a context
     // loss.
-    pub(super) fn apply_occlusion(&mut self) {
-        let Some(settings) = self.ambient_occlusion else {
+    pub(super) fn apply_occlusion(&mut self, camera: rswebgl_ecs::Entity) {
+        let ao = self.ambient_occlusion;
+        // Contact shadows: of the brightest visible directional light,
+        // toward it in the camera's view.
+        let contact = self.contact_shadows.and_then(|c| {
+            let view = self
+                .world
+                .get::<crate::transform::WorldMatrix>(camera)?
+                .0
+                .inverse();
+            let toward = self.key_light_direction()?;
+            Some((c, view.transform_vector3(toward)))
+        });
+        if ao.is_none() && contact.is_none() {
             return;
-        };
+        }
         let Some(out) = self.hdr.as_mut() else {
             return;
         };
@@ -410,22 +461,47 @@ impl Scene {
             return;
         };
         let (target, size) = out.draw_target();
-        // The auto radius: a twentieth of the shadow casters' box.
-        let radius = crate::lighting::scene_bounds(&self.world)
-            .map_or(0.1, |(lo, hi)| ((hi - lo).length() / 20.0).max(1e-4));
+        // The scene's size (the shadow casters' box), for the auto lengths.
+        let scene_size = crate::lighting::scene_bounds(&self.world)
+            .map_or(2.0, |(lo, hi)| (hi - lo).length().max(1e-3));
         let proj = self.renderer.drawn_projection();
         if let Some(o) = self.occlusion.as_mut() {
             o.render(
                 &self.ctx,
-                &settings,
+                ao.as_ref(),
+                contact.as_ref().map(|(c, l)| (c, *l)),
                 depth,
                 target,
                 size,
                 &proj,
-                radius,
+                scene_size,
                 self.taa_frame,
             );
         }
         out.resolve_again(&self.ctx);
+    }
+
+    // The direction toward the brightest visible directional light (world
+    // space), if there is one.
+    fn key_light_direction(&self) -> Option<glam::Vec3> {
+        let lights = self.world.storage::<crate::lighting::Light>()?;
+        let worlds = self.world.storage::<crate::transform::WorldMatrix>()?;
+        let mut best: Option<(f32, glam::Vec3)> = None;
+        for (e, light) in lights.iter() {
+            if !matches!(light.kind, crate::lighting::LightKind::Directional)
+                || crate::render::hidden(&self.world, e)
+            {
+                continue;
+            }
+            let Some(m) = worlds.get(e) else {
+                continue;
+            };
+            let power = light.intensity * light.color.max_element();
+            if best.is_none_or(|(p, _)| power > p) {
+                // It shines down its −Z: toward it is +Z.
+                best = Some((power, m.0.z_axis.truncate().normalize_or_zero()));
+            }
+        }
+        best.map(|(_, d)| d)
     }
 }

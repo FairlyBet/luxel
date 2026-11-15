@@ -110,6 +110,7 @@ pub struct Scene {
     // Ambient occlusion: its settings while on, and its passes (made on
     // first use, again after a context loss).
     ambient_occlusion: Option<crate::occlusion::AmbientOcclusion>,
+    contact_shadows: Option<crate::occlusion::ContactShadows>,
     occlusion: Option<crate::occlusion::Occlusion>,
     // HDR off and a canvas without depth: the target direct frames draw
     // into (made on need); the canvas's depth, read once.
@@ -202,6 +203,7 @@ impl Scene {
             hdr_wanted: crate::output::HdrOutput::supported(ctx),
             hdr: None,
             ambient_occlusion: None,
+            contact_shadows: None,
             occlusion: None,
             direct: None,
             canvas_depth: ctx.default_framebuffer().has_depth(),
@@ -735,9 +737,9 @@ impl Scene {
             }
             // Ambient occlusion over the opaque scene, before TAA averages
             // its noise and before glass and transparent meshes.
-            if self.ambient_occlusion.is_some() {
+            if self.ambient_occlusion.is_some() || self.contact_shadows.is_some() {
                 let _s = tracing::info_span!("scene.ao").entered();
-                self.apply_occlusion();
+                self.apply_occlusion(camera);
             }
             // TAA resolves the opaque scene alone; transmissive and
             // transparent meshes then draw over it unjittered (and see an

@@ -683,3 +683,73 @@ async fn ambient_occlusion_darkens_under_the_square() {
     assert_eq!(read(&gl, 20), near, "off again");
     scene.destroy();
 }
+
+// Contact shadows (screen-space, no shadow map): the light from the right
+// (as the first test's), the ray from the floor at x = −0.5 toward it
+// passes under the square — shadowed; x = 0.5 sees the light. (On this
+// 32-pixel canvas the half-resolution, blurred result spreads the shadow
+// thin: darker, not black.)
+#[wasm_bindgen_test]
+async fn contact_shadows_without_a_shadow_map() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    assert!(scene.set_hdr(true), "HDR output");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    let sun = scene.spawn();
+    scene.look_at(sun, &[4.0, 0.0, 8.0], &[0.0, 0.0, 0.0]);
+    scene
+        .set_light(
+            sun,
+            js_sys::JSON::parse(r#"{ "type": "directional", "intensity": 3 }"#).unwrap(),
+        )
+        .unwrap();
+    let (left, right) = sides(&gl, &mut scene, camera).await;
+    assert!(
+        left > 60 && (left as i32 - right as i32).abs() <= 2,
+        "{left} {right}"
+    );
+
+    scene
+        .set_contact_shadows(
+            js_sys::JSON::parse(r#"{ "length": 2, "thickness": 0.5, "steps": 32 }"#).unwrap(),
+        )
+        .unwrap();
+    let (shadowed, lit) = sides(&gl, &mut scene, camera).await;
+    assert!(
+        (shadowed as u32) < left as u32 * 85 / 100,
+        "under the square: {shadowed} (was {left})"
+    );
+    assert!(
+        (lit as i32 - right as i32).abs() <= 3,
+        "in the light: {lit} (was {right})"
+    );
+    scene.destroy();
+}

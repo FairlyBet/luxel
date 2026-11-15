@@ -6,6 +6,13 @@
 // cosine-weighted visible arc integrated per slice. Its noise texture is
 // replaced by interleaved gradient noise (Jimenez 2014) moving each frame,
 // which TAA averages. Writes the visibility (1: open) to red.
+//
+// Green: the contact shadow of one light (Filament's
+// screenSpaceContactShadow, Apache-2.0): a short ray from the point toward
+// the light, dithered by the same noise, occluded where the scene's surface
+// lies in front of it by less than a thickness; faded out at the screen's
+// edges (no depth beyond them). Marched in view space, so any depth
+// convention reads alike. 1 where off or lit.
 
 precision highp float;
 
@@ -20,8 +27,14 @@ uniform mat4 u_inv_proj;
 // x radius, y thickness (view-space units), z distance exponent, w distance
 // falloff.
 uniform vec4 u_gtao;
-// x the result's power, y 1 under reverse-Z, z frame index (noise).
+// x the result's power, y 1 under reverse-Z, z frame index (noise), w 1
+// with ambient occlusion.
 uniform vec4 u_gtao_frame;
+// The contact shadow: xyz the light's direction toward it (view space), w
+// the ray's length (0: off).
+uniform vec4 u_contact;
+// x its thickness, y steps.
+uniform vec4 u_contact_steps;
 out vec4 frag_color;
 
 vec3 view_position(vec2 uv, float depth) {
@@ -80,6 +93,32 @@ float ign(vec2 pixel) {
     return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
 }
 
+// 1 lit, 0 in a contact shadow of the light toward `l` (view space).
+float contact_shadow(vec3 view_pos, vec3 n, vec3 l) {
+    if (dot(n, l) <= 0.0) return 1.0; // facing away: the light shades it
+    int steps = int(u_contact_steps.y);
+    float dt = 1.0 / float(steps);
+    float t = dt * (ign(gl_FragCoord.xy + vec2(7.0, 3.0)) - 0.5) + dt;
+    // Starts a hair off the surface, against self-shadowing.
+    vec3 start = view_pos + n * (u_contact.w * 0.02);
+    vec3 ray = l * u_contact.w;
+    vec2 last_uv = vec2(0.5);
+    for (int i = 0; i < 64; ++i) {
+        if (i >= steps) break;
+        vec3 p = start + ray * t;
+        vec3 s = scene_uv_and_depth(p);
+        last_uv = s.xy;
+        if (any(lessThan(s.xy, vec2(0.0))) || any(greaterThan(s.xy, vec2(1.0)))) break;
+        float dz = view_position(s.xy, s.z).z - p.z;
+        if (dz > 0.0 && dz < u_contact_steps.x) {
+            vec2 fade = max(12.0 * abs(last_uv - 0.5) - 5.0, 0.0);
+            return 1.0 - clamp(1.0 - dot(fade, fade), 0.0, 1.0);
+        }
+        t += dt;
+    }
+    return 1.0;
+}
+
 void main() {
     vec2 uv = v_ndc * 0.5 + 0.5;
     float depth = depth_at(uv);
@@ -90,6 +129,11 @@ void main() {
     }
     vec3 view_pos = view_position(uv, depth);
     vec3 view_normal = normal_from_depth(uv);
+    float contact = u_contact.w > 0.0 ? contact_shadow(view_pos, view_normal, u_contact.xyz) : 1.0;
+    if (u_gtao_frame.w < 0.5) {
+        frag_color = vec4(1.0, contact, 0.0, 1.0);
+        return;
+    }
     float radius = u_gtao.x;
     float thickness = u_gtao.y;
 
@@ -134,5 +178,5 @@ void main() {
         ao += nx * nxb + ny * nyb;
     }
     ao = clamp(ao / float(DIRECTIONS), 0.0, 1.0);
-    frag_color = vec4(pow(ao, u_gtao_frame.x), 0.0, 0.0, 1.0);
+    frag_color = vec4(pow(ao, u_gtao_frame.x), contact, 0.0, 1.0);
 }

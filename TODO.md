@@ -49,8 +49,9 @@ blending, the display's divide, TAA, the glass copy).
    shadow (`setGroundShadow`, three.js' contact shadows: the casters seen
    from below, blurred, on a plane under them; cached like the maps).
    GTAO (`setAmbientOcclusion`, three.js' GTAOShader) at half resolution,
-   smoothed by depth, multiplied into the opaque scene before TAA. Next:
-   screen-space contact shadows, a post-pass over the same depth. Both as
+   smoothed by depth, multiplied into the opaque scene before TAA, and
+   contact shadows of the brightest directional light (`setContactShadows`,
+   Filament's ray through the depth) in the same pass. Both as
    post-passes over the opaque scene's depth (as three.js' GTAOPass /
    SAOPass): the darkening
    multiplies the lit image — direct light and reflections too, not only

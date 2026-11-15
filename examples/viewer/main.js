@@ -230,6 +230,12 @@ $("shadows").addEventListener("change", () => {
   castShadow = $("shadows").checked;
   setLight();
 });
+const setContact = () => scene.setContactShadows($("contact-shadows").checked ? {} : null);
+setContact();
+$("contact-shadows").addEventListener("change", () => {
+  setContact();
+  invalidate();
+});
 const setAo = () => scene.setAmbientOcclusion($("ambient-occlusion").checked ? {} : null);
 setAo();
 $("ambient-occlusion").addEventListener("change", () => {

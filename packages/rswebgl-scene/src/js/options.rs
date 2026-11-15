@@ -83,6 +83,21 @@ export interface AmbientOcclusionOptions {
   halfResolution?: boolean;
 }
 
+/** Contact shadows (`setContactShadows`) of the brightest directional
+ *  light. Lengths in world units. */
+export interface ContactShadowsOptions {
+  /** How far toward the light to look; default 0: a fiftieth of the
+   *  scene's size. */
+  length?: number;
+  /** How deep a surface in front may be and still shadow; default 0: a
+   *  quarter of the length. */
+  thickness?: number;
+  /** How much of the shadow shows, 0..1; default 1. */
+  intensity?: number;
+  /** Steps along the ray, 1..64; default 16. */
+  steps?: number;
+}
+
 /** A camera. It looks down its entity's −Z, +Y up. */
 export type CameraOptions =
   | { type: "perspective"; /** radians; default π/4 */ yfov?: number; znear?: number; zfar?: number }
