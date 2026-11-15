@@ -36,15 +36,17 @@ blending, the display's divide, TAA, the glass copy).
    screen-space contact shadows (a short march toward the light through the depth buffer; MSAA
    needs a resolved depth). For environment-only scenes: GTAO (XeGTAO, as
    Godot / Bevy) and a ground shadow (three.js' contact-shadows example).
-2. **Runtime texture compression**: BC done (`TextureCompressor`,
-   `setTextureCompression`, on by default: BC1 / BC3 / BC5 from Betsy,
-   encoded in fragment shaders, PBO to compressed storage on the GPU;
-   DamagedHelmet 90 → 14 MB of textures, PSNR 47 dB) and ETC2 / EAC on phones
-   (ETC2 RGB / RGBA, RG11; Mali-G57: the helmet's 4 maps in 93 ms). Left:
-   ETC2's T / H / P modes (Betsy) if ETC1 quality falls short; ASTC where
-   the device has it (the Mali-G57 does: better quality than ETC2); BC6H for
-   the IBL cubes on desktop; extension maps (sheen, clearcoat, specular:
-   some keep data in alpha).
+2. **Runtime texture compression**: done (`TextureCompressor`,
+   `setTextureCompression`, on by default; fragment-shader encoders, PBO to
+   compressed storage on the GPU). BC1 / BC3 / BC5 on desktops (Betsy), ETC2
+   RGB / RGBA and RG11 on phones (Betsy's ETC1 at rg-etc1's low quality,
+   etcpak's EAC; ETC2 RGB at BC1's quality after the selector fix), every
+   material map but anisotropy, BC6H for the environment's cubes where BPTC
+   exists (`setCompactEnvironment`), ASTC 4×4 only as a fallback. Possible
+   later: an ASTC encoder with partition / dual-plane search (the simple one
+   loses to ETC2 / EAC at the same size), rg-etc1's medium quality
+   (`SCAN_CANDIDATES` 27: +0.6–1 dB, 2–4× the time), spreading a large
+   texture's encode over frames on phones.
 3. **Uniform uploads on mobile**: measured (`examples/viewer/ubo-bench.html`,
    Mali-G57 MC2, Chrome 157, 1000 draws × 80 bytes, CPU submit / fence ms):
    one upload of a big UBO 1.31 / 13.0; a `bufferSubData` per draw into it

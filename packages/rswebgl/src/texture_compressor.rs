@@ -512,8 +512,9 @@ impl TextureCompressor {
     // (one partition, one weight plane) loses to ETC2 / EAC of the same
     // size on busy blocks — measured mean error on a block of independent
     // waves: RG 28.6 vs RG11 5.2, RGBA 34.7 vs 26.5 — and its RGB is twice
-    // ETC2 RGB's size for little gain (29.9 vs 33.4). It is for devices
-    // with neither BC nor ETC.
+    // ETC2 RGB's size for little gain (29.9 vs 33.4). Those ETC numbers
+    // predate the ETC1 selector fix, which only made ETC better. It is for
+    // devices with neither BC nor ETC.
     fn preference(&self, _kind: CompressKind) -> [Family; 3] {
         [Family::Bc, Family::Etc, Family::Astc]
     }
