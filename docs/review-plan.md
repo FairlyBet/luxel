@@ -75,3 +75,18 @@ the API, not a line):
 
 Phase 2's output is a list, sorted by value, for us to pick from — not
 fixes straight away.
+
+## Carried into phase 2
+
+Found in phase 1, real but not bugs to fix in place (a design change, or
+only reachable where nothing is left to break):
+
+- ECS: `World::insert` / `get_mut` stamp writes with the next system's
+  tick; a system writing through them during its own run sees its own
+  write as changed next time (no effect today).
+- glTF: a texture used both as color and as data is built once, sRGB
+  (already in TODO.md); variant materials using other TEXCOORD sets or
+  adding normal maps get the default material's vertex arrays (UV slots,
+  generated tangents).
+- Core: the profiler's slot reuse depends on `update()` vs `time()` call
+  order; error paths that leak only while the context is lost.
