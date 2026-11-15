@@ -206,6 +206,13 @@ impl World {
         now
     }
 
+    /// Whether any component of any type was changed, added or removed
+    /// (despawns included) after tick `since` — one O(1) check per
+    /// component type: "does anything need redrawing".
+    pub fn changed_since(&self, since: Tick) -> bool {
+        self.storages.iter().any(|s| s.changed_since(since))
+    }
+
     /// Forgets removals logged at or before `through` — the oldest
     /// `last_run` among the systems that read `Storage::removed_since`, so
     /// each has seen them. (Never trimmed, the logs grow with every removal.)

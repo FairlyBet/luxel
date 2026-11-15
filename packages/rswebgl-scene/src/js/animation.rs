@@ -47,6 +47,7 @@ impl Scene {
         index: usize,
         looping: bool,
     ) -> Result<(), Error> {
+        self.invalidate();
         let Some(anims) = self
             .world
             .get::<ModelAnimations>(root)
@@ -72,6 +73,7 @@ impl Scene {
     /// Stops `root`'s animation where it is (the pose stays).
     #[wasm_bindgen(js_name = stopAnimation)]
     pub fn stop_animation(&mut self, root: Entity) {
+        self.invalidate();
         if let Some(mut a) = self.world.get_mut::<ModelAnimations>(root) {
             a.playing = None;
         }
@@ -81,6 +83,7 @@ impl Scene {
     /// negative plays backwards; a non-finite speed counts as 1).
     #[wasm_bindgen(js_name = setAnimationSpeed)]
     pub fn set_animation_speed(&mut self, root: Entity, speed: f32) {
+        self.invalidate();
         if !options::finite("setAnimationSpeed", &[speed]) {
             return;
         }
@@ -124,6 +127,7 @@ impl Scene {
     /// playing on its model overwrites them).
     #[wasm_bindgen(js_name = setMorphWeights)]
     pub fn set_morph_weights(&mut self, e: Entity, weights: Vec<f32>) {
+        self.invalidate();
         if !options::finite("setMorphWeights", &weights) {
             return;
         }

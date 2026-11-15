@@ -143,6 +143,24 @@ pub fn apply(world: &mut World, anim: &Animation, nodes: &HashMap<u32, Entity>, 
     }
 }
 
+/// Whether an animation is moving: playing at a speed, and looping or not
+/// yet at its end (a held last pose doesn't change).
+pub fn animating(world: &World) -> bool {
+    let Some(s) = world.storage::<ModelAnimations>() else {
+        return false;
+    };
+    s.data().iter().any(|a| {
+        a.playing.is_some_and(|p| {
+            let duration = a.clips.get(p.clip).map_or(0.0, |c| c.duration);
+            p.speed != 0.0
+                && duration > 0.0
+                && (p.looping
+                    || (p.speed > 0.0 && p.time < duration)
+                    || (p.speed < 0.0 && p.time > 0.0))
+        })
+    })
+}
+
 /// Moves every playing animation on by `dt` seconds and poses its nodes.
 pub fn advance(world: &mut World, dt: f32) {
     if !dt.is_finite() {
@@ -172,6 +190,11 @@ pub fn advance(world: &mut World, dt: f32) {
         };
         if !p.time.is_finite() {
             p.time = 0.0; // an infinite speed: start over rather than stick
+        }
+        // Held (at its end, or not moving): nothing is written, so a still
+        // scene stays unchanged.
+        if anims.playing == Some(p) {
+            continue;
         }
         apply(world, clip, &anims.nodes, p.time);
         anims.playing = Some(p);

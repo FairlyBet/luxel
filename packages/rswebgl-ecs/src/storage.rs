@@ -269,6 +269,7 @@ impl<T> DerefMut for Mut<'_, T> {
 pub(crate) trait AnyStorage: 'static {
     fn remove_entity(&mut self, e: Entity, tick: Tick);
     fn trim_removed(&mut self, through: Tick);
+    fn changed_since(&self, since: Tick) -> bool;
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
@@ -279,6 +280,9 @@ impl<T: 'static> AnyStorage for Storage<T> {
     }
     fn trim_removed(&mut self, through: Tick) {
         Storage::trim_removed(self, through);
+    }
+    fn changed_since(&self, since: Tick) -> bool {
+        Storage::changed_since(self, since) || self.structure_changed_since(since)
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self

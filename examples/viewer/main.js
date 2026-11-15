@@ -746,10 +746,10 @@ let last = -1; // no frame yet
 let fpsShown = 0;
 let lastStats = 0;
 
-// A still view: once it has settled (TAA converged), the last frame is shown
-// again (presentFrame) instead of drawn. Whatever changes the picture
-// starts the settling over: the camera, any control, a pointer, wheel or
-// key, a model, environment or shader arriving, textures compressed.
+// A still view: when nothing changed since the last frame and TAA has
+// settled (`scene.needsRender()` — the scene's setters, components,
+// images and bakes landing, animations, shaders compiling), the last frame
+// is shown again (presentFrame) instead of drawn.
 //
 // Presenting alone is too little work to keep the GPU's clocks up: they
 // drop within a second or so (measured on a desktop at 144 Hz: a frame of
@@ -758,17 +758,10 @@ let lastStats = 0;
 // frame now and then made it worse: one slow frame a second, a visible
 // spike. "Idle redraw" keeps drawing whole frames instead, which keeps the
 // clocks (and the power) up.
-const SETTLE_FRAMES = 30; // TAA's 8-frame jitter cycle, a few times over
-let settle = SETTLE_FRAMES;
 let lastView = "";
-let lastContent = -1;
 let still = false;
-const invalidate = () => {
-  settle = SETTLE_FRAMES;
-};
-for (const type of ["input", "change", "pointerdown", "pointerup", "wheel", "keydown"]) {
-  document.addEventListener(type, invalidate, { capture: true, passive: true });
-}
+// What the scene can't see changing on its own.
+const invalidate = () => scene.invalidate();
 
 // "gpu 1.20 ms  (opaque 0.90 late 0.10 present 0.20)", or why there's none.
 function gpuLine() {
@@ -790,28 +783,16 @@ function frame(/** @type {number} */ now) {
   if ($("spin").checked) orbit.yaw += dt * 0.0003;
   resize();
   placeCamera();
-  const view = JSON.stringify([orbit, viewCamera(), canvas.width, canvas.height]);
+  // Another camera to look through (a glTF one): the scene can't tell.
+  const view = String(viewCamera());
   if (view !== lastView) {
     lastView = view;
     invalidate();
   }
-  // Work landing since (textures filled in or compressed, an environment
-  // baked, models back after a context loss) changes the picture.
-  const content = ctx.contentVersion();
-  if (content !== lastContent) {
-    lastContent = content;
-    invalidate();
-  }
-  const animating = root !== 0 && Number(animSelect.value) >= 0;
-  const changing =
-    animating || settle > 0 || scene.pending() > 0 || $("auto-exposure").checked || $("idle-redraw").checked;
   const t0 = performance.now();
-  still = !changing && scene.presentFrame();
-  if (!still) {
-    scene.advanceAnimations(Math.min(dt, 100) / 1000);
-    scene.renderFrame(viewCamera());
-    settle--;
-  }
+  scene.advanceAnimations(Math.min(dt, 100) / 1000);
+  still = !$("idle-redraw").checked && !scene.needsRender() && scene.presentFrame();
+  if (!still) scene.renderFrame(viewCamera());
   cpuTimes.push(performance.now() - t0);
   if (cpuTimes.length > 60) cpuTimes.shift();
 

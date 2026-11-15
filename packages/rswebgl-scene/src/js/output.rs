@@ -22,6 +22,7 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "AmbientOcclusionOptions | null")] options: JsValue,
     ) -> Result<(), Error> {
+        self.invalidate();
         if options.is_null() || options.is_undefined() {
             self.ambient_occlusion = None;
             return Ok(());
@@ -56,6 +57,7 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "ContactShadowsOptions | null")] options: JsValue,
     ) -> Result<(), Error> {
+        self.invalidate();
         if options.is_null() || options.is_undefined() {
             self.contact_shadows = None;
             return Ok(());
@@ -99,6 +101,7 @@ impl Scene {
     /// but blending happens after tone mapping). Returns whether HDR is on.
     #[wasm_bindgen(js_name = setHdr)]
     pub fn set_hdr(&mut self, on: bool) -> bool {
+        self.invalidate();
         self.last_frame = None;
         self.hdr_wanted = on && HdrOutput::supported(&self.ctx);
         if !self.hdr_wanted
@@ -122,6 +125,7 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "ToneMappingName")] name: &str,
     ) -> Result<(), Error> {
+        self.invalidate();
         self.tone_mapping = ToneMapping::from_name(name).ok_or_else(|| {
             Error::from(format!(
                 "setToneMapping: \"{name}\" isn't none, neutral, aces or agx"
@@ -148,6 +152,7 @@ impl Scene {
     /// them. Returns whether it is on (needs HDR output).
     #[wasm_bindgen(js_name = setTaa)]
     pub fn set_taa(&mut self, on: bool) -> bool {
+        self.invalidate();
         if self.taa != on {
             self.taa = on;
             self.taa_previous = None;
@@ -175,6 +180,7 @@ impl Scene {
     /// whether it is on (needs HDR output).
     #[wasm_bindgen(js_name = setFxaa)]
     pub fn set_fxaa(&mut self, on: bool) -> bool {
+        self.invalidate();
         self.sync_context();
         self.fxaa = on;
         // Compiled now when the target exists, else at the next frame.
@@ -199,6 +205,7 @@ impl Scene {
     /// compensation. Returns whether it is on.
     #[wasm_bindgen(js_name = setAutoExposure)]
     pub fn set_auto_exposure(&mut self, on: bool) -> bool {
+        self.invalidate();
         self.sync_context();
         self.auto_exposure = on;
         if let Some(out) = &mut self.hdr
@@ -221,6 +228,7 @@ impl Scene {
     /// physically lit scenes).
     #[wasm_bindgen(js_name = setAutoExposureOptions)]
     pub fn set_auto_exposure_options(&mut self, grey: f32, min: f32, max: f32, speed: f32) {
+        self.invalidate();
         if !options::finite("setAutoExposureOptions", &[grey, min, max, speed]) {
             return;
         }
@@ -238,6 +246,7 @@ impl Scene {
     /// `antialias: false` with HDR on: it isn't used.
     #[wasm_bindgen(js_name = setSamples)]
     pub fn set_samples(&mut self, samples: i32) {
+        self.invalidate();
         self.last_frame = None;
         self.samples = samples.max(0);
         if let Some(out) = self.hdr.take() {
@@ -249,6 +258,7 @@ impl Scene {
     /// smooth gradients at the cost of faint noise.
     #[wasm_bindgen(js_name = setDither)]
     pub fn set_dither(&mut self, on: bool) {
+        self.invalidate();
         self.dither = on;
     }
 
@@ -258,6 +268,7 @@ impl Scene {
     /// With HDR output only.
     #[wasm_bindgen(js_name = setSharpening)]
     pub fn set_sharpening(&mut self, amount: f32) {
+        self.invalidate();
         if !options::finite("setSharpening", &[amount]) {
             return;
         }
@@ -278,6 +289,7 @@ impl Scene {
     /// what shows through glass gets blurrier. With HDR output.
     #[wasm_bindgen(js_name = setTransmissionResolution)]
     pub fn set_transmission_resolution(&mut self, scale: f32) {
+        self.invalidate();
         if !options::finite("setTransmissionResolution", &[scale]) {
             return;
         }

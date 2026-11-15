@@ -95,6 +95,7 @@ impl Scene {
     /// scene's, or a group of your own for meshes with your own shader).
     #[wasm_bindgen(js_name = setMaterial)]
     pub fn set_material(&mut self, e: Entity, material: ParamGroupId) {
+        self.invalidate();
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         if !self.world.is_alive(e) {
@@ -129,6 +130,7 @@ impl Scene {
         root: Entity,
         name: Option<String>,
     ) -> Result<(), Error> {
+        self.invalidate();
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         let model = self
@@ -206,6 +208,7 @@ impl Scene {
         name: &str,
         #[wasm_bindgen(unchecked_param_type = "number | ArrayLike<number>")] value: JsValue,
     ) -> Result<(), Error> {
+        self.invalidate();
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         let values = options::numbers(&value)
@@ -243,6 +246,7 @@ impl Scene {
         material: ParamGroupId,
         semantics: &str,
     ) -> Result<(), Error> {
+        self.invalidate();
         let native = match semantics {
             "openpbr" => true,
             "gltf" => false,
@@ -283,6 +287,7 @@ impl Scene {
     /// scene. Its textures are the original model's: keep that model.
     #[wasm_bindgen(js_name = cloneMaterial)]
     pub fn clone_material(&mut self, material: ParamGroupId) -> Result<ParamGroupId, Error> {
+        self.invalidate();
         let data = self
             .materials
             .get(&material)
@@ -308,6 +313,7 @@ impl Scene {
     /// stop drawing (stale material), so `setMaterial` them first.
     #[wasm_bindgen(js_name = destroyMaterial)]
     pub fn destroy_material(&mut self, material: ParamGroupId) {
+        self.invalidate();
         match self.materials.get(&material) {
             Some(r) if r.cloned => {
                 self.materials.remove(&material);
@@ -336,6 +342,7 @@ impl Scene {
         url: &str,
         #[wasm_bindgen(unchecked_param_type = "TextureOptions | undefined")] opts: Option<JsValue>,
     ) -> Result<js_sys::Promise, Error> {
+        self.invalidate();
         let opts = opts.unwrap_or(JsValue::UNDEFINED);
         self.sync_context();
         let spec = TextureSpec::parse(url, &opts)?;
@@ -367,6 +374,7 @@ impl Scene {
     /// drawing (reported): set another texture, or none, first.
     #[wasm_bindgen(js_name = destroyTexture)]
     pub fn destroy_texture(&mut self, texture: TextureId) {
+        self.invalidate();
         let texture = self.current_texture(texture);
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
@@ -407,6 +415,7 @@ impl Scene {
             JsValue,
         >,
     ) -> Result<(), Error> {
+        self.invalidate();
         let opts = opts.unwrap_or(JsValue::UNDEFINED);
         self.sync_context();
         let texture = self.current_texture(texture);
@@ -483,6 +492,7 @@ impl Scene {
         name: &str,
         values: &[f32],
     ) -> Result<(), Error> {
+        self.invalidate();
         let record = self
             .materials
             .get_mut(&material)
@@ -733,6 +743,7 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "ShadingModelName")] name: &str,
     ) -> Result<(), Error> {
+        self.invalidate();
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         let model = match name {

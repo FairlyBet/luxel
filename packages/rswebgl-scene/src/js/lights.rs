@@ -26,6 +26,7 @@ impl Scene {
         e: Entity,
         #[wasm_bindgen(unchecked_param_type = "CameraOptions")] camera: JsValue,
     ) -> Result<(), Error> {
+        self.invalidate();
         let aspect = self.world.get::<Camera>(e).map_or(1.0, |c| c.aspect);
         let near = options::f32_or(&camera, "znear", 0.1)?;
         let far = options::f32_or(&camera, "zfar", 1000.0)?;
@@ -60,7 +61,8 @@ impl Scene {
             return;
         }
         match self.world.get_mut::<Camera>(e) {
-            Some(mut c) => c.aspect = aspect,
+            // Only a different aspect is a change (renderFrame sets it each frame).
+            Some(mut c) => c.set_if_neq(Camera { aspect, ..*c }),
             None => console::error_once(
                 "[rswebgl-scene] setCameraAspect: the entity is not a camera; ignored",
             ),
@@ -79,6 +81,7 @@ impl Scene {
         e: Entity,
         #[wasm_bindgen(unchecked_param_type = "LightOptions")] light: JsValue,
     ) -> Result<(), Error> {
+        self.invalidate();
         // Frozen shadows are baked again with it.
         self.renderer.rebake_shadows();
         let color = options::vec3_or(&light, "color", Vec3::ONE)?;
@@ -131,6 +134,7 @@ impl Scene {
     /// 2 bytes with `setShadowDepthBits(16)`).
     #[wasm_bindgen(js_name = setShadowMapSize)]
     pub fn set_shadow_map_size(&mut self, size: u32) {
+        self.invalidate();
         self.renderer.set_shadow_map_size(size);
     }
 
@@ -145,6 +149,7 @@ impl Scene {
     /// acne comes sooner (raise the biases). Throws on other values.
     #[wasm_bindgen(js_name = setShadowDepthBits)]
     pub fn set_shadow_depth_bits(&mut self, bits: u32) -> Result<(), Error> {
+        self.invalidate();
         match bits {
             16 | 24 => {
                 self.renderer.set_shadow_depth16(bits == 16);
@@ -167,6 +172,7 @@ impl Scene {
     /// nearest first — to see where they split. Default off.
     #[wasm_bindgen(js_name = setShadowCascadeDebug)]
     pub fn set_shadow_cascade_debug(&mut self, on: bool) {
+        self.invalidate();
         self.renderer.set_debug_cascades(on);
     }
 
@@ -201,6 +207,7 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "GroundShadowOptions | null")] options: JsValue,
     ) -> Result<(), Error> {
+        self.invalidate();
         self.renderer.rebake_shadows();
         if options.is_null() || options.is_undefined() {
             self.renderer.set_ground_shadow(None);
@@ -246,6 +253,7 @@ impl Scene {
     /// off.
     #[wasm_bindgen(js_name = setShadowsFrozen)]
     pub fn set_shadows_frozen(&mut self, on: bool) {
+        self.invalidate();
         self.renderer.set_shadows_frozen(on);
     }
 
@@ -259,6 +267,7 @@ impl Scene {
     /// an alpha-masked material reads.
     #[wasm_bindgen(js_name = invalidateShadows)]
     pub fn invalidate_shadows(&mut self) {
+        self.invalidate();
         self.renderer.invalidate_shadows();
     }
 
@@ -270,6 +279,7 @@ impl Scene {
 
     #[wasm_bindgen(js_name = removeLight)]
     pub fn remove_light(&mut self, e: Entity) {
+        self.invalidate();
         // Frozen shadows are baked again with it.
         self.renderer.rebake_shadows();
         self.world.remove::<Light>(e);
@@ -278,6 +288,7 @@ impl Scene {
     /// Scales radiance before tone mapping. Default 1.
     #[wasm_bindgen(js_name = setExposure)]
     pub fn set_exposure(&mut self, exposure: f32) {
+        self.invalidate();
         if !options::finite("setExposure", &[exposure]) {
             return;
         }
@@ -291,6 +302,7 @@ impl Scene {
     /// Default off (0, 0.2); Filament's is (0.15, 0.2).
     #[wasm_bindgen(js_name = setSpecularAntialiasing)]
     pub fn set_specular_antialiasing(&mut self, variance: f32, threshold: f32) {
+        self.invalidate();
         if !options::finite("setSpecularAntialiasing", &[variance, threshold]) {
             return;
         }
@@ -312,6 +324,7 @@ impl Scene {
     /// is kept).
     #[wasm_bindgen(js_name = setEnvironmentIntensity)]
     pub fn set_environment_intensity(&mut self, r: f32, g: f32, b: f32) {
+        self.invalidate();
         if !options::finite("setEnvironmentIntensity", &[r, g, b]) {
             return;
         }
@@ -332,6 +345,7 @@ impl Scene {
     /// The bytes are kept (a copy) to bake it again after a context loss.
     #[wasm_bindgen(js_name = setEnvironmentHdr)]
     pub fn set_environment_hdr(&mut self, bytes: &[u8], size: u32) -> Result<(), Error> {
+        self.invalidate();
         self.sync_context();
         let image = decode_hdr_rgbe(bytes)?;
         self.start_environment(&image, size)?;
@@ -350,6 +364,7 @@ impl Scene {
     /// change bakes the current environment again.
     #[wasm_bindgen(js_name = setCompactEnvironment)]
     pub fn set_compact_environment(&mut self, on: bool) -> Result<(), Error> {
+        self.invalidate();
         if self.compact_environment == on {
             return Ok(());
         }
@@ -377,6 +392,7 @@ impl Scene {
     /// Back to the default: a flat white ambient light at intensity 0.2.
     #[wasm_bindgen(js_name = clearEnvironment)]
     pub fn clear_environment(&mut self) {
+        self.invalidate();
         self.sync_context();
         self.env_source = None;
         if let Some(p) = self.env_pending.take() {
@@ -394,6 +410,7 @@ impl Scene {
     /// Turns the environment (light and background) about +Y, in radians.
     #[wasm_bindgen(js_name = setEnvironmentRotation)]
     pub fn set_environment_rotation(&mut self, radians: f32) {
+        self.invalidate();
         if !options::finite("setEnvironmentRotation", &[radians]) {
             return;
         }
@@ -403,6 +420,7 @@ impl Scene {
     /// Shows the environment behind the scene, `blur` 0 (sharp) … 1.
     #[wasm_bindgen(js_name = setBackground)]
     pub fn set_background(&mut self, blur: f32) {
+        self.invalidate();
         if !options::finite("setBackground", &[blur]) {
             return;
         }
@@ -414,6 +432,7 @@ impl Scene {
     /// No background: the clear color shows.
     #[wasm_bindgen(js_name = clearBackground)]
     pub fn clear_background(&mut self) {
+        self.invalidate();
         self.renderer.set_background(None);
     }
 }
@@ -421,11 +440,13 @@ impl Scene {
 impl Scene {
     /// `setCamera` from Rust.
     pub fn insert_camera(&mut self, e: Entity, camera: Camera) {
+        self.invalidate();
         self.insert(e, "setCamera", camera);
     }
 
     /// `setLight` from Rust.
     pub fn insert_light(&mut self, e: Entity, light: Light) {
+        self.invalidate();
         self.insert(e, "setLight", light);
     }
 }

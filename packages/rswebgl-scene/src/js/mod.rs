@@ -27,6 +27,7 @@
 mod animation;
 mod lights;
 mod materials;
+mod on_demand;
 mod openpbr;
 mod options;
 mod output;
@@ -125,6 +126,8 @@ pub struct Scene {
     // The last frame renderFrame drew: its size and whether through HDR
     // (what presentFrame can show again).
     last_frame: Option<(i32, i32, bool)>,
+    // What `needsRender` keeps between frames.
+    on_demand: on_demand::OnDemand,
     samples: i32,
     // Temporal antialiasing: on, the frame count (jitter phase) and the
     // last frame's unjittered view-projection and camera.
@@ -216,6 +219,7 @@ impl Scene {
             direct: None,
             canvas_depth: ctx.default_framebuffer().has_depth(),
             last_frame: None,
+            on_demand: Default::default(),
             samples: 4,
             taa: false,
             taa_frame: 0,
@@ -241,6 +245,7 @@ impl Scene {
 
     /// A new entity with an identity transform.
     pub fn spawn(&mut self) -> Entity {
+        self.invalidate();
         // A panic would poison the module: the pool full says so instead.
         let Some(e) = self.world.try_spawn() else {
             console::error_once(
@@ -256,6 +261,7 @@ impl Scene {
     /// despawned by its root, frees its GPU resources and materials too).
     /// Returns how many entities went.
     pub fn despawn(&mut self, e: Entity) -> usize {
+        self.invalidate();
         // Frozen shadows are baked again without it.
         self.renderer.rebake_shadows();
         // Every model root in the subtree, not just `e`: a model hung under a
@@ -450,6 +456,7 @@ impl Scene {
 
     #[wasm_bindgen(js_name = setName)]
     pub fn set_name(&mut self, e: Entity, name: String) {
+        self.invalidate();
         self.insert(e, "setName", Name(name));
     }
 
@@ -498,6 +505,7 @@ impl Scene {
         #[wasm_bindgen(unchecked_param_type = "MeshOptions")] mesh: JsValue,
         draw: &DrawCommand,
     ) -> Result<(), Error> {
+        self.invalidate();
         // Frozen shadows are baked again with it.
         self.renderer.rebake_shadows();
         let mesh = MeshRenderer {
@@ -520,6 +528,7 @@ impl Scene {
 
     #[wasm_bindgen(js_name = removeMesh)]
     pub fn remove_mesh(&mut self, e: Entity) {
+        self.invalidate();
         self.world.remove::<MeshRenderer>(e);
     }
 
@@ -532,6 +541,7 @@ impl Scene {
         #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] min: &[f32],
         #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] max: &[f32],
     ) {
+        self.invalidate();
         if let (Some(min), Some(max)) =
             (vec3("setBounds", "min", min), vec3("setBounds", "max", max))
         {
@@ -542,6 +552,7 @@ impl Scene {
     /// Hides or shows `e` and everything under it.
     #[wasm_bindgen(js_name = setVisible)]
     pub fn set_visible(&mut self, e: Entity, visible: bool) {
+        self.invalidate();
         // Frozen shadows are baked again with it.
         self.renderer.rebake_shadows();
         self.insert(e, "setVisible", Visible(visible));
@@ -573,6 +584,7 @@ impl Scene {
     /// theirs (`findMaterial`).
     #[wasm_bindgen(js_name = addModel)]
     pub fn add_model(&mut self, model: Model) -> Entity {
+        self.invalidate();
         // Frozen shadows are baked again with it.
         self.renderer.rebake_shadows();
         self.sync_context();
@@ -601,6 +613,7 @@ impl Scene {
     /// object; the material group is the loader's).
     #[wasm_bindgen(js_name = addModelWithProgram)]
     pub fn add_model_with_program(&mut self, model: Model, program: ProgramId) -> Entity {
+        self.invalidate();
         // Frozen shadows are baked again with it.
         self.renderer.rebake_shadows();
         self.sync_context();
@@ -633,7 +646,9 @@ impl Scene {
     #[wasm_bindgen(js_name = renderFrame)]
     pub fn render_frame(&mut self, camera: Entity) -> usize {
         let _span = tracing::info_span!("renderFrame").entered();
+        self.observe();
         let drawn = self.render_frame_inner(camera);
+        self.rendered();
         rswebgl::trace::gpu_fence(&self.ctx);
         drawn
     }
@@ -650,7 +665,7 @@ impl Scene {
     /// straight to the canvas (one with its own depth buffer keeps nothing).
     /// What changes the picture (the camera, the scene, the environment,
     /// animations; TAA converging for a few frames after a change) still
-    /// needs `renderFrame`; telling those apart is the caller's to do.
+    /// needs `renderFrame`: `needsRender` tells them apart.
     #[wasm_bindgen(js_name = presentFrame)]
     pub fn present_frame(&mut self) -> bool {
         let _span = tracing::info_span!("presentFrame").entered();
@@ -860,6 +875,7 @@ impl Scene {
     /// is on (like `setHdr`): false where unavailable.
     #[wasm_bindgen(js_name = setReverseZ)]
     pub fn set_reverse_z(&mut self, on: bool) -> bool {
+        self.invalidate();
         self.ctx.set_reverse_z(on);
         self.ctx.reverse_z()
     }
@@ -974,6 +990,7 @@ impl Scene {
     /// layers than that aren't drawn; peeled glass isn't multisampled.
     #[wasm_bindgen(js_name = setTransmissionLayers)]
     pub fn set_transmission_layers(&mut self, layers: u32) {
+        self.invalidate();
         self.transmission_layers = layers.min(4) as usize;
     }
 
@@ -1198,6 +1215,7 @@ impl Scene {
     }
 
     pub fn world_mut(&mut self) -> &mut World {
+        self.invalidate();
         &mut self.world
     }
 

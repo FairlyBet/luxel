@@ -1244,3 +1244,56 @@ async fn render_frame_times_its_passes_on_the_gpu() {
     assert_eq!(js_sys::Object::keys(&s.scene.gpu_timings()).length(), 0);
     s.scene.destroy();
 }
+
+// Render on demand: after a frame nothing is new; a setter, a component
+// write, `invalidate` or a resize each ask for one frame (HDR without TAA),
+// and TAA asks for several to converge.
+#[wasm_bindgen_test]
+async fn needs_render_follows_changes() {
+    let mut s = setup().await;
+    s.scene.set_hdr(true);
+    s.frame().await;
+    s.scene.render_frame(s.camera);
+    assert!(!s.scene.needs_render(), "nothing changed");
+    assert!(!s.scene.needs_render(), "asking changes nothing");
+    // The camera placed where it is (as an app does each frame): no change.
+    s.scene
+        .look_at(s.camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    s.scene.set_camera_aspect(s.camera, W as f32 / H as f32);
+    assert!(!s.scene.needs_render(), "the same camera");
+
+    type Change = (&'static str, fn(&mut Setup));
+    let changes: [Change; 4] = [
+        ("a setter", |s| s.scene.set_exposure(0.5)),
+        ("a transform", |s| {
+            let e = s.scene.find_by_name(s.root, "band");
+            s.scene
+                .world_mut()
+                .get_mut::<rswebgl_scene::Transform>(e)
+                .unwrap()
+                .translation
+                .y += 0.1;
+        }),
+        ("invalidate", |s| s.scene.invalidate()),
+        ("a despawn", |s| {
+            let e = s.scene.find_by_name(s.root, "stone_b");
+            s.scene.despawn(e);
+        }),
+    ];
+    for (what, change) in changes {
+        change(&mut s);
+        assert!(s.scene.needs_render(), "{what}");
+        s.scene.render_frame(s.camera);
+        assert!(!s.scene.needs_render(), "{what}: drawn");
+    }
+
+    // TAA: frames until it converges.
+    s.scene.set_taa(true);
+    let mut frames = 0;
+    while s.scene.needs_render() {
+        s.scene.render_frame(s.camera);
+        frames += 1;
+        assert!(frames < 100, "never settles");
+    }
+    assert!(frames > 8, "{frames}");
+}
