@@ -1314,3 +1314,39 @@ async fn quality_presets() {
     s.frame().await;
     assert!(s.scene.set_quality("ultra").is_err());
 }
+
+// A picture at another size: drawn as frames are, the canvas back to its
+// size after, and a frame needed to show it again.
+#[wasm_bindgen_test]
+async fn capture_takes_a_picture_at_its_own_size() {
+    let mut s = setup().await;
+    let px = s.frame().await;
+    assert_eq!(px[0], YELLOW);
+    let opts = json(r#"{ "width": 192, "height": 64 }"#);
+    let blob = wasm_bindgen_futures::JsFuture::from(s.scene.capture(s.camera, Some(opts)).unwrap())
+        .await
+        .expect("encoded");
+    let canvas = s.ctx.default_framebuffer().canvas().unwrap();
+    assert_eq!((canvas.width(), canvas.height()), (W as u32, H as u32));
+    assert!(s.scene.needs_render());
+    // Decoded and read back: its size, and the band (yellow) where it was,
+    // twice as far in.
+    let read = js_sys::Function::new_with_args(
+        "blob",
+        "return createImageBitmap(blob).then(b => { \
+           const c = new OffscreenCanvas(b.width, b.height); \
+           const g = c.getContext('2d'); g.drawImage(b, 0, 0); \
+           return [b.width, b.height, ...g.getImageData(32, 32, 1, 1).data]; })",
+    );
+    let got: js_sys::Array = wasm_bindgen_futures::JsFuture::from(
+        read.call1(&JsValue::NULL, &blob)
+            .unwrap()
+            .unchecked_into::<js_sys::Promise>(),
+    )
+    .await
+    .unwrap()
+    .unchecked_into();
+    let v: Vec<f64> = got.iter().map(|x| x.as_f64().unwrap()).collect();
+    assert_eq!(&v[..2], &[192.0, 64.0]);
+    assert_eq!(&v[2..], &YELLOW.map(f64::from), "{v:?}");
+}

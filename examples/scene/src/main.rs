@@ -188,7 +188,11 @@ impl App {
             .render(&self.world, &self.ctx, self.camera, &mut self.pass);
         self.pass.sort();
         self.ctx.render(&self.pass);
-        self.world.trim_removed(self.transforms.last_run().min(self.scene.removals_checked()));
+        self.world.trim_removed(
+            self.transforms
+                .last_run()
+                .min(self.scene.removals_checked()),
+        );
         format!(
             "drawn {}  culled {}  object groups written {}",
             stats.drawn, stats.culled, stats.objects_written

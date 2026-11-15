@@ -486,6 +486,11 @@ impl DefaultFramebuffer {
     /// the canvas covers (0.1–2; default 1). Below 1 draws fewer pixels —
     /// the browser stretches them to the canvas — for speed on dense
     /// screens or slow GPUs; above 1 supersamples. Applies at once.
+    /// The canvas it draws to (none for a context made from a raw gl).
+    pub fn canvas(&self) -> Option<HtmlCanvasElement> {
+        self.inner.borrow().canvas.clone()
+    }
+
     #[wasm_bindgen(js_name = setResolutionScale)]
     pub fn set_resolution_scale(&self, scale: f64) {
         if !scale.is_finite() {

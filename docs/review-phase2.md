@@ -63,7 +63,16 @@ item as reviewed.
   (`frameStats()` every frame, `Pass`, `RenderState`…) are freed by the
   GC instead of leaking without `free()`. Handles stay manual; document it.
 
-## 3. A viewer's building blocks in the library — H, M
+## 3. A viewer's building blocks in the library — H, M — done (but adaptive resolution)
+
+`needsRender` / `invalidate` (render on demand); `worldToScreen`,
+`screenToRay`, `raycastBounds`; `frameBounds` and `rswebgl/orbit`
+(`OrbitControls`); `setResolutionScale` / `setMaxPixelRatio` on the default
+framebuffer and `setQuality`; `capture`. Left: adaptive resolution from GPU
+timings (needs tuning on real devices), and an exact synchronous raycast
+(needs CPU copies of the geometry; `pick` is exact on the GPU). What
+follows is the item as reviewed.
+
 
 What every product viewer rebuilds today from the example's code:
 

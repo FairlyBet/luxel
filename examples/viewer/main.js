@@ -451,6 +451,19 @@ $("load-url").addEventListener("click", () => {
   if (url) load(url, url.split("/").pop() ?? url);
 });
 $("open-file").addEventListener("click", () => $("file").click());
+// A picture at twice the canvas size, drawn as frames are.
+$("save-image").addEventListener("click", async () => {
+  try {
+    const blob = await scene.capture(viewCamera(), { width: canvas.width * 2, height: canvas.height * 2 });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${modelLabel || "view"}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (err) {
+    status(`Can't save the image: ${err instanceof Error ? err.message : err}`, true);
+  }
+});
 $("file").addEventListener("change", () => openFiles($("file").files));
 // A .glb, or a .gltf with its .bin and textures picked / dropped with it.
 function openFiles(/** @type {FileList | null | undefined} */ list) {

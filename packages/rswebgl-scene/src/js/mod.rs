@@ -25,6 +25,7 @@
 //! malformed option objects and unknown material properties throw.
 
 mod animation;
+mod capture;
 mod lights;
 mod materials;
 mod on_demand;

@@ -102,6 +102,19 @@ filled yourself). For hotspots and annotations:
 - `scene.raycastBounds(camera, x, y)` is a synchronous hit test against the
   meshes' boxes; `pick` is the exact test on the GPU.
 
+## Quality, resolution, screenshots
+
+`scene.setQuality("low" | "medium" | "high")` sets antialiasing, shadow
+map size, ambient occlusion and contact shadows, transmission resolution and
+a pixel-ratio cap together; each can still be set after.
+
+With auto-resize on, the canvas's drawing buffer can be scaled:
+- `ctx.defaultFramebuffer().setResolutionScale(0.75)` draws fewer pixels;
+- `setMaxPixelRatio(2)` caps the pixels per CSS pixel on dense screens.
+
+`await scene.capture(camera, { width: 2048, height: 2048 })` gives a PNG
+`Blob` drawn as frames are (`type: "image/jpeg"`, `quality` for others).
+
 ## Compressed glTF
 
 meshopt-compressed files load as they are. Draco meshes and KTX2 (Basis
