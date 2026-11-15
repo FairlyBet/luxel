@@ -368,6 +368,7 @@
       <div class="body">
         <div class="row"><span>View</span><select id="view-camera"><option value="0">Orbit</option></select><span></span></div>
         <div class="row"><span>Auto-rotate</span><input id="spin" type="checkbox" /><span></span></div>
+        <div class="row" title="Keep drawing whole frames while the view is still, instead of showing the last one again: the GPU keeps its clocks, so the first move after a pause doesn't stutter — at the cost of power"><span>Idle redraw</span><input id="idle-redraw" type="checkbox" /><span></span></div>
         <div class="row"><span>Field of view</span><input id="fov" type="range" min="15" max="90" step="1" value="45" /><output id="fov-v"></output></div>
         <button id="reset-view">Reset view</button>
         <div class="note">Drag to orbit, wheel or pinch to zoom, tap a part to inspect it.</div>

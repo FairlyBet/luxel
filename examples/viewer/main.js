@@ -223,6 +223,9 @@ const setLight = () =>
   scene.setLight(light, { type: "directional", intensity: lightIntensity, castShadow });
 setLight();
 $("shadows").checked = castShadow;
+// Idle redraw on desktops (no stutter after a pause, power to spare); phones
+// save the battery and present the last frame.
+$("idle-redraw").checked = !coarse;
 $("shadows").addEventListener("change", () => {
   castShadow = $("shadows").checked;
   setLight();
@@ -676,15 +679,21 @@ let fpsShown = 0;
 let lastStats = 0;
 
 // A still view: once it has settled (TAA converged), the last frame is shown
-// again (presentFrame) instead of drawn. Drawing nothing at all would let
-// the GPU clock down, and the first frame after it would stutter. Whatever
-// changes the picture starts the settling over: the camera, any control,
-// a pointer, wheel or key, a model, environment or shader arriving.
+// again (presentFrame) instead of drawn. Whatever changes the picture
+// starts the settling over: the camera, any control, a pointer, wheel or
+// key, a model, environment or shader arriving, textures compressed.
+//
+// Presenting alone is too little work to keep the GPU's clocks up: they
+// drop within a second or so (measured on a desktop at 144 Hz: a frame of
+// the chess set took ~10 ms of GPU time after a pause, 1.5 ms once the
+// clocks were back), so the first frames after a pause are slow. A real
+// frame now and then made it worse: one slow frame a second, a visible
+// spike. "Idle redraw" keeps drawing whole frames instead, which keeps the
+// clocks (and the power) up.
 const SETTLE_FRAMES = 30; // TAA's 8-frame jitter cycle, a few times over
-const REDRAW_MS = 1000; // a real frame now and then all the same
 let settle = SETTLE_FRAMES;
-let lastDrawn = 0;
 let lastView = "";
+let lastCompression = "";
 let still = false;
 const invalidate = () => {
   settle = SETTLE_FRAMES;
@@ -720,14 +729,13 @@ function frame(/** @type {number} */ now) {
   }
   const animating = root !== 0 && Number(animSelect.value) >= 0;
   const changing =
-    animating || settle > 0 || scene.pending() > 0 || $("auto-exposure").checked || now - lastDrawn >= REDRAW_MS;
+    animating || settle > 0 || scene.pending() > 0 || $("auto-exposure").checked || $("idle-redraw").checked;
   const t0 = performance.now();
   still = !changing && scene.presentFrame();
   if (!still) {
     scene.advanceAnimations(Math.min(dt, 100) / 1000);
     scene.renderFrame(viewCamera());
     settle--;
-    lastDrawn = now;
   }
   cpuTimes.push(performance.now() - t0);
   if (cpuTimes.length > 60) cpuTimes.shift();
@@ -735,6 +743,12 @@ function frame(/** @type {number} */ now) {
   if (now - lastStats > 250) {
     lastStats = now;
     Trace.begin("viewer.stats");
+    // Textures compressed in the background since: draw them.
+    const compression = textureCompressionStats();
+    if (compression !== lastCompression) {
+      lastCompression = compression;
+      invalidate();
+    }
     const recent = frameTimes.slice(-60);
     const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
     const worst = Math.max(...recent);
@@ -746,7 +760,7 @@ function frame(/** @type {number} */ now) {
     $("info").textContent =
       `\n${canvas.width}×${canvas.height}${still ? "  still" : ""}  ${scene.isHdr() ? (scene.isTaa() ? (scene.isFxaa() ? "HDR TAA+FXAA" : "HDR TAA") : scene.isFxaa() ? "HDR FXAA" : "HDR") : "direct"}  ${scene.shadingModel()}\n` +
       `drawn ${scene.drawn()} in ${scene.drawCalls()} calls  culled ${scene.culled()}  pending ${scene.pending()}  moving ${scene.movingMeshes()}${shadowInfo()}\n` +
-      `variants ${scene.shaderVariantCount()}  entities ${scene.entityCount()}  file lights ${root ? scene.lights(root).length : 0}  compressed: ${textureCompressionStats()}
+      `variants ${scene.shaderVariantCount()}  entities ${scene.entityCount()}  file lights ${root ? scene.lights(root).length : 0}  compressed: ${compression}
 ` +
       gpuLine();
     // Frame times, 60 fps line at the middle.
