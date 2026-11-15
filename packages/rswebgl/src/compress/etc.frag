@@ -35,6 +35,13 @@ out uvec4 frag_color;
 
 const float FLT_MAX = 3.402823466e+38;
 const int REFINEMENTS = 4;
+// Base colors tried per subblock: 1 (rg-etc1's low quality, the default)
+// or 27 (medium: one step around the average in each channel). Measured on
+// DamagedHelmet's maps, medium gains 0.6–1 dB (albedo 38.1 → 38.9 dB) for
+// 2–4× the time; low is already at BC1's quality (37.5 dB) or above.
+#ifndef SCAN_CANDIDATES
+#define SCAN_CANDIDATES 1
+#endif
 
 vec3 srgb_encode(vec3 c) {
     c = clamp(c, 0.0, 1.0);
@@ -82,7 +89,10 @@ int sub_pixel(bool flip, int sub, int c) {
 struct Solution {
     vec3 rgb; // the subblock color in 4- or 5-bit units
     int table;
-    float sel[8]; // 0..3: index into the table's sorted values
+    // 2 bits a pixel (c at bits 2c): its index into the table's sorted
+    // values. Packed, not an array: ANGLE's HLSL mixes up arrays copied
+    // inside structs (seen: pixels 5 and 7 of a subblock swapped).
+    uint sel;
     float error;
 };
 
@@ -106,13 +116,13 @@ bool evaluate(vec3 rgb, bool color4, vec3 base5, bool constrain, inout Solution 
     trial.error = FLT_MAX;
     trial.rgb = rgb;
     trial.table = 0;
-    for (int c = 0; c < 8; ++c) trial.sel[c] = 0.0;
+    trial.sel = 0u;
     for (int t = 0; t < 8; ++t) {
         vec4 tab = inten_table(t);
         vec3 colors[4];
         for (int s = 0; s < 4; ++s) colors[s] = clamp(base + tab[s], 0.0, 255.0);
         float total = 0.0;
-        float sel[8];
+        uint sel = 0u;
         for (int c = 0; c < 8; ++c) {
             float best_s = 0.0;
             vec3 d = sp[c] - colors[0];
@@ -125,13 +135,13 @@ bool evaluate(vec3 rgb, bool color4, vec3 base5, bool constrain, inout Solution 
                     best_s = float(s);
                 }
             }
-            sel[c] = best_s;
+            sel |= uint(best_s) << uint(2 * c);
             total += best_e;
         }
         if (total < trial.error) {
             trial.error = total;
             trial.table = t;
-            for (int c = 0; c < 8; ++c) trial.sel[c] = sel[c];
+            trial.sel = sel;
         }
     }
     if (trial.error < best.error) {
@@ -141,25 +151,36 @@ bool evaluate(vec3 rgb, bool color4, vec3 base5, bool constrain, inout Solution 
     return false;
 }
 
-// rg-etc1's optimizer at its lowest quality: the average color, then
-// refined toward avg − (the mean of the applied deltas).
+// rg-etc1's optimizer: the average color (and, with SCAN_CANDIDATES 27,
+// the base colors one step around it in each channel), each refined toward
+// avg − (the mean of the applied deltas) — four times from the average
+// itself, twice from the others.
 void optimize(vec3 avg, bool color4, vec3 base5, bool constrain, inout Solution best) {
     float limit = color4 ? 15.0 : 31.0;
     vec3 avg_ls = clamp(floor(avg * limit / 255.0 + 0.5), 0.0, limit);
-    vec3 rgb = avg_ls;
-    bool ok = evaluate(rgb, color4, base5, constrain, best);
-    for (int r = 0; r < REFINEMENTS && ok; ++r) {
-        vec4 tab = inten_table(best.table);
-        vec3 base = scaled_color(best.rgb, color4);
-        vec3 delta_sum = vec3(0.0);
-        for (int c = 0; c < 8; ++c) {
-            delta_sum += clamp(base + tab[int(best.sel[c])], 0.0, 255.0) - base;
+    for (int di = 0; di < SCAN_CANDIDATES; ++di) {
+        // The average itself first (index 13 is the center of the 3×3×3).
+        int k = (di + 13) % 27;
+        vec3 d = vec3(float(k % 3), float((k / 3) % 3), float(k / 9)) - 1.0;
+        vec3 rgb = avg_ls + d;
+        if (any(lessThan(rgb, vec3(0.0))) || any(greaterThan(rgb, vec3(limit)))) {
+            continue;
         }
-        vec3 rgb1 = clamp(floor((avg - delta_sum * 0.125) * limit / 255.0 + 0.5), 0.0, limit);
-        if (delta_sum == vec3(0.0) || rgb == rgb1 || best.rgb == rgb1 || avg_ls == rgb1) {
-            ok = false;
-        } else {
-            ok = evaluate(rgb1, color4, base5, constrain, best);
+        int trials = d == vec3(0.0) ? REFINEMENTS : 2;
+        bool ok = evaluate(rgb, color4, base5, constrain, best);
+        for (int r = 0; r < trials && ok; ++r) {
+            vec4 tab = inten_table(best.table);
+            vec3 base = scaled_color(best.rgb, color4);
+            vec3 delta_sum = vec3(0.0);
+            for (int c = 0; c < 8; ++c) {
+                delta_sum += clamp(base + tab[int((best.sel >> uint(2 * c)) & 3u)], 0.0, 255.0) - base;
+            }
+            vec3 rgb1 = clamp(floor((avg - delta_sum * 0.125) * limit / 255.0 + 0.5), 0.0, limit);
+            if (delta_sum == vec3(0.0) || rgb == rgb1 || best.rgb == rgb1 || avg_ls == rgb1) {
+                ok = false;
+            } else {
+                ok = evaluate(rgb1, color4, base5, constrain, best);
+            }
         }
     }
 }
@@ -180,7 +201,7 @@ uvec2 etc1_block() {
             res[s].error = FLT_MAX;
             res[s].rgb = vec3(0.0);
             res[s].table = 0;
-            for (int c = 0; c < 8; ++c) res[s].sel[c] = 0.0;
+            res[s].sel = 0u;
         }
         for (int s = 0; s < 2; ++s) {
             vec3 avg = vec3(0.0);
@@ -220,7 +241,8 @@ uvec2 etc1_block() {
         for (int c = 0; c < 8; ++c) {
             int p = sub_pixel(best_flip, s, c);
             int bit = (p & 3) * 4 + (p >> 2);
-            uint b = uint(selector_to_etc1(s == 0 ? best0.sel[c] : best1.sel[c]));
+            uint packed = s == 0 ? best0.sel : best1.sel;
+            uint b = uint(selector_to_etc1(float((packed >> uint(2 * c)) & 3u)));
             lsb |= (b & 1u) << uint(bit);
             msb |= (b >> 1u) << uint(bit);
         }
