@@ -486,6 +486,14 @@ impl DefaultFramebuffer {
     /// the canvas covers (0.1–2; default 1). Below 1 draws fewer pixels —
     /// the browser stretches them to the canvas — for speed on dense
     /// screens or slow GPUs; above 1 supersamples. Applies at once.
+    /// The drawing buffer's size as the browser made it: `[width, height]`
+    /// (it may be smaller than the canvas asks for, past what it allows).
+    #[wasm_bindgen(js_name = drawingBufferSize)]
+    pub fn drawing_buffer_size(&self) -> Vec<i32> {
+        let s = self.inner.borrow();
+        vec![s.gl.drawing_buffer_width(), s.gl.drawing_buffer_height()]
+    }
+
     /// The canvas it draws to (none for a context made from a raw gl).
     pub fn canvas(&self) -> Option<HtmlCanvasElement> {
         self.inner.borrow().canvas.clone()

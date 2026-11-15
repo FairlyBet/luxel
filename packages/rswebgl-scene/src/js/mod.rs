@@ -647,9 +647,9 @@ impl Scene {
     #[wasm_bindgen(js_name = renderFrame)]
     pub fn render_frame(&mut self, camera: Entity) -> usize {
         let _span = tracing::info_span!("renderFrame").entered();
-        self.observe();
+        self.observe(Some(camera));
         let drawn = self.render_frame_inner(camera);
-        self.rendered();
+        self.rendered(camera);
         rswebgl::trace::gpu_fence(&self.ctx);
         drawn
     }
@@ -864,7 +864,10 @@ impl Scene {
         // linear output), and nothing transmissive sees a scene copy.
         self.renderer.set_output(true, self.tone_mapping);
         self.renderer.set_scene_color(&self.ctx, None);
-        self.render_passes(camera, pass, None, None, None)
+        self.observe(Some(camera));
+        let drawn = self.render_passes(camera, pass, None, None, None);
+        self.rendered(camera);
+        drawn
     }
 
     /// Reverse-Z on or off (`EXT_clip_control`): depth precision spread
@@ -1166,6 +1169,12 @@ impl Scene {
     /// frame or `camera` isn't a camera.
     #[wasm_bindgen(js_name = frameBounds)]
     pub fn frame_bounds(&mut self, camera: Entity, root: Entity, margin: Option<f32>) -> Vec<f32> {
+        // The aspect the next frame draws at (a new camera has 1 until then).
+        let fb = self.ctx.default_framebuffer();
+        let aspect = fb.width().max(1) as f32 / fb.height().max(1) as f32;
+        if let Some(mut c) = self.world.get_mut::<crate::camera::Camera>(camera) {
+            c.set_if_neq(crate::camera::Camera { aspect, ..*c });
+        }
         self.transforms.update(&mut self.world);
         let bounds = crate::framing::world_bounds(&self.world, root).or_else(|| {
             // A model without mesh bounds: its sphere as loaded, moved with

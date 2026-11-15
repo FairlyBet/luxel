@@ -33,8 +33,11 @@ impl Scene {
     /// (HDR, antialiasing, effects; the canvas's background and clear
     /// color), at `options.width` × `options.height`: a promise of the
     /// encoded image. The canvas's drawing buffer takes that size for the
-    /// moment (its CSS size stays) and is redrawn after (`needsRender`).
-    /// Rejects without a canvas or with a lost context.
+    /// moment (its CSS size stays) and the canvas is drawn again at its own
+    /// size after. At most 8192 a side (and what the GPU and browser allow:
+    /// a smaller buffer comes out stretched); memory grows with the size —
+    /// HDR, MSAA and TAA targets at that size for the moment, which a phone
+    /// may not have. Rejects without a canvas or with a lost context.
     #[wasm_bindgen(unchecked_return_type = "Promise<Blob>")]
     pub fn capture(
         &mut self,
@@ -48,7 +51,7 @@ impl Scene {
             return Err("capture: the WebGL context is lost".into());
         }
         let (old_w, old_h) = (canvas.width(), canvas.height());
-        let max = rswebgl::limits::max_renderbuffer_size().max(1);
+        let max = rswebgl::limits::max_renderbuffer_size().clamp(1, 8192);
         let size = |key: &str, default: u32| -> Result<u32, Error> {
             Ok(options::u32_or(&opts, key, default)?.clamp(1, max))
         };
@@ -65,7 +68,7 @@ impl Scene {
         if resized {
             canvas.set_width(w);
             canvas.set_height(h);
-            fb.set_viewport(Viewport::new(0, 0, w as i32, h as i32));
+            set_viewport_to_buffer(&fb);
         }
         for _ in 0..frames {
             self.render_frame(camera);
@@ -90,11 +93,20 @@ impl Scene {
         if resized {
             canvas.set_width(old_w);
             canvas.set_height(old_h);
-            fb.set_viewport(Viewport::new(0, 0, old_w as i32, old_h as i32));
+            set_viewport_to_buffer(&fb);
+            // A resize cleared the canvas, and the camera has the picture's
+            // aspect: a frame at the canvas's size now (TAA settles on).
+            self.render_frame(camera);
+            self.invalidate();
         }
-        // What the canvas showed is gone (a resize clears it): drawn again.
-        self.invalidate();
         started.map_err(|e| Error::from(format!("capture: {e:?}")))?;
         Ok(promise)
     }
+}
+
+// The viewport over the drawing buffer the browser gave (it may be smaller
+// than asked).
+fn set_viewport_to_buffer(fb: &rswebgl::framebuffer::DefaultFramebuffer) {
+    let size = fb.drawing_buffer_size();
+    fb.set_viewport(Viewport::new(0, 0, size[0].max(1), size[1].max(1)));
 }

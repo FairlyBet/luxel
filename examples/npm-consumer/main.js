@@ -44,7 +44,7 @@ let frames = 0;
 requestAnimationFrame(function frame(now) {
   orbit.update((now - last) / 1000);
   last = now;
-  if (scene.needsRender() || !scene.presentFrame()) {
+  if (scene.needsRender(camera) || !scene.presentFrame()) {
     scene.renderFrame(camera);
     frames++;
   }

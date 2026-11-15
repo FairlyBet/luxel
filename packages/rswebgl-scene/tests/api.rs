@@ -1254,13 +1254,31 @@ async fn needs_render_follows_changes() {
     s.scene.set_hdr(true);
     s.frame().await;
     s.scene.render_frame(s.camera);
-    assert!(!s.scene.needs_render(), "nothing changed");
-    assert!(!s.scene.needs_render(), "asking changes nothing");
+    assert!(!s.scene.needs_render(None), "nothing changed");
+    assert!(!s.scene.needs_render(None), "asking changes nothing");
     // The camera placed where it is (as an app does each frame): no change.
     s.scene
         .look_at(s.camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
     s.scene.set_camera_aspect(s.camera, W as f32 / H as f32);
-    assert!(!s.scene.needs_render(), "the same camera");
+    assert!(!s.scene.needs_render(None), "the same camera");
+    // Through another camera: a change; the same one again: none.
+    let other = s.scene.spawn();
+    s.scene
+        .set_camera(
+            other,
+            json(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#),
+        )
+        .unwrap();
+    s.scene.look_at(other, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    s.scene.render_frame(s.camera);
+    assert!(
+        !s.scene.needs_render(Some(s.camera.to_raw())),
+        "the camera drawn last"
+    );
+    assert!(s.scene.needs_render(Some(other.to_raw())), "another camera");
+    s.scene.render_frame(other);
+    assert!(!s.scene.needs_render(Some(other.to_raw())), "drawn through it");
+    s.scene.render_frame(s.camera);
 
     type Change = (&'static str, fn(&mut Setup));
     let changes: [Change; 4] = [
@@ -1282,15 +1300,15 @@ async fn needs_render_follows_changes() {
     ];
     for (what, change) in changes {
         change(&mut s);
-        assert!(s.scene.needs_render(), "{what}");
+        assert!(s.scene.needs_render(None), "{what}");
         s.scene.render_frame(s.camera);
-        assert!(!s.scene.needs_render(), "{what}: drawn");
+        assert!(!s.scene.needs_render(None), "{what}: drawn");
     }
 
     // TAA: frames until it converges.
     s.scene.set_taa(true);
     let mut frames = 0;
-    while s.scene.needs_render() {
+    while s.scene.needs_render(None) {
         s.scene.render_frame(s.camera);
         frames += 1;
         assert!(frames < 100, "never settles");
@@ -1328,7 +1346,7 @@ async fn capture_takes_a_picture_at_its_own_size() {
         .expect("encoded");
     let canvas = s.ctx.default_framebuffer().canvas().unwrap();
     assert_eq!((canvas.width(), canvas.height()), (W as u32, H as u32));
-    assert!(s.scene.needs_render());
+    assert!(s.scene.needs_render(None));
     // Decoded and read back: its size, and the band (yellow) where it was,
     // twice as far in.
     let read = js_sys::Function::new_with_args(

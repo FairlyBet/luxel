@@ -66,12 +66,14 @@ export class OrbitControls {
    */
   update(dt, force = false) {
     const v = this._v;
-    if (this.autoRotate) v.yaw += this.autoRotate * dt;
     const moving = Object.values(v).some((x) => Math.abs(x) > 1e-6);
-    if (!moving && !force) return false;
+    if (!moving && !this.autoRotate && !force) return false;
+    // The spin at its own speed, beside whatever the user does.
+    if (this.autoRotate) this.yaw += this.autoRotate * dt;
     // A damped step: the share of the velocity applied this frame, the rest
     // carried (frame-rate independent).
-    const keep = this.damping > 0 ? Math.pow(1 - this.damping, dt * 60) : 0;
+    const damping = Math.min(1, Math.max(0, this.damping));
+    const keep = damping > 0 && damping < 1 ? Math.pow(1 - damping, dt * 60) : 0;
     const step = 1 - keep;
     this.yaw += v.yaw * step;
     this.pitch = clamp(this.pitch + v.pitch * step, this.minPitch, this.maxPitch);
@@ -86,7 +88,6 @@ export class OrbitControls {
       for (let i = 0; i < 3; i++) this.target[i] += (right[i] * -v.panX + up[i] * v.panY) * s;
     }
     for (const k in v) v[k] = Math.abs(v[k] * keep) > 1e-6 ? v[k] * keep : 0;
-    if (this.autoRotate) v.yaw = 0;
     this.scene.lookAt(this.camera, this.eye(), this.target);
     return true;
   }
@@ -117,7 +118,8 @@ export class OrbitControls {
     const down = (e) => {
       el.setPointerCapture?.(e.pointerId);
       this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey });
-      this._moved = 0;
+      // A second finger makes it a gesture, never a tap.
+      this._moved = this._pointers.size === 1 ? 0 : Infinity;
       if (this._pointers.size === 2) this._pinch = this._spread();
     };
     const move = (e) => {

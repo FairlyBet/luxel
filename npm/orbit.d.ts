@@ -9,7 +9,8 @@ export interface OrbitOptions {
   panSpeed: number;
   /** Right-drag, shift-drag and two fingers pan (true). */
   enablePan: boolean;
-  /** Share of the motion applied each 60th of a second; 1: none carried (0.25). */
+  /** Share of the motion applied each 60th of a second, 0–1; 0 or 1: none
+   *  carried (0.25). */
   damping: number;
   minDistance: number;
   maxDistance: number;
@@ -21,7 +22,9 @@ export interface OrbitOptions {
 }
 
 /** An orbit camera: drag to turn, wheel / pinch to zoom, right-drag /
- *  shift-drag / two fingers to pan, a tap reported for picking. */
+ *  shift-drag / two fingers to pan, a tap reported for picking. Zoom moves
+ *  the camera (a perspective one); an orthographic camera's zoom is its
+ *  `ymag` (`scene.setCamera`). */
 export class OrbitControls implements OrbitOptions {
   constructor(scene: Scene, camera: Entity, element: HTMLElement, options?: Partial<OrbitOptions>);
   scene: Scene;

@@ -771,7 +771,6 @@ let lastStats = 0;
 // frame now and then made it worse: one slow frame a second, a visible
 // spike. "Idle redraw" keeps drawing whole frames instead, which keeps the
 // clocks (and the power) up.
-let lastView = "";
 let still = false;
 // What the scene can't see changing on its own.
 const invalidate = () => scene.invalidate();
@@ -796,15 +795,9 @@ function frame(/** @type {number} */ now) {
   if ($("spin").checked) orbit.yaw += dt * 0.0003;
   resize();
   placeCamera();
-  // Another camera to look through (a glTF one): the scene can't tell.
-  const view = String(viewCamera());
-  if (view !== lastView) {
-    lastView = view;
-    invalidate();
-  }
   const t0 = performance.now();
   scene.advanceAnimations(Math.min(dt, 100) / 1000);
-  still = !$("idle-redraw").checked && !scene.needsRender() && scene.presentFrame();
+  still = !$("idle-redraw").checked && !scene.needsRender(viewCamera()) && scene.presentFrame();
   if (!still) scene.renderFrame(viewCamera());
   cpuTimes.push(performance.now() - t0);
   if (cpuTimes.length > 60) cpuTimes.shift();

@@ -89,7 +89,7 @@ orbit.onTap = (x, y) => scene.pick(camera, x, y).then((hit) => console.log(hit))
 requestAnimationFrame(function frame(now) {
   orbit.update(1 / 60);
   scene.advanceAnimations(1 / 60);
-  if (scene.needsRender() || !scene.presentFrame()) scene.renderFrame(camera);
+  if (scene.needsRender(camera) || !scene.presentFrame()) scene.renderFrame(camera);
   requestAnimationFrame(frame);
 });
 ```
