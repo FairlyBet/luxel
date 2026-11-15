@@ -924,17 +924,13 @@ pub fn translate(mat: &gltf::Material) -> Material {
 /// Remap every texture index in `m` through `remap` (document texture index →
 /// final `Model` texture index). Called after textures are assembled, since
 /// ORM-packing can collapse two source textures into one and reorder the rest.
-pub fn remap_textures(m: &mut Material, remap: &[i32]) {
-    let map = |i: i32| -> i32 {
-        if i >= 0 {
-            remap.get(i as usize).copied().unwrap_or(-1)
-        } else {
-            -1
-        }
-    };
-    for (tex, _) in &mut m.maps {
+pub fn remap_textures(m: &mut Material, remap: &[[i32; 2]]) {
+    for (slot, (tex, _)) in MAP_SLOTS.iter().zip(&mut m.maps) {
         if *tex != EXTERNAL_TEXTURE {
-            *tex = map(*tex);
+            *tex = usize::try_from(*tex)
+                .ok()
+                .and_then(|i| remap.get(i))
+                .map_or(-1, |r| r[slot.srgb as usize]);
         }
     }
 }
@@ -1304,9 +1300,11 @@ mod tests {
         assert_eq!(m.map(slot("sheenColorTexture")), Some((0, 0)));
         assert_eq!(m.map(slot("anisotropyTexture")), Some((-1, 0)));
         assert!(m.has_uv_transform());
-        // The sRGB set: base color and sheen color (texture 0), not 1 or 2.
-        let srgb = crate::textures::srgb_texture_set(&gltf.document);
+        // The sRGB set: base color and sheen color (texture 0), not 1 or 2;
+        // the linear one: normal, clearcoat and its normal (1 and 2).
+        let (srgb, linear) = crate::textures::texture_color_spaces(&gltf.document);
         assert!(srgb.contains(&0) && !srgb.contains(&1) && !srgb.contains(&2));
+        assert!(!linear.contains(&0) && linear.contains(&1) && linear.contains(&2));
     }
 
     #[test]

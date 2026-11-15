@@ -328,3 +328,39 @@ async fn per_load_options_are_kept() {
     assert!(bad.is_err());
     model.destroy(&ctx);
 }
+
+// One texture as base color (sRGB) and as normal map (data): two GPU
+// textures, one per colour space, each map reading its own.
+#[wasm_bindgen_test]
+async fn a_texture_in_two_colour_spaces_is_made_twice() {
+    let ctx = context();
+    let main = gltf(
+        &format!("data:application/octet-stream;base64,{}", b64(&bin())),
+        &format!("data:image/png;base64,{PNG}"),
+        true,
+    )
+    .replace(
+        r#""materials": [{ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } }]"#,
+        r#""materials": [{ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } },
+                          "normalTexture": { "index": 0 } }]"#,
+    );
+    assert!(main.contains("normalTexture"));
+    let model = load(&ctx, bytes(main.as_bytes()), JsValue::UNDEFINED).await;
+    assert_eq!(model.texture_count(), 2);
+    let m = &model.materials()[0];
+    let slot = |name: &str| {
+        rswebgl_gltf::MAP_NAMES
+            .iter()
+            .position(|n| *n == name)
+            .unwrap()
+    };
+    let (base, normal) = (
+        m.map(slot("baseColorTexture")),
+        m.map(slot("normalTexture")),
+    );
+    assert!(base.is_some() && normal.is_some());
+    assert_ne!(base.unwrap().0, normal.unwrap().0);
+    loaded(&model).await;
+    assert_eq!(model.warnings(), Vec::<String>::new());
+    model.destroy(&ctx);
+}

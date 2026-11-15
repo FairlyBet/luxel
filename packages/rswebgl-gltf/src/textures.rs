@@ -305,21 +305,21 @@ fn mime_from_path(url: &str) -> &'static str {
 }
 
 /// Texture indices used in an sRGB role (base color, emissive, specular
-/// color, sheen color) — those decode from sRGB; every other texture
-/// (normals, data maps) is linear.
-pub(crate) fn srgb_texture_set(doc: &gltf::Document) -> HashSet<usize> {
-    let mut set = HashSet::new();
+/// color, sheen color), and those used in a linear one (normals, data
+/// maps). A texture in both is made twice, once in each colour space.
+pub(crate) fn texture_color_spaces(doc: &gltf::Document) -> (HashSet<usize>, HashSet<usize>) {
+    let (mut srgb, mut linear) = (HashSet::new(), HashSet::new());
     for mat in doc.materials() {
         for (slot, m) in crate::material::MAP_SLOTS
             .iter()
             .zip(crate::material::doc_maps(&mat))
         {
-            if let (true, Some(m)) = (slot.srgb, m) {
-                set.insert(m.texture);
+            if let Some(m) = m {
+                if slot.srgb { &mut srgb } else { &mut linear }.insert(m.texture);
             }
         }
     }
-    set
+    (srgb, linear)
 }
 
 /// glTF min filter → (`TextureMinFilter`, build-mipmaps?). `None` = "auto".

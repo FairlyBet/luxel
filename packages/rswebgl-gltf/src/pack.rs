@@ -33,7 +33,7 @@ use rswebgl::texture::TextureTarget;
 use rswebgl::texture_compressor::CompressKind;
 use rswebgl::texture_packer::{Channel, PackSpec, TexturePacker};
 
-use crate::textures::{build_texture, mag_filter, min_filter, srgb_texture_set, wrap};
+use crate::textures::{build_texture, mag_filter, min_filter, texture_color_spaces, wrap};
 
 /// Build the final, index-remapped texture list for `doc`.
 ///
@@ -68,9 +68,20 @@ pub fn build_texture_set(
     }
 
     let consumed: HashSet<usize> = accepted.iter().flat_map(|&(o, m)| [o, m]).collect();
-    let srgb = srgb_texture_set(doc);
+    let (srgb, linear) = texture_color_spaces(doc);
+    // The colour spaces document texture `i` is used in (linear when in
+    // none: decoded as data).
+    let spaces = |i: usize| -> Vec<bool> {
+        let s: Vec<bool> = [(false, linear.contains(&i)), (true, srgb.contains(&i))]
+            .into_iter()
+            .filter(|&(_, used)| used)
+            .map(|(space, _)| space)
+            .collect();
+        if s.is_empty() { vec![false] } else { s }
+    };
 
-    let mut remap = vec![-1i32; tex_count];
+    // [linear, sRGB] per document texture.
+    let mut remap = vec![[-1i32; 2]; tex_count];
     let mut textures: Vec<TextureId> = Vec::with_capacity(tex_count);
 
     // 0. Sampling lives in sampler objects, one per distinct glTF sampler, so
@@ -84,9 +95,9 @@ pub fn build_texture_set(
     for (i, t) in docs.iter().enumerate() {
         if !consumed.contains(&i) {
             let mips = min_filter(t.sampler().min_filter()).1;
-            *needs_mips
-                .entry(texture_key(t, srgb.contains(&i)))
-                .or_default() |= mips;
+            for space in spaces(i) {
+                *needs_mips.entry(texture_key(t, space)).or_default() |= mips;
+            }
         }
     }
     // The compressed format of each GPU texture: what its uses agree on.
@@ -94,17 +105,19 @@ pub fn build_texture_set(
     let mut kinds: HashMap<TextureKey, Option<Option<CompressKind>>> = HashMap::new();
     for (i, t) in docs.iter().enumerate() {
         if !consumed.contains(&i) {
-            let k = kinds.entry(texture_key(t, srgb.contains(&i))).or_default();
-            *k = Some(match (*k, doc_kinds[i]) {
-                (None, d) => d,
-                (Some(a), b) if a == b => a,
-                // Color with and without alpha: with.
-                (Some(Some(CompressKind::Rgb)), Some(CompressKind::Rgba))
-                | (Some(Some(CompressKind::Rgba)), Some(CompressKind::Rgb)) => {
-                    Some(CompressKind::Rgba)
-                }
-                _ => None,
-            });
+            for space in spaces(i) {
+                let k = kinds.entry(texture_key(t, space)).or_default();
+                *k = Some(match (*k, doc_kinds[i]) {
+                    (None, d) => d,
+                    (Some(a), b) if a == b => a,
+                    // Color with and without alpha: with.
+                    (Some(Some(CompressKind::Rgb)), Some(CompressKind::Rgba))
+                    | (Some(Some(CompressKind::Rgba)), Some(CompressKind::Rgb)) => {
+                        Some(CompressKind::Rgba)
+                    }
+                    _ => None,
+                });
+            }
         }
     }
     let mut seen: HashMap<TextureKey, i32> = HashMap::new();
@@ -112,26 +125,28 @@ pub fn build_texture_set(
         if consumed.contains(&i) {
             continue;
         }
-        let key = texture_key(t, srgb.contains(&i));
-        if let Some(&j) = seen.get(&key) {
-            remap[i] = j;
-            continue;
+        for space in spaces(i) {
+            let key = texture_key(t, space);
+            if let Some(&j) = seen.get(&key) {
+                remap[i][space as usize] = j;
+                continue;
+            }
+            let (on_load, cell) =
+                crate::compress::after_load(ctx, kinds[&key].flatten(), empty_callback());
+            let tex = build_texture(ctx, t, buffers, load, space, needs_mips[&key], on_load)?;
+            cell.set(tex);
+            let j = textures.len() as i32;
+            remap[i][space as usize] = j;
+            seen.insert(key, j);
+            textures.push(tex);
         }
-        let (on_load, cell) =
-            crate::compress::after_load(ctx, kinds[&key].flatten(), empty_callback());
-        let tex = build_texture(
-            ctx,
-            t,
-            buffers,
-            load,
-            srgb.contains(&i),
-            needs_mips[&key],
-            on_load,
-        )?;
-        cell.set(tex);
-        remap[i] = textures.len() as i32;
-        seen.insert(key, remap[i]);
-        textures.push(tex);
+        // Used in one space only: the other reads it too (as before).
+        let r = &mut remap[i];
+        if r[0] < 0 {
+            r[0] = r[1];
+        } else if r[1] < 0 {
+            r[1] = r[0];
+        }
     }
 
     // 2. One packed ORM texture per accepted pair; both source indices point here.
@@ -139,8 +154,8 @@ pub fn build_texture_set(
         for &(occ, mr) in &accepted {
             let output = build_packed_orm(ctx, &docs, buffers, load, occ, mr, packer.clone())?;
             let p = textures.len() as i32;
-            remap[occ] = p;
-            remap[mr] = p;
+            remap[occ] = [p; 2];
+            remap[mr] = [p; 2];
             textures.push(output);
         }
     }
@@ -441,8 +456,9 @@ fn texture_key(t: &gltf::Texture, srgb: bool) -> TextureKey {
 /// The final texture list and how the document maps onto it.
 pub struct TextureSet {
     pub textures: Vec<TextureId>,
-    /// Document texture index → `textures` index (-1: none).
-    pub remap: Vec<i32>,
+    /// Document texture index → `textures` index (-1: none), as read in a
+    /// linear role and in an sRGB one (two textures when used in both).
+    pub remap: Vec<[i32; 2]>,
     /// Document texture index → the sampler to read it through.
     pub doc_samplers: Vec<SamplerId>,
     /// Every distinct sampler created (to destroy with the model).

@@ -1389,6 +1389,10 @@ fn variant_uv_quad_url() -> String {
         bin.extend_from_slice(&i.to_le_bytes());
     }
     let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+    let png = format!(
+        "data:image/png;base64,{}",
+        b64(&png_rgba(2, 1, &[RED, BLUE]))
+    );
     let json = format!(
         r#"{{
   "asset": {{ "version": "2.0" }},
@@ -1425,10 +1429,7 @@ fn variant_uv_quad_url() -> String {
 }}"#,
         len = bin.len(),
         bin = b64(&bin),
-        png = format!(
-            "data:image/png;base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(png_rgba(2, 1, &[RED, BLUE]))
-        ),
+        png = png,
     );
     format!("data:model/gltf+json;base64,{}", b64(json.as_bytes()))
 }
