@@ -466,6 +466,7 @@ impl Scene {
 
     /// The camera entities at or under `root` — a model's glTF cameras,
     /// parents before children. Render through one with `renderFrame(camera)`.
+    #[wasm_bindgen(unchecked_return_type = "Handles<Entity>")]
     pub fn cameras(&self, root: Entity) -> Vec<u32> {
         self.entities_with::<crate::camera::Camera>(root)
     }
@@ -473,6 +474,7 @@ impl Scene {
     /// The light entities at or under `root` — a model's
     /// `KHR_lights_punctual` lights, which light the scene once it is added.
     /// Turn one off with `setVisible(e, false)` or `removeLight`.
+    #[wasm_bindgen(unchecked_return_type = "Handles<Entity>")]
     pub fn lights(&self, root: Entity) -> Vec<u32> {
         self.entities_with::<crate::lighting::Light>(root)
     }
@@ -869,6 +871,7 @@ impl Scene {
     /// a model whole; resolves at once where compiles are synchronous. Also
     /// waits for an environment bake under way (`setEnvironmentHdr`).
     #[wasm_bindgen(js_name = whenReady)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn when_ready(&mut self) -> js_sys::Promise {
         // After a restore: the rebuilt programs, not the lost ones' handles
         // (which read as done).

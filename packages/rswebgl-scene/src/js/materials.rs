@@ -51,6 +51,7 @@ pub(crate) struct MaterialRecord {
 #[wasm_bindgen]
 impl Scene {
     /// The distinct materials drawn at or under `root`, in mesh order.
+    #[wasm_bindgen(unchecked_return_type = "Handles<ParamGroupId>")]
     pub fn materials(&self, root: Entity) -> Vec<u32> {
         let mut out: Vec<u32> = Vec::new();
         for e in descendants(&self.world, root) {
@@ -329,6 +330,7 @@ impl Scene {
     /// wrapping and mipmaps; throws on bad options. After a context loss the
     /// scene loads it again (a new handle, in the same materials).
     #[wasm_bindgen(js_name = loadTexture)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<TextureId>")]
     pub fn load_texture(
         &mut self,
         url: &str,
@@ -723,7 +725,10 @@ impl Scene {
     /// renderer shades it) — to compare them on the same materials. Meshes
     /// switch as their new shaders finish compiling. Throws on another name.
     #[wasm_bindgen(js_name = setShadingModel)]
-    pub fn set_shading_model(&mut self, name: &str) -> Result<(), Error> {
+    pub fn set_shading_model(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "ShadingModelName")] name: &str,
+    ) -> Result<(), Error> {
         // Frozen shadows don't see this change on their own.
         self.renderer.invalidate_shadows();
         let model = match name {
@@ -748,7 +753,7 @@ impl Scene {
         Ok(())
     }
 
-    #[wasm_bindgen(js_name = shadingModel)]
+    #[wasm_bindgen(js_name = shadingModel, unchecked_return_type = "ShadingModelName")]
     pub fn shading_model(&self) -> String {
         match self.pbr.model() {
             crate::pbr::ShadingModel::OpenPbr => "openpbr",

@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use wasm_bindgen::prelude::*;
 
 use crate::shader::shader_sources;
 use rswebgl::context::Context;
@@ -319,8 +318,8 @@ impl PbrKey {
 /// variant can't silently overflow its two bits.
 const _: () = assert!(AlphaMode::Blend as u32 <= 3);
 
-/// Which shading model PBR variants use.
-#[wasm_bindgen]
+/// Which shading model PBR variants use. (JS names it by string:
+/// `setShadingModel`.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ShadingModel {
     /// OpenPBR Surface (the default).

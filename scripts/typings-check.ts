@@ -1,0 +1,52 @@
+// Compile-time checks of the npm package's typings: what should type-check
+// does, and each `@ts-expect-error` line must fail to. Not run, only checked:
+//
+//   node scripts/build-npm.mjs && deno check scripts/typings-check.ts
+/// <reference lib="dom" />
+// @ts-types="../dist/npm/rswebgl.d.ts"
+import init, {
+  Context,
+  type Entity,
+  type Handles,
+  loadModel,
+  type Model,
+  type ParamGroupId,
+  type ProgramId,
+  Scene,
+  type TextureId,
+} from "../dist/npm/rswebgl.js";
+
+export async function check(canvas: HTMLCanvasElement, ctx: Context, scene: Scene) {
+  await init();
+  const model: Model = await loadModel(ctx, "a.glb");
+  const root: Entity = scene.addModel(model);
+  const e: Entity = scene.spawn();
+  scene.setParent(e, root);
+  const tex: TextureId = await scene.loadTexture("a.png", undefined);
+  const mats: Handles<ParamGroupId> = scene.materials(root);
+  const m: ParamGroupId = mats[0];
+  scene.setMaterialTexture(m, "baseColor", tex, undefined);
+  for (const cam of scene.cameras(root)) scene.renderFrame(cam as Entity);
+  const ready: void = await scene.whenReady();
+  scene.setToneMapping("agx");
+  const name: "openpbr" | "gltf" = scene.shadingModel();
+  const hit = await scene.pick(e, 0, 0);
+  if (hit) scene.setVisible(hit.entity, false);
+  const p: ProgramId = ctx.createProgram("", "");
+  await ctx.programsReady([p]);
+  ctx.setOnLost(() => {});
+  ctx.textureLoadImage(ctx.createTexture(0 as never, 0 as never, 0 as never), "a.png", undefined!, true, false, (w, h) => w + h);
+  const bytes: Uint8Array = await ctx.readPixelsAsync(0 as never, 0, 0, 0, 1, 1, 0);
+
+  // @ts-expect-error a texture isn't an entity
+  scene.setVisible(tex, false);
+  // @ts-expect-error a plain number isn't a handle
+  scene.despawn(5);
+  // @ts-expect-error an entity isn't a material
+  scene.setMaterialTexture(e, "baseColor", tex, undefined);
+  // @ts-expect-error not a tone mapping
+  scene.setToneMapping("filmic");
+  // @ts-expect-error a material isn't a program
+  ctx.destroyProgram(m);
+  return [canvas, ready, name, bytes];
+}

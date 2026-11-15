@@ -29,7 +29,6 @@ use rswebgl::texture::{
     TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget, TextureWrap,
 };
 use rswebgl::uniform_buffer::UniformType;
-use wasm_bindgen::prelude::*;
 
 use crate::environment::FULLSCREEN_VERT;
 use crate::shader::chunk;
@@ -320,8 +319,8 @@ impl Fxaa {
     }
 }
 
-/// How linear radiance is squeezed into the display's range.
-#[wasm_bindgen]
+/// How linear radiance is squeezed into the display's range. (JS names it
+/// by string: `setToneMapping`.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToneMapping {
     /// Exposure and a clamp: what fits shows exactly, the rest clips.
@@ -346,6 +345,16 @@ impl ToneMapping {
             "agx" => Self::Agx,
             _ => return None,
         })
+    }
+
+    /// Its name, as `from_name` reads it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Neutral => "neutral",
+            Self::Aces => "aces",
+            Self::Agx => "agx",
+        }
     }
 }
 

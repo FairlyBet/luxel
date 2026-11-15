@@ -126,6 +126,7 @@ impl Context {
     /// before the GPU gets to it.
     #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = readPixelsAsync)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<Uint8Array>")]
     pub fn read_pixels_promise(
         &self,
         fb: FramebufferId,
@@ -404,6 +405,7 @@ impl Context {
 
     /// `buffer_read` without the stall, for JS: a promise of the bytes.
     #[wasm_bindgen(js_name = bufferReadAsync)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<Uint8Array>")]
     pub fn buffer_read_promise(&self, buffer: BufferId, offset: u32, len: u32) -> js_sys::Promise {
         let read = self.buffer_read_async(buffer, offset, len);
         wasm_bindgen_futures::future_to_promise(async move {

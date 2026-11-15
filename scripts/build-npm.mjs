@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { brandHandles } from "./brand-handles.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const out = join(root, "dist", "npm");
@@ -27,9 +28,17 @@ execFileSync(
     dev ? "--dev" : "--release",
     "--out-dir", "../../dist/npm",
     "--out-name", "rswebgl",
+    // wasm-bindgen objects (`Pass`, `FrameStats`, `RenderState`, …) are
+    // freed by the garbage collector when JS drops them; `free()` still
+    // frees one at once. Handles (plain numbers) stay manual.
+    "--weak-refs",
   ],
   { cwd: root, stdio: "inherit" },
 );
+
+// Handles typed by kind (`Entity`, `TextureId`, …) instead of `number`.
+const dtsPath = join(out, "rswebgl.d.ts");
+writeFileSync(dtsPath, brandHandles(readFileSync(dtsPath, "utf8")));
 
 // wasm-pack writes a package.json from Cargo.toml; make it a proper ES
 // package with an exports map.

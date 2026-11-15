@@ -17,7 +17,7 @@ context loss (restored a second later: the scene rebuilds itself), **M** switche
 the shading model (OpenPBR ↔ the glTF reference), **T** the tone mapper.
 
 ```bash
-wasm-pack build packages/rswebgl-scene --target web --out-dir ../../examples/js-scene/pkg
+wasm-pack build packages/rswebgl-scene --target web --weak-refs --out-dir ../../examples/js-scene/pkg
 node examples/js-scene/serve.mjs
 ```
 

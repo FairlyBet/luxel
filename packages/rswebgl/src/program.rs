@@ -847,7 +847,11 @@ impl Context {
 impl Context {
     /// `programs_ready` as a Promise (resolves with `undefined`).
     #[wasm_bindgen(js_name = programsReady)]
-    pub fn programs_ready_js(&self, programs: &[u32]) -> js_sys::Promise {
+    #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
+    pub fn programs_ready_js(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "Uint32Array | ProgramId[]")] programs: &[u32],
+    ) -> js_sys::Promise {
         let ready = self.programs_ready(programs.iter().map(|&p| ProgramId::from_raw(p)).collect());
         wasm_bindgen_futures::future_to_promise(async move {
             ready.await;

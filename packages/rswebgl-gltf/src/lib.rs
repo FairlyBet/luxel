@@ -562,7 +562,7 @@ impl Model {
 
 /// `loadModel(ctx, url)` for JS: a promise of a `Model`. (An exported async fn
 /// can't borrow the context across `await`; this clones it first.)
-#[wasm_bindgen(js_name = loadModel)]
+#[wasm_bindgen(js_name = loadModel, unchecked_return_type = "Promise<Model>")]
 pub fn load_model_js(ctx: &Context, url: String) -> js_sys::Promise {
     let ctx = ctx.clone();
     wasm_bindgen_futures::future_to_promise(async move {

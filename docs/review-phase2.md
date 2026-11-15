@@ -29,7 +29,16 @@ Two reviews independently put this first; it is what an app meets first.
   (`gltf::Document::from_json`); three.js loads such files with warnings.
 - `loadModel` / `loadTexture` / `whenReady` are `Promise<any>`.
 
-## 2. Typed JS API — H, S–M
+## 2. Typed JS API — H, S–M — done
+
+Handles are branded in the `.d.ts` (`scripts/brand-handles.mjs`, run by
+`build-npm.mjs`, read from the Rust signatures; `Handles<T>` for the
+arrays); promises and callbacks are typed; tone mapping and shading model
+are strings only (`ToneMappingName`, `ShadingModelName`, a
+`toneMapping()` getter); the builds use `--weak-refs`.
+`scripts/typings-check.ts` checks it (`deno check`). What follows is the
+item as reviewed.
+
 
 - **Branded handles** (`Entity`, `MaterialId`, `TextureId`, `ProgramId`…)
   instead of bare `number`: the scene's API takes entities in ~160 places,

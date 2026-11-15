@@ -1163,6 +1163,7 @@ impl Context {
         format: &TextureFormat,
         generate_mipmaps: bool,
         flip_y: bool,
+        #[wasm_bindgen(unchecked_param_type = "(width: number, height: number) => void")]
         on_load: js_sys::Function,
     ) {
         if let Some(decode) = bitmap_decoder() {
@@ -1217,6 +1218,7 @@ impl Context {
         format: &TextureFormat,
         generate_mipmaps: bool,
         flip_y: bool,
+        #[wasm_bindgen(unchecked_param_type = "(width: number, height: number) => void")]
         on_load: js_sys::Function,
     ) {
         let parts = js_sys::Array::new();

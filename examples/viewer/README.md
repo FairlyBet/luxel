@@ -16,7 +16,7 @@ A glTF viewer built on `rswebgl-scene`:
 ## Run
 
 ```bash
-wasm-pack build packages/rswebgl-scene --target web --out-dir ../../examples/viewer/pkg
+wasm-pack build packages/rswebgl-scene --target web --weak-refs --out-dir ../../examples/viewer/pkg
 node examples/viewer/serve.mjs          # http://127.0.0.1:8091/
 node examples/viewer/serve.mjs --lan    # also on this machine's LAN addresses, for a phone
 ```

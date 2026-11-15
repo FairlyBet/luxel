@@ -118,13 +118,22 @@ impl Scene {
     /// colors, soft highlights), "aces", "agx", or "none" (clip). Throws on
     /// another name.
     #[wasm_bindgen(js_name = setToneMapping)]
-    pub fn set_tone_mapping(&mut self, name: &str) -> Result<(), Error> {
+    pub fn set_tone_mapping(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "ToneMappingName")] name: &str,
+    ) -> Result<(), Error> {
         self.tone_mapping = ToneMapping::from_name(name).ok_or_else(|| {
             Error::from(format!(
                 "setToneMapping: \"{name}\" isn't none, neutral, aces or agx"
             ))
         })?;
         Ok(())
+    }
+
+    /// The tone mapping set (`setToneMapping`).
+    #[wasm_bindgen(js_name = toneMapping, unchecked_return_type = "ToneMappingName")]
+    pub fn tone_mapping(&self) -> String {
+        self.tone_mapping.name().to_string()
     }
 
     /// Temporal antialiasing instead of multisampling (with HDR output):

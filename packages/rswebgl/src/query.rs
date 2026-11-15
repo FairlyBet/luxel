@@ -240,6 +240,7 @@ impl Context {
 
     /// JS: `query_result_async` as a Promise<number>.
     #[wasm_bindgen(js_name = queryResultAsync)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<number>")]
     pub fn query_result_promise(&self, q: QueryId) -> js_sys::Promise {
         let result = self.query_result_async(q);
         wasm_bindgen_futures::future_to_promise(async move { Ok(result.await?.into()) })

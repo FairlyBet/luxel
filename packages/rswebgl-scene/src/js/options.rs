@@ -128,10 +128,20 @@ export interface MaterialTextureOptions {
   rotation?: number;
 }
 
+/** `setToneMapping`'s names. */
+export type ToneMappingName = "none" | "neutral" | "aces" | "agx";
+
+/** `setShadingModel`'s names. */
+export type ShadingModelName = "openpbr" | "gltf";
+
+/** Handles in a typed array (`cameras`, `lights`, `materials`): reading an
+ *  element gives the handle type; it is a `Uint32Array` at run time. */
+export type Handles<T extends number> = Uint32Array & { readonly [index: number]: T };
+
 /** What `pick` found. */
 export interface PickHit {
   /** The mesh entity (its `parent` is the glTF node). */
-  entity: number;
+  entity: Entity;
   /** World position hit. */
   point: Float32Array;
   /** From the camera. */
@@ -140,12 +150,12 @@ export interface PickHit {
 
 /** What a mesh entity draws with: renderer handles, not owned by the scene. */
 export interface MeshOptions {
-  program: number;
-  state: number;
+  program: ProgramId;
+  state: StateId;
   /** 0 or absent: no vertex array (vertex-pulling shaders). */
-  vao?: number;
+  vao?: VertexArrayId;
   /** Group slot 1; 0 or absent: none. */
-  material?: number;
+  material?: ParamGroupId;
   /** Blended: drawn after opaque meshes, farthest first. */
   transparent?: boolean;
   /** Sees the opaque scene behind it (HDR output; scene_transmitted). */

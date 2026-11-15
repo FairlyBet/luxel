@@ -11,7 +11,7 @@ and render states survive a loss.
 
 
 ```bash
-wasm-pack build packages/rswebgl --target web --out-dir ../../examples/js-cube/pkg
+wasm-pack build packages/rswebgl --target web --weak-refs --out-dir ../../examples/js-cube/pkg
 node examples/js-cube/serve.mjs
 ```
 

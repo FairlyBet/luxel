@@ -75,7 +75,19 @@ await init({ module_or_path: wasmUrl });
 Without a bundler, serve the package's files and import `rswebgl.js`; serve
 `.wasm` as `application/wasm`.
 
-Types are in `rswebgl.d.ts`.
+## Types, handles and memory
+
+Types are in `rswebgl.d.ts`. Entities, materials, textures, programs and the
+other GPU objects are **handles**: plain numbers at run time, typed by kind
+(`Entity`, `ParamGroupId`, `TextureId`, `ProgramId`, …), so TypeScript
+catches a texture passed where an entity goes. Handles are freed explicitly
+(`scene.despawn`, `scene.destroyTexture`, `ctx.destroyProgram`, …).
+`cameras`, `lights` and `materials` return `Handles<T>`: a `Uint32Array`
+whose elements read as `T`.
+
+Objects (`Scene`, `Model`, `Pass`, `FrameStats`, `RenderState`, …) are
+freed by the garbage collector once unreachable; `free()` frees one at
+once, which matters for large ones such as a `Model` or a `Scene`.
 
 ## License
 

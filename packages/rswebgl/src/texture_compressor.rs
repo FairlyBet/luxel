@@ -279,6 +279,7 @@ impl TextureCompressor {
     /// Resolves once the encoders have compiled; `compress` before then
     /// waits for them (blocking).
     #[wasm_bindgen(js_name = whenReady)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn when_ready(&self) -> js_sys::Promise {
         let programs = self.encoders.borrow().values().map(|e| e.program).collect();
         let ready = self.ctx.programs_ready(programs);
@@ -314,6 +315,7 @@ impl TextureCompressor {
     /// compiled. For tests.
     #[doc(hidden)]
     #[wasm_bindgen(js_name = prepareFormat)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn prepare_format(
         &self,
         internal: u32,

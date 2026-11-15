@@ -364,7 +364,7 @@ impl Context {
 
     /// JS: called when the context is lost. Every handle is dead from here on.
     #[wasm_bindgen(js_name = setOnLost)]
-    pub fn set_on_lost(&self, f: js_sys::Function) {
+    pub fn set_on_lost(&self, #[wasm_bindgen(unchecked_param_type = "() => void")] f: js_sys::Function) {
         self.on_lost(move |_| {
             let _ = f.call0(&JsValue::NULL);
         });
@@ -373,7 +373,10 @@ impl Context {
     /// JS: called once the context is back (extensions already re-enabled).
     /// Recreate every resource here; handles from before the loss are stale.
     #[wasm_bindgen(js_name = setOnRestored)]
-    pub fn set_on_restored(&self, f: js_sys::Function) {
+    pub fn set_on_restored(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "() => void")] f: js_sys::Function,
+    ) {
         self.on_restored(move |_| {
             let _ = f.call0(&JsValue::NULL);
         });
