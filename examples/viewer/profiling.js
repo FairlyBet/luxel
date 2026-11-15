@@ -63,10 +63,10 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     return info && gl ? `${gl.getParameter(info.UNMASKED_VENDOR_WEBGL)} / ${gl.getParameter(info.UNMASKED_RENDERER_WEBGL)}` : "unknown";
   }
 
-  function start() {
-    const seconds = Number($("trace-seconds").value);
+  // The device, the page's settings and what it shows: every report's metadata.
+  function deviceMeta() {
     const nav = /** @type {any} */ (navigator);
-    const meta = {
+    return {
       userAgent: navigator.userAgent,
       gpu: gpuName(),
       extensions: (/** @type {WebGL2RenderingContext | null} */ (canvas.getContext("webgl2"))?.getSupportedExtensions() ?? []).join(" "),
@@ -78,6 +78,11 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
       date: new Date().toISOString(),
       ...describe(),
     };
+  }
+
+  function start() {
+    const seconds = Number($("trace-seconds").value);
+    const meta = deviceMeta();
     for (const [k, v] of Object.entries(meta)) Trace.metadata(k, v);
     intervals = [];
     lastFrame = -1;
@@ -206,6 +211,7 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     const base = rows[0][1];
     const text = rows.map(([l, ms]) => `${l}: ${ms.toFixed(1)} ms${l === rows[0][0] || l.startsWith("this view again") ? "" : ` (${ms - base >= 0 ? "+" : ""}${(ms - base).toFixed(1)})`}`).join("\n");
     Trace.metadata("view cost (ms, frame + 1-pixel read, median of 25)", text.replace(/\n/g, " | "));
+    for (const [k, v] of Object.entries(deviceMeta())) Trace.metadata(k, v);
     Trace.stop();
     report = Trace.report();
     reportName = `rswebgl-view-cost-${(describe().model ?? "model").replace(/[^\w.-]+/g, "_")}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;

@@ -17,6 +17,7 @@ import init, {
   setKtx2TranscoderPath,
   setTextureCompression,
   textureCompression,
+  textureCompressionStats,
 } from "./pkg/rswebgl_scene.js";
 import { createProfiling } from "./profiling.js";
 
@@ -124,6 +125,7 @@ const profiling = createProfiling({
       shading: scene.shadingModel(),
       drawn: String(scene.drawn()),
       drawCalls: String(scene.drawCalls()),
+      textureCompression: textureCompressionStats(),
     };
     // Every setting in the panel, by its id.
     for (const el of document.querySelectorAll("aside input[id], aside select[id]")) {
@@ -727,7 +729,7 @@ function frame(/** @type {number} */ now) {
     $("info").textContent =
       `\n${canvas.width}×${canvas.height}${still ? "  still" : ""}  ${scene.isHdr() ? (scene.isTaa() ? (scene.isFxaa() ? "HDR TAA+FXAA" : "HDR TAA") : scene.isFxaa() ? "HDR FXAA" : "HDR") : "direct"}  ${scene.shadingModel()}\n` +
       `drawn ${scene.drawn()} in ${scene.drawCalls()} calls  culled ${scene.culled()}  pending ${scene.pending()}  moving ${scene.movingMeshes()}\n` +
-      `variants ${scene.shaderVariantCount()}  entities ${scene.entityCount()}  file lights ${root ? scene.lights(root).length : 0}
+      `variants ${scene.shaderVariantCount()}  entities ${scene.entityCount()}  file lights ${root ? scene.lights(root).length : 0}  compressed: ${textureCompressionStats()}
 ` +
       gpuLine();
     // Frame times, 60 fps line at the middle.

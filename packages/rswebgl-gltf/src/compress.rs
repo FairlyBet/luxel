@@ -23,6 +23,9 @@ thread_local! {
     // a context loss.
     static COMPRESSOR: RefCell<Option<(Context, u32, Rc<TextureCompressor>)>> =
         const { RefCell::new(None) };
+    // Compressed textures by format: how many, milliseconds.
+    static STATS: RefCell<std::collections::BTreeMap<String, (u32, f64)>> =
+        const { RefCell::new(std::collections::BTreeMap::new()) };
 }
 
 /// Whether models loaded from now on compress their textures on the GPU
@@ -168,7 +171,33 @@ fn compress_when_ready(
     wasm_bindgen_futures::spawn_local(async move {
         let _ = wasm_bindgen_futures::JsFuture::from(comp.when_ready()).await;
         if ctx.texture_is_valid(tex) {
-            comp.compress(tex, kind);
+            let t0 = js_sys::Date::now();
+            if comp.compress(tex, kind) {
+                let ms = js_sys::Date::now() - t0;
+                let name = comp.format_name(kind).unwrap_or_default();
+                STATS.with(|s| {
+                    let mut s = s.borrow_mut();
+                    let e = s.entry(name).or_default();
+                    e.0 += 1;
+                    e.1 += ms;
+                });
+            }
         }
     });
+}
+
+/// The textures compressed so far on this page, by format, with the time
+/// spent (on the CPU's side; the GPU work runs on after): "ETC2 RGB ×2,
+/// RG11 EAC ×1 in 140 ms", or "none".
+#[wasm_bindgen(js_name = textureCompressionStats)]
+pub fn texture_compression_stats() -> String {
+    STATS.with(|s| {
+        let s = s.borrow();
+        if s.is_empty() {
+            return "none".to_string();
+        }
+        let ms: f64 = s.values().map(|e| e.1).sum();
+        let parts: Vec<String> = s.iter().map(|(k, e)| format!("{k} ×{}", e.0)).collect();
+        format!("{} in {ms:.0} ms", parts.join(", "))
+    })
 }

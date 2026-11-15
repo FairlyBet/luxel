@@ -208,6 +208,23 @@ impl TextureCompressor {
         self.format(kind, false).is_some()
     }
 
+    /// The format `kind` compresses to here ("BC1", "ETC2 RGB", …), or
+    /// none.
+    #[wasm_bindgen(js_name = formatName)]
+    pub fn format_name(&self, kind: CompressKind) -> Option<String> {
+        self.format(kind, false).map(|f| {
+            match (f.etc, f.kind) {
+                (false, CompressKind::Rgb) => "BC1",
+                (false, CompressKind::Rgba) => "BC3",
+                (false, CompressKind::Rg) => "BC5",
+                (true, CompressKind::Rgb) => "ETC2 RGB",
+                (true, CompressKind::Rgba) => "ETC2 RGBA",
+                (true, CompressKind::Rg) => "RG11 EAC",
+            }
+            .to_string()
+        })
+    }
+
     /// Resolves once the encoders have compiled; `compress` before then
     /// waits for them (blocking).
     #[wasm_bindgen(js_name = whenReady)]
