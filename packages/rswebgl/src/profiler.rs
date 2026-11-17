@@ -18,6 +18,9 @@ use crate::query::QueryKind;
 
 // Queries in flight per label at most.
 const RING_MAX: usize = 8;
+// Updates a slot attached to a pass waits for the pass to run before it
+// counts as dropped (the pass never rendered) and is freed.
+const UNRUN_UPDATES: u8 = 4;
 // Weight of a new sample in the running average (≈ the last 10 frames).
 const SMOOTHING: f64 = 0.1;
 
@@ -28,6 +31,8 @@ struct Slot {
     // The query's run count when attached: a result counts only if a pass
     // ran it since (one never rendered still holds its old result).
     run: u32,
+    // Updates seen since attached without the pass having run.
+    unrun: u8,
 }
 
 struct Timer {
@@ -95,13 +100,19 @@ impl GpuProfiler {
                     slot.awaiting = false;
                     continue;
                 };
+                // Attached but not rendered yet (`update` between `time` and
+                // the render): still waiting, unless it never comes.
+                if run == slot.run {
+                    slot.unrun += 1;
+                    if slot.unrun > UNRUN_UPDATES {
+                        slot.awaiting = false;
+                    }
+                    continue;
+                }
                 if state == crate::query::QueryState::Pending {
                     continue;
                 }
                 slot.awaiting = false;
-                if run == slot.run {
-                    continue; // attached but never rendered: an old result
-                }
                 // None: disturbed (disjoint) — dropped.
                 if let crate::query::QueryState::Ready(ns) = state {
                     let ms = ns / 1.0e6;
@@ -173,6 +184,7 @@ impl GpuProfiler {
         // reuse: free slots only.
         if let Some(slot) = timer.slots.iter_mut().find(|s| !s.awaiting) {
             slot.awaiting = true;
+            slot.unrun = 0;
             slot.run = self.ctx.poll_query(slot.query).map_or(0, |(_, r)| r);
             return Some(slot.query);
         }
@@ -184,6 +196,7 @@ impl GpuProfiler {
             query,
             awaiting: true,
             run: 0,
+            unrun: 0,
         });
         Some(query)
     }

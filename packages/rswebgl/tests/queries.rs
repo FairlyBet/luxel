@@ -214,3 +214,38 @@ async fn the_profiler_times_passes_by_label() {
     assert_eq!(profiler.milliseconds("other"), None);
     profiler.destroy();
 }
+
+// `update` between `time` and the render (a natural frame order: collect,
+// then build and draw) still records: the slot waits for its pass.
+#[wasm_bindgen_test]
+async fn the_profiler_times_when_updated_before_the_render() {
+    let f = fixture();
+    let mut profiler = rswebgl::profiler::GpuProfiler::new(&f.ctx);
+    if !profiler.available() {
+        return;
+    }
+    let program = red(&f);
+    let state = f.ctx.render_state(&RenderState::new());
+    let mut got = None;
+    for _ in 0..60 {
+        let mut pass = Pass::to_default();
+        pass.set_clear(&ClearMask::color());
+        push_quad(&f, &mut pass, program, state, 1);
+        profiler.time(&mut pass, "scene");
+        profiler.update();
+        f.ctx.render(&pass);
+        got = profiler.milliseconds("scene");
+        if got.is_some() {
+            break;
+        }
+        let p = js_sys::Promise::new(&mut |resolve, _| {
+            web_sys::window()
+                .unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 16)
+                .unwrap();
+        });
+        wasm_bindgen_futures::JsFuture::from(p).await.unwrap();
+    }
+    assert!(got.is_some(), "timings within 60 frames");
+    profiler.destroy();
+}
