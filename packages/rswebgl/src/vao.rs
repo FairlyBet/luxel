@@ -129,7 +129,8 @@ impl VertexAttr {
 #[derive(Debug)]
 pub(crate) struct VertexArrayObj {
     pub(crate) raw: WebGlVertexArrayObject,
-    attribs: Vec<Option<BufferId>>,
+    // Per attribute index: its buffer and layout (offset, stride, divisor).
+    attribs: Vec<Option<(BufferId, [i32; 3])>>,
     index_buffer: Option<BufferId>,
     pub(crate) owned: Vec<BufferId>,
 }
@@ -248,9 +249,43 @@ impl Context {
         if idx >= v.attribs.len() {
             v.attribs.resize(idx + 1, None);
         }
-        if let Some(prev) = v.attribs[idx].replace(buffer) {
+        let layout = [attr.offset, attr.stride, attr.divisor as i32];
+        if let Some((prev, _)) = v.attribs[idx].replace((buffer, layout)) {
             release_buffer(res, gl, prev);
         }
+    }
+
+    /// The buffer attribute `index` of `vao` reads (NULL if none): e.g.
+    /// one `VaoBuilder` made, to rewrite per-instance data with
+    /// `bufferWrite` (layout: `vertexArrayAttrLayout`).
+    #[wasm_bindgen(js_name = vertexArrayAttrBuffer)]
+    pub fn vertex_array_attr_buffer(&self, vao: VertexArrayId, index: u32) -> BufferId {
+        self.res()
+            .vertex_arrays
+            .get(vao.0)
+            .and_then(|v| v.attribs.get(index as usize).copied().flatten())
+            .map_or(BufferId::NULL, |(b, _)| b)
+    }
+
+    /// Where attribute `index` of `vao` sits in its buffer: `[offset,
+    /// stride, divisor]` in bytes (divisor 0: per vertex), or empty if none.
+    #[wasm_bindgen(js_name = vertexArrayAttrLayout)]
+    pub fn vertex_array_attr_layout(&self, vao: VertexArrayId, index: u32) -> Vec<i32> {
+        self.res()
+            .vertex_arrays
+            .get(vao.0)
+            .and_then(|v| v.attribs.get(index as usize).copied().flatten())
+            .map_or_else(Vec::new, |(_, l)| l.to_vec())
+    }
+
+    /// The index buffer of `vao` (NULL if none).
+    #[wasm_bindgen(js_name = vertexArrayIndexBuffer)]
+    pub fn vertex_array_index_buffer(&self, vao: VertexArrayId) -> BufferId {
+        self.res()
+            .vertex_arrays
+            .get(vao.0)
+            .and_then(|v| v.index_buffer)
+            .unwrap_or(BufferId::NULL)
     }
 
     #[wasm_bindgen(js_name = vertexArrayRemoveAttr)]
@@ -267,7 +302,7 @@ impl Context {
         gl.bind_vertex_array(Some(&v.raw));
         gl.disable_vertex_attrib_array(index);
         gl.bind_vertex_array(None);
-        if let Some(prev) = v.attribs.get_mut(index as usize).and_then(Option::take) {
+        if let Some((prev, _)) = v.attribs.get_mut(index as usize).and_then(Option::take) {
             release_buffer(res, gl, prev);
         }
     }
@@ -330,7 +365,13 @@ impl Context {
             Destroyed::Invalid => return stale("vertex array", "destroy_vertex_array", vao),
         };
         gl.delete_vertex_array(Some(&obj.raw));
-        for id in obj.attribs.into_iter().flatten().chain(obj.index_buffer) {
+        for id in obj
+            .attribs
+            .into_iter()
+            .flatten()
+            .map(|(b, _)| b)
+            .chain(obj.index_buffer)
+        {
             release_buffer(res, gl, id);
         }
         for id in obj.owned {

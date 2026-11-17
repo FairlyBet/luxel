@@ -225,3 +225,76 @@ fn limits_and_gpu_info_from_js() {
             .is_string()
     );
 }
+
+// Per-instance attributes from VaoBuilder: one quad (per vertex), two
+// offsets (per instance) — drawn twice, left and right; its buffers found
+// again and rewritten.
+#[wasm_bindgen_test]
+fn vao_builder_makes_instanced_attributes() {
+    use rswebgl::draw::{DrawCommand, DrawMode};
+    use rswebgl::framebuffer::ClearMask;
+    use rswebgl::ids::ParamGroupId;
+    use rswebgl::pass::Pass;
+    use rswebgl::render_state::RenderState;
+    const VS: &str = "#version 300 es\nlayout(location = 0) in vec2 a_pos;\n\
+        layout(location = 1) in vec2 a_offset;\n\
+        void main() { gl_Position = vec4(a_pos * 0.2 + a_offset, 0.0, 1.0); }\n";
+    const FS: &str = "#version 300 es\nprecision highp float;\nout vec4 c;\n\
+        void main() { c = vec4(1.0, 0.0, 0.0, 1.0); }\n";
+    let f = fixture();
+    let mut vb = VaoBuilder::new(&f.ctx);
+    vb.add_f32(
+        0,
+        AttrKind::F32x2,
+        &[-1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0],
+    );
+    vb.add_f32(1, AttrKind::F32x2, &[-0.5, 0.0, 0.5, 0.0]);
+    vb.set_divisor(1, 1);
+    vb.set_usage(BufferUsage::DynamicDraw);
+    vb.add_indices_u16(&[0, 1, 2, 0, 2, 3]);
+    let vao = vb.build().expect("built");
+    assert_eq!(f.ctx.vertex_array_attr_layout(vao, 1), [0, 8, 1]);
+    assert_eq!(f.ctx.vertex_array_attr_layout(vao, 0), [0, 8, 0]);
+    let instances = f.ctx.vertex_array_attr_buffer(vao, 1);
+    assert_ne!(instances, f.ctx.vertex_array_attr_buffer(vao, 0));
+    assert!(!f.ctx.vertex_array_index_buffer(vao).is_null());
+
+    let program = f.ctx.create_program(VS, FS).unwrap();
+    let state = f.ctx.render_state(&RenderState::new());
+    let mut cmd = DrawCommand::elements(
+        DrawMode::Triangles,
+        6,
+        rswebgl::draw::IndexType::UnsignedShort,
+        0,
+    );
+    cmd.instance_count = 2;
+    let draw = |f: &Fixture| {
+        let mut pass = Pass::to_default();
+        pass.set_clear(&ClearMask::color());
+        let n = ParamGroupId::NULL;
+        pass.push(program, state, vao, n, n, n, n, &cmd);
+        f.ctx.render(&pass);
+        let px = |x: i32| {
+            let mut p = [0u8; 4];
+            f.gl.read_pixels_with_opt_u8_array(
+                x,
+                H / 2,
+                1,
+                1,
+                WebGl2RenderingContext::RGBA,
+                WebGl2RenderingContext::UNSIGNED_BYTE,
+                Some(&mut p[..]),
+            )
+            .unwrap();
+            p[0]
+        };
+        [px(W / 4), px(W / 2), px(W * 3 / 4)]
+    };
+    assert_eq!(draw(&f), [255, 0, 255], "left and right, not the middle");
+    // Rewritten: both into the middle.
+    let floats = [0.0f32, 0.0, 0.0, 0.0];
+    let bytes: Vec<u8> = floats.iter().flat_map(|v| v.to_le_bytes()).collect();
+    f.ctx.buffer_write(instances, 0, &bytes);
+    assert_eq!(draw(&f), [0, 255, 0]);
+    assert_no_gl_error(&f);
+}

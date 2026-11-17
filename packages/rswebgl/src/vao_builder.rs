@@ -211,6 +211,8 @@ struct AttrEntry {
     kind: AttrKind,
     data: Vec<u8>,
     source_gl_type: u32,
+    // 0: per vertex; n: per instance, advancing every n instances.
+    divisor: u32,
 }
 
 struct IndexEntry {
@@ -226,6 +228,7 @@ pub struct VaoBuilder {
     ctx: Context,
     attrs: Vec<AttrEntry>,
     indices: Option<IndexEntry>,
+    usage: BufferUsage,
 }
 
 fn bytes_of<T>(slice: &[T]) -> Vec<u8> {
@@ -242,7 +245,28 @@ impl VaoBuilder {
             ctx: ctx.clone(),
             attrs: Vec::new(),
             indices: None,
+            usage: BufferUsage::StaticDraw,
         }
+    }
+
+    /// Makes the attribute at `index` (added already) per instance: it
+    /// advances once every `divisor` instances (1: each instance its own),
+    /// for instanced draws. Per-instance attributes go in a buffer of their
+    /// own (their count is the instances', not the vertices'); 0 makes it
+    /// per vertex again.
+    #[wasm_bindgen(js_name = setDivisor)]
+    pub fn set_divisor(&mut self, index: u32, divisor: u32) {
+        for e in self.attrs.iter_mut().filter(|e| e.index == index) {
+            e.divisor = divisor;
+        }
+    }
+
+    /// How the buffers it makes are used (default `StaticDraw`):
+    /// `DynamicDraw` for data rewritten often (`bufferWrite` into
+    /// `vertexArrayAttrBuffer`).
+    #[wasm_bindgen(js_name = setUsage)]
+    pub fn set_usage(&mut self, usage: BufferUsage) {
+        self.usage = usage;
     }
 
     #[wasm_bindgen(js_name = addF32)]
@@ -252,6 +276,7 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::FLOAT,
+            divisor: 0,
         });
     }
 
@@ -262,6 +287,7 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::HALF_FLOAT,
+            divisor: 0,
         });
     }
 
@@ -272,6 +298,7 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::BYTE,
+            divisor: 0,
         });
     }
 
@@ -282,6 +309,7 @@ impl VaoBuilder {
             kind,
             data: data.to_vec(),
             source_gl_type: WebGl2RenderingContext::UNSIGNED_BYTE,
+            divisor: 0,
         });
     }
 
@@ -292,6 +320,7 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::SHORT,
+            divisor: 0,
         });
     }
 
@@ -302,6 +331,7 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::UNSIGNED_SHORT,
+            divisor: 0,
         });
     }
 
@@ -312,6 +342,7 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::INT,
+            divisor: 0,
         });
     }
 
@@ -322,6 +353,7 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::UNSIGNED_INT,
+            divisor: 0,
         });
     }
 
@@ -384,36 +416,7 @@ impl VaoBuilder {
             }
         }
 
-        // 2. Vertex counts consistent across all attrs
-        let mut vertex_count: Option<u32> = None;
-        for e in &self.attrs {
-            let bpv = e.kind.bytes_per_vertex();
-            if !e.data.len().is_multiple_of(bpv as usize) {
-                return Err(err!(
-                    "VaoBuilder: attr index {} ({:?}) data length {} is not a multiple of bytes-per-vertex {}",
-                    e.index,
-                    e.kind,
-                    e.data.len(),
-                    bpv
-                ));
-            }
-            let n = (e.data.len() as u32) / bpv;
-            match vertex_count {
-                None => vertex_count = Some(n),
-                Some(prev) if prev != n => {
-                    return Err(err!(
-                        "VaoBuilder: attr index {} has {} vertices, expected {} (from earlier attr)",
-                        e.index,
-                        n,
-                        prev
-                    ));
-                }
-                _ => {}
-            }
-        }
-        let vertex_count = vertex_count.unwrap_or(0);
-
-        // 3. Slots in range, no collisions (matrices span multiple slots)
+        // 2. Slots in range, no collisions (matrices span multiple slots)
         let max_slots = limits::max_vertex_attribs();
         let mut used: BTreeSet<u32> = BTreeSet::new();
         for e in &self.attrs {
@@ -441,64 +444,43 @@ impl VaoBuilder {
             }
         }
 
-        // 4. Compute interleaved offsets with alignment padding
-        let mut running = 0u32;
-        let mut max_align = 1u32;
-        let mut offsets: Vec<u32> = Vec::with_capacity(self.attrs.len());
-        for e in &self.attrs {
-            let d = e.kind.desc();
-            let align = d.element_size;
-            max_align = max_align.max(align);
-            let aligned = running.next_multiple_of(align);
-            if aligned != running {
-                console::warn(&format!(
-                    "[rswebgl] VaoBuilder: padded attr at index {} from offset {} to {} for {}-byte alignment",
-                    e.index, running, aligned, align
-                ));
-            }
-            offsets.push(aligned);
-            running = aligned + e.kind.bytes_per_vertex();
-        }
-        let stride = running.next_multiple_of(max_align);
-        if stride != running {
-            console::warn(&format!(
-                "[rswebgl] VaoBuilder: padded total stride from {} to {} for {}-byte alignment",
-                running, stride, max_align
-            ));
-        }
-
-        // 5. Interleave into one byte buffer
-        let total = stride as usize * vertex_count as usize;
-        let mut interleaved = vec![0u8; total];
-        for (e, &off) in self.attrs.iter().zip(offsets.iter()) {
-            let pv = e.kind.bytes_per_vertex() as usize;
-            for v in 0..vertex_count as usize {
-                let dst = v * stride as usize + off as usize;
-                let src = v * pv;
-                interleaved[dst..dst + pv].copy_from_slice(&e.data[src..src + pv]);
-            }
-        }
-
-        // 6. Upload
+        // 3. Per-vertex attributes in one interleaved buffer, per-instance
+        //    ones (a divisor) in another: their counts differ.
         let ctx = &self.ctx;
-        let vbo = ctx.create_buffer(BufferUsage::StaticDraw, &interleaved)?;
-        ctx.own_buffer(vao, vbo);
-
-        // 7. Configure attribs — one vertex_attrib_pointer per slot for matrices
-        for (e, &off) in self.attrs.iter().zip(offsets.iter()) {
-            let d = e.kind.desc();
-            let slot_bytes = d.components * d.element_size;
-            let mut attr = e.kind.to_vertex_attr();
-            attr.stride = stride as i32;
-            for s in 0..d.slots {
-                attr.offset = (off + s * slot_bytes) as i32;
-                ctx.vertex_array_attr(vao, e.index + s, vbo, &attr);
+        for per_instance in [false, true] {
+            let group: Vec<&AttrEntry> = self
+                .attrs
+                .iter()
+                .filter(|e| (e.divisor > 0) == per_instance)
+                .collect();
+            if group.is_empty() {
+                continue;
+            }
+            let what = if per_instance {
+                "instances"
+            } else {
+                "vertices"
+            };
+            let (interleaved, stride, offsets) = interleave(&group, what)?;
+            let vbo = ctx.create_buffer(self.usage, &interleaved)?;
+            ctx.own_buffer(vao, vbo);
+            // One vertex_attrib_pointer per slot for matrices.
+            for (e, &off) in group.iter().zip(offsets.iter()) {
+                let d = e.kind.desc();
+                let slot_bytes = d.components * d.element_size;
+                let mut attr = e.kind.to_vertex_attr();
+                attr.stride = stride as i32;
+                attr.divisor = e.divisor;
+                for s in 0..d.slots {
+                    attr.offset = (off + s * slot_bytes) as i32;
+                    ctx.vertex_array_attr(vao, e.index + s, vbo, &attr);
+                }
             }
         }
 
-        // 8. Index buffer (optional)
+        // 4. Index buffer (optional)
         if let Some(idx) = &self.indices {
-            let ibo = ctx.create_index_buffer(BufferUsage::StaticDraw, &idx.data)?;
+            let ibo = ctx.create_index_buffer(self.usage, &idx.data)?;
             ctx.own_buffer(vao, ibo);
             ctx.vertex_array_set_index_buffer(vao, ibo);
             let _ = idx.gl_type; // tracked for future API (e.g. expose IndexType to caller)
@@ -506,6 +488,67 @@ impl VaoBuilder {
 
         Ok(())
     }
+}
+
+// Interleaves `group`'s data (each attribute aligned to its element size,
+// the stride to the largest): the bytes, the stride and each one's offset.
+// Every attribute must have the same count of `what` (vertices, instances).
+fn interleave(group: &[&AttrEntry], what: &str) -> Result<(Vec<u8>, u32, Vec<u32>), Error> {
+    let mut count: Option<u32> = None;
+    for e in group {
+        let bpv = e.kind.bytes_per_vertex();
+        if !e.data.len().is_multiple_of(bpv as usize) {
+            return Err(err!(
+                "VaoBuilder: attr index {} ({:?}) data length {} is not a multiple of its size {}",
+                e.index,
+                e.kind,
+                e.data.len(),
+                bpv
+            ));
+        }
+        let n = (e.data.len() as u32) / bpv;
+        match count {
+            None => count = Some(n),
+            Some(prev) if prev != n => {
+                return Err(err!(
+                    "VaoBuilder: attr index {} has {} {what}, expected {} (from an earlier attr)",
+                    e.index,
+                    n,
+                    prev
+                ));
+            }
+            _ => {}
+        }
+    }
+    let count = count.unwrap_or(0);
+    let mut running = 0u32;
+    let mut max_align = 1u32;
+    let mut offsets: Vec<u32> = Vec::with_capacity(group.len());
+    for e in group {
+        let d = e.kind.desc();
+        let align = d.element_size;
+        max_align = max_align.max(align);
+        let aligned = running.next_multiple_of(align);
+        if aligned != running {
+            console::warn(&format!(
+                "[rswebgl] VaoBuilder: padded attr at index {} from offset {} to {} for {}-byte alignment",
+                e.index, running, aligned, align
+            ));
+        }
+        offsets.push(aligned);
+        running = aligned + e.kind.bytes_per_vertex();
+    }
+    let stride = running.next_multiple_of(max_align);
+    let mut interleaved = vec![0u8; stride as usize * count as usize];
+    for (e, &off) in group.iter().zip(offsets.iter()) {
+        let pv = e.kind.bytes_per_vertex() as usize;
+        for v in 0..count as usize {
+            let dst = v * stride as usize + off as usize;
+            let src = v * pv;
+            interleaved[dst..dst + pv].copy_from_slice(&e.data[src..src + pv]);
+        }
+    }
+    Ok((interleaved, stride, offsets))
 }
 
 impl Context {
