@@ -21,6 +21,11 @@ const SIZE: i32 = 32;
 // with no zfar (infinite); a point light 1 m in front; a spot light far off
 // to the side, aimed away; an orthographic camera under it.
 fn asset_url() -> String {
+    asset_url_with(|json| json)
+}
+
+// The asset with its JSON edited.
+fn asset_url_with(edit: impl Fn(String) -> String) -> String {
     let mut bin = Vec::new();
     #[rustfmt::skip]
     let floats = [-0.5f32, -0.5, 0.0, 0.5, -0.5, 0.0, 0.5, 0.5, 0.0, -0.5, 0.5, 0.0,
@@ -72,6 +77,7 @@ fn asset_url() -> String {
         len = bin.len(),
         bin = b64(&bin),
     );
+    let json = edit(json);
     format!("data:model/gltf+json;base64,{}", b64(json.as_bytes()))
 }
 
@@ -142,5 +148,82 @@ async fn gltf_cameras_and_lights_become_entities() {
     let unlit = center();
     assert!(lit[0] > unlit[0] + 60, "lit {lit:?} vs unlit {unlit:?}");
     assert!(lit[0] == lit[1] && lit[1] == lit[2], "white light: {lit:?}");
+    scene.destroy();
+}
+
+// KHR_node_visibility (required): the bulb's node hidden — its light off
+// until shown; the spot's node hidden — the camera under it still a camera.
+#[wasm_bindgen_test]
+async fn node_visibility_hides_meshes_and_lights_not_cameras() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let hidden = r#""extensions": { "KHR_node_visibility": { "visible": false }, "KHR_lights_punctual": { "light""#;
+    let url = asset_url_with(|json| {
+        json.replace(
+            r#""extensionsUsed": ["KHR_lights_punctual"],"#,
+            r#""extensionsUsed": ["KHR_lights_punctual", "KHR_node_visibility"],
+  "extensionsRequired": ["KHR_node_visibility"],"#,
+        )
+        .replace(r#""extensions": { "KHR_lights_punctual": { "light""#, hidden)
+    });
+    let mut scene = Scene::new(&ctx).expect("scene");
+    scene.set_dither(false);
+    let root = scene.add_model(load_model(&ctx, &url).await.expect("load"));
+    let find = |scene: &Scene, name: &str| {
+        let e = scene.find_by_name(root, name);
+        assert!(!e.is_null(), "{name}");
+        e
+    };
+    let (bulb, spot, ortho, quad) = (
+        find(&scene, "bulb"),
+        find(&scene, "spot"),
+        find(&scene, "ortho"),
+        find(&scene, "quad"),
+    );
+    assert!(!scene.visible(bulb) && !scene.visible(spot) && scene.visible(quad));
+    assert!(!scene.is_shown(ortho), "under the hidden spot");
+    assert_eq!(scene.cameras(root).len(), 2, "cameras stay");
+    let eye = Entity::from_raw(scene.cameras(root)[0]);
+
+    let center = || {
+        let mut px = [0u8; 4];
+        gl.read_pixels_with_opt_u8_array(
+            SIZE / 2,
+            SIZE / 2,
+            1,
+            1,
+            Gl::RGBA,
+            Gl::UNSIGNED_BYTE,
+            Some(&mut px),
+        )
+        .unwrap();
+        px
+    };
+    wasm_bindgen_futures::JsFuture::from(scene.when_ready())
+        .await
+        .unwrap();
+    scene.render_frame(eye);
+    let unlit = center();
+    scene.set_visible(bulb, true);
+    scene.render_frame(eye);
+    let lit = center();
+    assert!(lit[0] > unlit[0] + 60, "lit {lit:?} vs hidden light {unlit:?}");
     scene.destroy();
 }

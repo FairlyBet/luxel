@@ -101,6 +101,10 @@ pub fn spawn_model(
         if let Some(w) = &node.weights {
             world.insert(e, MorphWeights(w.clone()));
         }
+        // KHR_node_visibility: hidden with all under it (as `Visible`).
+        if !node.visible {
+            world.insert(e, crate::render::Visible(false));
+        }
         by_index.insert(node.index, e);
     }
     // Skins, with joints as entities (a joint outside the scene: the root).

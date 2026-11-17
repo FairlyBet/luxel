@@ -109,6 +109,11 @@ fn walk(
             .weights()
             .or_else(|| node.mesh().and_then(|m| m.weights()))
             .map(<[f32]>::to_vec),
+        visible: node
+            .extension_value("KHR_node_visibility")
+            .and_then(|v| v.get("visible"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
     });
 
     if let Some(mesh) = node.mesh() {

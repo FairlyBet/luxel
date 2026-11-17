@@ -87,6 +87,7 @@ const HANDLED_EXTENSIONS: &[&str] = &[
     "KHR_mesh_quantization",
     "KHR_materials_variants",
     "KHR_materials_diffuse_transmission",
+    "KHR_node_visibility",
 ];
 
 // Optional vertex attributes a primitive can have (`DrawItem::attributes`).
@@ -262,6 +263,10 @@ pub struct SceneNode {
     /// Morph target weights of the node's mesh: the node's own, else the
     /// mesh's defaults; None without (animations change them).
     pub weights: Option<Vec<f32>>,
+    /// `KHR_node_visibility`'s `visible` (true without it): false hides
+    /// the node's meshes and lights and everything under it, whatever the
+    /// descendants say; not cameras.
+    pub visible: bool,
 }
 
 /// A glTF skin: the joint nodes a skinned mesh follows and, per joint, the
