@@ -25,6 +25,22 @@ impl Context {
     #[wasm_bindgen(js_name = resetGlState)]
     pub fn reset_gl_state(&self) {
         self.invalidate_state();
+        // State the library relies on being at its default and doesn't
+        // cache: buffers bound for pixel transfers, pack parameters,
+        // switches outside render states.
+        let gl = self.gl();
+        type Gl = WebGl2RenderingContext;
+        gl.bind_buffer(Gl::PIXEL_PACK_BUFFER, None);
+        gl.bind_buffer(Gl::PIXEL_UNPACK_BUFFER, None);
+        gl.pixel_storei(Gl::PACK_ALIGNMENT, 4);
+        gl.pixel_storei(Gl::PACK_ROW_LENGTH, 0);
+        gl.pixel_storei(Gl::PACK_SKIP_ROWS, 0);
+        gl.pixel_storei(Gl::PACK_SKIP_PIXELS, 0);
+        gl.disable(Gl::RASTERIZER_DISCARD);
+        gl.disable(Gl::SAMPLE_ALPHA_TO_COVERAGE);
+        gl.disable(Gl::SAMPLE_COVERAGE);
+        // Reverse-Z's clip control and depth range, as the context set them.
+        crate::depth_range::apply(&self.core);
     }
 
     /// The `WebGLTexture` behind `tex` (undefined for a stale handle): to
@@ -48,6 +64,8 @@ impl Context {
     }
 
     /// The `WebGLProgram` behind `program` (undefined for a stale handle).
+    /// Its uniforms are the context's to set: values written to it from
+    /// outside aren't known to its cache, which may skip writing them again.
     #[wasm_bindgen(js_name = rawProgram)]
     pub fn raw_program(&self, program: ProgramId) -> Option<WebGlProgram> {
         self.res().programs.get(program.0).map(|p| p.raw.clone())

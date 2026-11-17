@@ -405,7 +405,10 @@ fn run_pass(
             Ok(d) => {
                 let (w, h) = size(target);
                 let all = Viewport::new(0, 0, w, h);
+                // Whether a blit ran: only then is DRAW the resolve target.
+                let mut blitted = false;
                 if pass.resolve_color.is_empty() {
+                    blitted = true;
                     copy::blit(
                         gl,
                         target.map(|f| &f.raw),
@@ -423,9 +426,9 @@ fn run_pass(
                         }
                     });
                     for &i in &pass.resolve_color {
-                        let present = target.is_none_or(|f| f.has_color(i))
-                            && d.is_none_or(|f| f.has_color(i))
-                            && (d.is_some() || i == 0);
+                        // The canvas has attachment 0 only, as a source too.
+                        let present = target.map_or(i == 0, |f| f.has_color(i))
+                            && d.map_or(i == 0, |f| f.has_color(i));
                         if !present {
                             console::error_once(&format!(
                                 "[rswebgl] resolve: color attachment {i} is missing on the \
@@ -433,6 +436,24 @@ fn run_pass(
                             ));
                             continue;
                         }
+                        // A multisampled source resolves into the same format
+                        // only (GL ES 3.0 blitFramebuffer).
+                        let formats = (
+                            target.and_then(|f| f.color_format_in(textures, renderbuffers, i)),
+                            d.and_then(|f| f.color_format_in(textures, renderbuffers, i)),
+                        );
+                        if let (Some((a, n)), Some((b, _))) = formats
+                            && n > 0
+                            && a != b
+                        {
+                            console::error_once(&format!(
+                                "[rswebgl] resolve: color attachment {i} is 0x{a:X} \
+                                 multisampled, the resolve target's 0x{b:X}; formats must \
+                                 match, skipped"
+                            ));
+                            continue;
+                        }
+                        blitted = true;
                         copy::blit_attachment(
                             gl,
                             target.map(|f| &f.raw),
@@ -448,7 +469,27 @@ fn run_pass(
                         );
                     }
                 }
-                if pass.resolve_depth {
+                // Depth: both sides need one, of the same format (the
+                // canvas's is the browser's: not resolvable into).
+                let depth_ok = pass.resolve_depth && {
+                    let formats = (
+                        target.and_then(|f| f.depth_format(textures, renderbuffers)),
+                        d.and_then(|f| f.depth_format(textures, renderbuffers)),
+                    );
+                    match formats {
+                        (Some((a, _)), Some((b, _))) if a == b => true,
+                        _ => {
+                            console::error_once(
+                                "[rswebgl] resolve: depth needs a depth attachment of the \
+                                 same format on the target and the resolve target (not the \
+                                 canvas); skipped",
+                            );
+                            false
+                        }
+                    }
+                };
+                if depth_ok {
+                    blitted = true;
                     copy::blit(
                         gl,
                         target.map(|f| &f.raw),
@@ -460,8 +501,10 @@ fn run_pass(
                         WebGl2RenderingContext::NEAREST,
                     );
                 }
-                fb_binding = WebGl2RenderingContext::READ_FRAMEBUFFER;
-                resolved_into = Some((dst, d.map(|f| &f.raw)));
+                if blitted {
+                    fb_binding = WebGl2RenderingContext::READ_FRAMEBUFFER;
+                    resolved_into = Some((dst, d.map(|f| &f.raw)));
+                }
             }
         }
     }

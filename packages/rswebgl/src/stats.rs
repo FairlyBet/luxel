@@ -70,14 +70,29 @@ pub(crate) fn footprint(internal: u32) -> Footprint {
         | Gl::RG32UI
         | Gl::DEPTH32F_STENCIL8 => Texel(8),
         Gl::RGBA32F | Gl::RGBA32I | Gl::RGBA32UI => Texel(16),
-        // S3TC / RGTC-free BC1, ETC2 RGB, EAC R11: 8 bytes a 4×4 block.
-        0x83F0 | 0x83F1 | 0x8C4C | 0x8C4D | 0x9270 | 0x9271 | 0x9274..=0x9277 | 0x8DBB | 0x8DBC => {
-            Block {
-                w: 4,
-                h: 4,
-                bytes: 8,
-            }
-        }
+        // BC1, RGTC1, ETC1, ETC2 RGB, EAC R11, 4-bit PVRTC: 8 bytes a 4×4 block.
+        0x83F0
+        | 0x83F1
+        | 0x8C4C
+        | 0x8C4D
+        | 0x9270
+        | 0x9271
+        | 0x9274..=0x9277
+        | 0x8DBB
+        | 0x8DBC
+        | 0x8D64
+        | 0x8C00
+        | 0x8C02 => Block {
+            w: 4,
+            h: 4,
+            bytes: 8,
+        },
+        // 2-bit PVRTC: 8 bytes an 8×4 block.
+        0x8C01 | 0x8C03 => Block {
+            w: 8,
+            h: 4,
+            bytes: 8,
+        },
         // BC2/3, RGTC2, BPTC, ETC2 RGBA, EAC RG11: 16 bytes a 4×4 block.
         0x83F2
         | 0x83F3

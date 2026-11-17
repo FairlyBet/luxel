@@ -298,3 +298,22 @@ fn vao_builder_makes_instanced_attributes() {
     assert_eq!(draw(&f), [0, 255, 0]);
     assert_no_gl_error(&f);
 }
+
+// Per-instance attributes of different divisors: a buffer each; a divisor
+// set before its attribute is added counts.
+#[wasm_bindgen_test]
+fn vao_builder_takes_several_divisors() {
+    let f = fixture();
+    let mut vb = VaoBuilder::new(&f.ctx);
+    vb.set_divisor(2, 2); // before the add
+    vb.add_f32(0, AttrKind::F32x2, &[0.0; 8]); // 4 vertices
+    vb.add_f32(1, AttrKind::F32x2, &[0.0; 8]); // 4 instances
+    vb.add_f32(2, AttrKind::F32, &[0.0; 2]); // 2 values, one per 2 instances
+    vb.set_divisor(1, 1);
+    let vao = vb.build().expect("built");
+    assert_eq!(f.ctx.vertex_array_attr_layout(vao, 1)[2], 1);
+    assert_eq!(f.ctx.vertex_array_attr_layout(vao, 2)[2], 2);
+    let b = |i| f.ctx.vertex_array_attr_buffer(vao, i);
+    assert!(b(0) != b(1) && b(1) != b(2) && b(0) != b(2));
+    assert_no_gl_error(&f);
+}

@@ -686,6 +686,21 @@ impl DepthAttachment {
     }
 }
 
+// An attachment source's sized internal format and sample count.
+fn source_format(
+    src: Source,
+    textures: &Pool<TextureObj>,
+    renderbuffers: &Pool<RenderbufferObj>,
+) -> Option<(u32, i32)> {
+    match src {
+        Source::Texture(t) => Some((textures.get_in_use(t.0)?.internal.get(), 0)),
+        Source::Renderbuffer(r) => {
+            let rb = renderbuffers.get_in_use(r.0)?;
+            Some((rb.internal(), rb.samples()))
+        }
+    }
+}
+
 // Starts using an attachment source; false if its handle is stale.
 fn retain(
     src: Source,
@@ -919,14 +934,28 @@ impl FramebufferObj {
     /// The sized internal format of color attachment `index` and its sample
     /// count (0 = single-sampled), or None without one.
     pub(crate) fn color_format(&self, res: &Resources, index: u32) -> Option<(u32, i32)> {
+        self.color_format_in(&res.textures, &res.renderbuffers, index)
+    }
+
+    /// `color_format` from the pools themselves.
+    pub(crate) fn color_format_in(
+        &self,
+        textures: &Pool<TextureObj>,
+        renderbuffers: &Pool<RenderbufferObj>,
+        index: u32,
+    ) -> Option<(u32, i32)> {
         let a = self.color.get(index as usize)?.as_ref()?;
-        match a.source() {
-            Source::Texture(t) => Some((res.textures.get_in_use(t.0)?.internal.get(), 0)),
-            Source::Renderbuffer(r) => {
-                let rb = res.renderbuffers.get_in_use(r.0)?;
-                Some((rb.internal(), rb.samples()))
-            }
-        }
+        source_format(a.source(), textures, renderbuffers)
+    }
+
+    /// The sized internal format of the depth (/ stencil) attachment and its
+    /// sample count, or None without one.
+    pub(crate) fn depth_format(
+        &self,
+        textures: &Pool<TextureObj>,
+        renderbuffers: &Pool<RenderbufferObj>,
+    ) -> Option<(u32, i32)> {
+        source_format(self.depth.as_ref()?.source(), textures, renderbuffers)
     }
 
     // Clears this FBO's attachments per the mask, using each attachment's typed

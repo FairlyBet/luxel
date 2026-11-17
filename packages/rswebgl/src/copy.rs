@@ -283,6 +283,15 @@ impl Context {
             && src_rect != dst_rect
         {
             Some("a multisampled source copies into the same rectangle only".into())
+        } else if let (Some((a, n)), Some((b, _))) = (
+            s.and_then(|f| f.color_format(&res, src_index)),
+            d.and_then(|f| f.color_format(&res, dst_index)),
+        ) && n > 0
+            && a != b
+        {
+            Some(format!(
+                "a multisampled source (0x{a:X}) resolves into the same format only (0x{b:X})"
+            ))
         } else {
             None
         };

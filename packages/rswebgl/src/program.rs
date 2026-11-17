@@ -431,6 +431,13 @@ impl ProgramObj {
 
         gl.delete_shader(self.vert.take().as_ref());
         gl.delete_shader(self.frag.take().as_ref());
+        // A context lost under the link reads as a failed one: not the
+        // shader's fault.
+        if result.is_err() && gl.is_context_lost() {
+            self.error = None;
+            return result
+                .map_err(|_| Error::context_lost("the WebGL context was lost while linking"));
+        }
         self.error = result.as_ref().err().cloned();
         result.map_err(Error::shader)
     }
@@ -863,6 +870,12 @@ impl Context {
         let ctx = self.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             ready.await;
+            // Lost meanwhile: nothing linked (every handle is gone).
+            if ctx.is_lost() {
+                return Err(
+                    Error::context_lost("programsReady: the WebGL context was lost").into(),
+                );
+            }
             let failed: Vec<String> = ids.iter().filter_map(|&p| ctx.program_error(p)).collect();
             if failed.is_empty() {
                 Ok(JsValue::UNDEFINED)

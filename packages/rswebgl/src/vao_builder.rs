@@ -211,8 +211,6 @@ struct AttrEntry {
     kind: AttrKind,
     data: Vec<u8>,
     source_gl_type: u32,
-    // 0: per vertex; n: per instance, advancing every n instances.
-    divisor: u32,
 }
 
 struct IndexEntry {
@@ -229,6 +227,8 @@ pub struct VaoBuilder {
     attrs: Vec<AttrEntry>,
     indices: Option<IndexEntry>,
     usage: BufferUsage,
+    // `set_divisor` by attribute index (before or after its `add*`).
+    divisors: Vec<(u32, u32)>,
 }
 
 fn bytes_of<T>(slice: &[T]) -> Vec<u8> {
@@ -246,19 +246,20 @@ impl VaoBuilder {
             attrs: Vec::new(),
             indices: None,
             usage: BufferUsage::StaticDraw,
+            divisors: Vec::new(),
         }
     }
 
     /// Makes the attribute at `index` (added already) per instance: it
     /// advances once every `divisor` instances (1: each instance its own),
     /// for instanced draws. Per-instance attributes go in a buffer of their
-    /// own (their count is the instances', not the vertices'); 0 makes it
-    /// per vertex again.
+    /// own, one per divisor (their counts differ: n instances need
+    /// ceil(n / divisor) values); 0 makes it per vertex again. Before or
+    /// after its `add*`.
     #[wasm_bindgen(js_name = setDivisor)]
     pub fn set_divisor(&mut self, index: u32, divisor: u32) {
-        for e in self.attrs.iter_mut().filter(|e| e.index == index) {
-            e.divisor = divisor;
-        }
+        self.divisors.retain(|&(i, _)| i != index);
+        self.divisors.push((index, divisor));
     }
 
     /// How the buffers it makes are used (default `StaticDraw`):
@@ -276,7 +277,6 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::FLOAT,
-            divisor: 0,
         });
     }
 
@@ -287,7 +287,6 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::HALF_FLOAT,
-            divisor: 0,
         });
     }
 
@@ -298,7 +297,6 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::BYTE,
-            divisor: 0,
         });
     }
 
@@ -309,7 +307,6 @@ impl VaoBuilder {
             kind,
             data: data.to_vec(),
             source_gl_type: WebGl2RenderingContext::UNSIGNED_BYTE,
-            divisor: 0,
         });
     }
 
@@ -320,7 +317,6 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::SHORT,
-            divisor: 0,
         });
     }
 
@@ -331,7 +327,6 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::UNSIGNED_SHORT,
-            divisor: 0,
         });
     }
 
@@ -342,7 +337,6 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::INT,
-            divisor: 0,
         });
     }
 
@@ -353,7 +347,6 @@ impl VaoBuilder {
             kind,
             data: bytes_of(data),
             source_gl_type: WebGl2RenderingContext::UNSIGNED_INT,
-            divisor: 0,
         });
     }
 
@@ -444,20 +437,27 @@ impl VaoBuilder {
             }
         }
 
-        // 3. Per-vertex attributes in one interleaved buffer, per-instance
-        //    ones (a divisor) in another: their counts differ.
+        // 3. One interleaved buffer per divisor: per-vertex attributes (0)
+        //    in one, per-instance ones in another per divisor — their
+        //    counts differ (n instances need ceil(n / divisor) values).
         let ctx = &self.ctx;
-        for per_instance in [false, true] {
+        let divisor_of = |e: &AttrEntry| {
+            self.divisors
+                .iter()
+                .find(|&&(i, _)| i == e.index)
+                .map_or(0, |&(_, d)| d)
+        };
+        let mut divisors: Vec<u32> = self.attrs.iter().map(divisor_of).collect();
+        divisors.sort_unstable();
+        divisors.dedup();
+        for divisor in divisors {
             let group: Vec<&AttrEntry> = self
                 .attrs
                 .iter()
-                .filter(|e| (e.divisor > 0) == per_instance)
+                .filter(|e| divisor_of(e) == divisor)
                 .collect();
-            if group.is_empty() {
-                continue;
-            }
-            let what = if per_instance {
-                "instances"
+            let what = if divisor > 0 {
+                "instance values"
             } else {
                 "vertices"
             };
@@ -470,7 +470,7 @@ impl VaoBuilder {
                 let slot_bytes = d.components * d.element_size;
                 let mut attr = e.kind.to_vertex_attr();
                 attr.stride = stride as i32;
-                attr.divisor = e.divisor;
+                attr.divisor = divisor;
                 for s in 0..d.slots {
                     attr.offset = (off + s * slot_bytes) as i32;
                     ctx.vertex_array_attr(vao, e.index + s, vbo, &attr);

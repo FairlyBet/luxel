@@ -205,3 +205,62 @@ fn a_multisampled_mrt_pass_resolves_each_attachment() {
     assert_eq!(read(0)[..3], [0, 0, 255]);
     assert_eq!(read(1)[..3], [0, 0, 255]);
 }
+
+// A resolve that can't run (an attachment the resolve target lacks; depth
+// without a matching depth) is skipped without leaving the pass's target
+// bound as if it had run: the next pass draws where it says.
+#[wasm_bindgen_test]
+fn a_skipped_resolve_leaves_the_bindings_right() {
+    let f = fixture();
+    let ms = f.ctx.create_framebuffer(W, H).unwrap();
+    for i in 0..2 {
+        let rb = f
+            .ctx
+            .create_renderbuffer_multisample(RenderbufferFormat::Rgba8, 4, W, H)
+            .unwrap();
+        f.ctx.framebuffer_attach_color_renderbuffer(ms, i, rb);
+    }
+    let out = f.ctx.create_framebuffer(W, H).unwrap();
+    let plain = f
+        .ctx
+        .create_renderbuffer(RenderbufferFormat::Rgba8, W, H)
+        .unwrap();
+    f.ctx.framebuffer_attach_color_renderbuffer(out, 0, plain);
+    let program = f.ctx.create_program(VERT, TWO_COLORS_FRAG).unwrap();
+    let state = f.ctx.render_state(&RenderState::new());
+    let mut pass = Pass::new(ms);
+    pass.set_clear(&ClearMask::color());
+    pass.set_resolve(out);
+    pass.set_resolve_attachments(&[1]); // `out` has no attachment 1
+    pass.set_resolve_depth(true); // and neither has depth
+    pass.push(
+        program,
+        state,
+        f.quad,
+        NULL,
+        NULL,
+        NULL,
+        quad(&f, 1),
+        &quad_cmd(),
+    );
+    let errors = capture_console("error", || f.ctx.render(&pass));
+    assert!(
+        errors.iter().any(|e| e.contains("attachment 1")),
+        "{errors:?}"
+    );
+    // The canvas next: drawn there, not into the multisampled target.
+    let mut canvas = Pass::to_default();
+    canvas.set_clear(&ClearMask::color());
+    canvas.push(
+        program,
+        state,
+        f.quad,
+        NULL,
+        NULL,
+        NULL,
+        quad(&f, 1),
+        &quad_cmd(),
+    );
+    f.ctx.render(&canvas);
+    assert_eq!(read_quads(&f.gl)[1], RED);
+}

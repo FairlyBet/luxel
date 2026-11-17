@@ -133,7 +133,7 @@ fn upload(
     mips: bool,
 ) -> Result<(i32, i32), JsValue> {
     if ctx.is_lost() {
-        return Err("the context was lost".into());
+        return Err(rswebgl::error::Error::context_lost("the context was lost").into());
     }
     // Its model removed (or the context lost and restored) while the
     // worker transcoded: nothing to upload into.
