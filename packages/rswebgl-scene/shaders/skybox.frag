@@ -4,7 +4,9 @@
 // the scene prelude (`scene.frag.glsl`).
 
 in vec2 v_ndc;
-out vec4 frag_color;
+layout(location = 0) out vec4 frag_color;
+// No key light here (contact shadows' second attachment).
+layout(location = 1) out vec4 frag_key;
 
 uniform float u_background_blur; // 0 sharp … 1 the roughest mip
 
@@ -14,4 +16,5 @@ void main() {
     vec3 view_ray = vec3(v_ndc.x / u_proj[0][0], v_ndc.y / u_proj[1][1], -1.0);
     vec3 dir = normalize(transpose(mat3(u_view)) * view_ray);
     frag_color = vec4(scene_output(scene_reflection(dir, u_background_blur)), 1.0);
+    frag_key = vec4(0.0);
 }

@@ -191,6 +191,7 @@ vec3 shade_gltf(Surface s) {
         l_color = mix(l_color, l_clearcoat, clearcoat * clearcoat_fresnel);
 #endif
         color += l_color;
+        if (float(i) == u_light_count.w) g_key_light += l_color;
     }
 
     return s.emission * (1.0 - clearcoat * clearcoat_fresnel) + color;

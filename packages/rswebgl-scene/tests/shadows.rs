@@ -751,5 +751,22 @@ async fn contact_shadows_without_a_shadow_map() {
         (lit as i32 - right as i32).abs() <= 3,
         "in the light: {lit} (was {right})"
     );
+
+    // Lit by the environment alone (the key light at 0): a contact shadow
+    // of that light takes nothing away.
+    scene.set_environment_intensity(1.0, 1.0, 1.0);
+    scene
+        .set_light(
+            sun,
+            js_sys::JSON::parse(r#"{ "type": "directional", "intensity": 0 }"#).unwrap(),
+        )
+        .unwrap();
+    let (with_contact, _) = sides(&gl, &mut scene, camera).await;
+    scene.set_contact_shadows(JsValue::NULL).unwrap();
+    let (without, _) = sides(&gl, &mut scene, camera).await;
+    assert!(
+        (with_contact as i32 - without as i32).abs() <= 2,
+        "environment light under the square: {with_contact} (without contact shadows {without})"
+    );
     scene.destroy();
 }

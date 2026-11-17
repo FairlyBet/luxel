@@ -381,6 +381,7 @@ vec3 shade_openpbr(Surface s) {
             + (1.0 - o.fuzz * o.fuzz_e) * lit;
 #endif
         color += lit * radiance;
+        if (float(i) == u_light_count.w) g_key_light += lit * radiance;
     }
 
     // Emission from the base, through the coat on the way out (the fuzz

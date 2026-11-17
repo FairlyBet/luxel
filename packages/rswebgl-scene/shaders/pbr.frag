@@ -228,7 +228,10 @@ uniform sampler2D u_diffuse_transmission_tex;   // A
 uniform sampler2D u_diffuse_transmission_color_tex; // RGB (sRGB)
 #endif
 
-out vec4 frag_color;
+layout(location = 0) out vec4 frag_color;
+// The key light's share of the color (r): where the HDR target has a
+// second attachment, for contact shadows.
+layout(location = 1) out vec4 frag_key;
 
 vec4 base_color() {
     vec4 c = u_base_color_factor;
@@ -322,6 +325,7 @@ void main() {
     if (base_color().a < u_alpha_cutoff) discard;
 #endif
     frag_color = vec4(0.0);
+    frag_key = vec4(0.0);
     return;
 #endif
     peel_discard();
@@ -336,6 +340,7 @@ void main() {
 
 #ifdef MATERIAL_UNLIT
     frag_color = vec4(scene_output_unlit(base.rgb), base.a);
+    frag_key = vec4(0.0);
 #else
     Surface s;
     s.position = v_world;
@@ -524,5 +529,6 @@ void main() {
 #endif
 
     frag_color = vec4(scene_output(color), base.a);
+    frag_key = vec4(key_light_share(color), 0.0, 0.0, 1.0);
 #endif
 }

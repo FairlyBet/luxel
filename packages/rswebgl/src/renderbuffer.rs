@@ -20,6 +20,8 @@ use crate::limits;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderbufferFormat {
     // --- color ---
+    R8 = 0x8229,           // R8
+    Rg8 = 0x822B,          // RG8
     Rgba8 = 0x8058,        // RGBA8
     Srgb8Alpha8 = 0x8C43,  // SRGB8_ALPHA8
     Rgba16f = 0x881A,      // RGBA16F

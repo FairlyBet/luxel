@@ -14,7 +14,9 @@ struct Light {
 layout(std140) uniform Lights {
     Light u_lights[MAX_LIGHTS];
     vec4 u_light_count; // x lights in u_lights, y 1: cascades tinted,
-                        // z how far cascades reach into the one before
+                        // z how far cascades reach into the one before,
+                        // w the key light's index (−1: none): the one
+                        // contact shadows are of
     // Light i's shadow: x its first shadow map (view; < 0: none), y how
     // many (a directional light's cascades, a point light's 6 faces), z its
     // kind: 0 orthographic, 1 a spot's perspective, 2 a point's faces.
@@ -28,6 +30,17 @@ layout(std140) uniform Lights {
     vec4 u_shadow_tiles[MAX_SHADOW_VIEWS];
     mat4 u_shadow_matrices[MAX_SHADOW_VIEWS];
 };
+// What the key light (u_light_count.w) adds to the pixel, summed by the
+// shading models' light loops: the share contact shadows dim.
+vec3 g_key_light = vec3(0.0);
+
+// The key light's share of `color` (radiance), for the second output: what
+// the contact shadow, applied after the opaque pass, takes away.
+float key_light_share(vec3 color) {
+    const vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+    return clamp(dot(g_key_light, luma) / max(dot(color, luma), 1e-6), 0.0, 1.0);
+}
+
 // The environment and the output (the renderer's block).
 layout(std140) uniform Lighting {
     vec4 u_environment; // rgb intensity of the environment light, w the

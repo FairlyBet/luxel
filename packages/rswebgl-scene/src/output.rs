@@ -369,6 +369,17 @@ pub struct HdrOutput {
     // The resolved (or directly rendered) radiance the display pass reads.
     resolve_fb: FramebufferId,
     color: TextureId,
+    // With contact shadows: the key light's share of each pixel (R8, the
+    // opaque pass's second output), its multisampled renderbuffer, and the
+    // opaque pass's own framebuffers — the target's color and depth with
+    // the share beside (and its resolve). Only the opaque pass draws with
+    // two outputs; every other pass keeps `fb` (a draw buffer a shader has
+    // no output for is an error in WebGL).
+    key_output: bool,
+    key: TextureId,
+    key_rb: RenderbufferId,
+    opaque_fb: FramebufferId,
+    opaque_resolve_fb: FramebufferId,
     // A copy of the opaque scene with mips, for transmission (`grab_scale` of the size).
     grab_fb: FramebufferId,
     // Its level 1 (drawn by `grab_down`, firefly-suppressed).
@@ -556,6 +567,11 @@ impl HdrOutput {
             taa,
             fxaa: None,
             auto: None,
+            key_output: false,
+            key: TextureId::NULL,
+            key_rb: RenderbufferId::NULL,
+            opaque_fb: FramebufferId::NULL,
+            opaque_resolve_fb: FramebufferId::NULL,
         })
     }
 
@@ -832,6 +848,17 @@ impl HdrOutput {
         pass.set_target(self.fb);
         pass.set_clear(&ClearMask::color_depth());
         self.finish_pass(pass, last);
+        if !self.opaque_fb.is_null() {
+            // With the key light's share beside (cleared to none).
+            let fb = self.opaque_fb;
+            ctx.framebuffer_set_color_clear_f32(fb, 0, lin(r) * a, lin(g) * a, lin(b) * a, a);
+            ctx.framebuffer_set_color_clear_f32(fb, 1, 0.0, 0.0, 0.0, 0.0);
+            pass.set_target(fb);
+            if !self.opaque_resolve_fb.is_null() {
+                pass.set_resolve(self.opaque_resolve_fb);
+                pass.set_resolve_attachments(&[0, 1]);
+            }
+        }
         Ok(())
     }
 
@@ -1078,18 +1105,43 @@ impl HdrOutput {
         (self.fb, self.size)
     }
 
+    /// Where the occlusion is applied, and the key light's share (NULL
+    /// without contact shadows' output).
+    pub fn occlusion_target(&self) -> (FramebufferId, TextureId) {
+        (
+            self.fb,
+            if self.opaque_fb.is_null() {
+                TextureId::NULL
+            } else {
+                self.key
+            },
+        )
+    }
+
+    /// Whether the opaque pass also writes the key light's share (for
+    /// contact shadows; every shader drawing in it must then have a second
+    /// output): remade at the next frame when it changes.
+    pub fn set_key_output(&mut self, ctx: &Context, on: bool) {
+        if self.key_output != on {
+            self.key_output = on;
+            self.free_target(ctx);
+        }
+    }
+
     /// Resolves the multisampled target into the color again (after
     /// drawing into it past its pass's resolve); nothing without samples.
     pub fn resolve_again(&self, ctx: &Context) {
         if self.fb != self.resolve_fb {
             let (w, h) = self.size;
             let r = Viewport::new(0, 0, w, h);
-            ctx.blit_framebuffer(
+            // The color only (the key light's share stays as resolved).
+            ctx.blit_framebuffer_attachment(
                 self.fb,
+                0,
                 &r,
                 self.resolve_fb,
+                0,
                 &r,
-                &ClearMask::color(),
                 TextureMagFilter::Nearest,
             );
         }
@@ -1257,6 +1309,15 @@ impl HdrOutput {
         let resolve_fb = ctx.create_framebuffer(w, h)?;
         ctx.framebuffer_attach_color_texture_2d(resolve_fb, 0, color, 0);
         self.resolve_fb = resolve_fb;
+        if self.key_output {
+            let key = ctx.create_texture(
+                TextureTarget::Texture2D,
+                TextureMinFilter::Nearest,
+                TextureMagFilter::Nearest,
+            )?;
+            ctx.texture_storage_2d(key, 1, &TextureFormat::r8(), w, h);
+            self.key = key;
+        }
 
         let gw = ((w as f32 * self.grab_scale).round() as i32).max(1);
         let gh = ((h as f32 * self.grab_scale).round() as i32).max(1);
@@ -1305,6 +1366,7 @@ impl HdrOutput {
             ctx.framebuffer_attach_depth_renderbuffer(fb, depth_rb);
             if ctx.is_framebuffer_complete(fb) {
                 (self.fb, self.color_rb, self.depth_rb) = (fb, color_rb, depth_rb);
+                self.build_key_targets(ctx, w, h)?;
                 return Ok(());
             }
             ctx.destroy_framebuffer(fb);
@@ -1370,7 +1432,67 @@ impl HdrOutput {
         if !ctx.is_framebuffer_complete(resolve_fb) {
             return Err("HDR output: the half-float target is incomplete on this device".into());
         }
+        self.build_key_targets(ctx, w, h)?;
         Ok(())
+    }
+
+    // The opaque pass's framebuffers with the key light's share beside the
+    // target's color and depth (contact shadows): the multisampled ones and
+    // their resolve, or the textures themselves. Without the share's output,
+    // or if the device can't take them, none (the pass draws into `fb`).
+    fn build_key_targets(&mut self, ctx: &Context, w: i32, h: i32) -> Result<(), Error> {
+        if self.key.is_null() {
+            return Ok(());
+        }
+        let fb = ctx.create_framebuffer(w, h)?;
+        if self.fb != self.resolve_fb {
+            let rb =
+                ctx.create_renderbuffer_multisample(RenderbufferFormat::R8, self.samples, w, h)?;
+            self.key_rb = rb;
+            ctx.framebuffer_attach_color_renderbuffer(fb, 0, self.color_rb);
+            ctx.framebuffer_attach_color_renderbuffer(fb, 1, rb);
+            ctx.framebuffer_attach_depth_renderbuffer(fb, self.depth_rb);
+            let resolve = ctx.create_framebuffer(w, h)?;
+            ctx.framebuffer_attach_color_texture_2d(resolve, 0, self.color, 0);
+            ctx.framebuffer_attach_color_texture_2d(resolve, 1, self.key, 0);
+            self.opaque_resolve_fb = resolve;
+        } else {
+            ctx.framebuffer_attach_color_texture_2d(fb, 0, self.color, 0);
+            ctx.framebuffer_attach_color_texture_2d(fb, 1, self.key, 0);
+            match &self.taa {
+                Some(taa) if !taa.depth.is_null() => {
+                    ctx.framebuffer_attach_depth_texture(fb, taa.depth, 0)
+                }
+                _ => ctx.framebuffer_attach_depth_renderbuffer(fb, self.depth_rb),
+            }
+        }
+        self.opaque_fb = fb;
+        let complete = ctx.is_framebuffer_complete(fb)
+            && (self.opaque_resolve_fb.is_null()
+                || ctx.is_framebuffer_complete(self.opaque_resolve_fb));
+        if !complete {
+            // Contact shadows then dim the whole pixel, as without the share.
+            self.free_key_targets(ctx);
+        }
+        Ok(())
+    }
+
+    fn free_key_targets(&mut self, ctx: &Context) {
+        for fb in [self.opaque_fb, self.opaque_resolve_fb] {
+            if !fb.is_null() {
+                ctx.destroy_framebuffer(fb);
+            }
+        }
+        if !self.key_rb.is_null() {
+            ctx.destroy_renderbuffer(self.key_rb);
+        }
+        if !self.key.is_null() {
+            ctx.destroy_texture(self.key);
+        }
+        self.opaque_fb = FramebufferId::NULL;
+        self.opaque_resolve_fb = FramebufferId::NULL;
+        self.key_rb = RenderbufferId::NULL;
+        self.key = TextureId::NULL;
     }
 
     fn free_target(&mut self, ctx: &Context) {
@@ -1432,6 +1554,7 @@ impl HdrOutput {
         }
         self.grab_fb = FramebufferId::NULL;
         self.grab = TextureId::NULL;
+        self.free_key_targets(ctx);
         for rb in [self.color_rb, self.depth_rb] {
             if !rb.is_null() {
                 ctx.destroy_renderbuffer(rb);

@@ -79,6 +79,9 @@ impl LightsBlock {
         let mut lights: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS * 4);
         let mut shadows: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS);
         let mut splits: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS);
+        // The key light: the brightest directional one (as the scene picks
+        // it for contact shadows), by its index here; −1 without one.
+        let mut key: Option<(f32, usize)> = None;
         if let (Some(storage), Some(worlds)) =
             (world.storage::<Light>(), world.storage::<WorldMatrix>())
         {
@@ -97,6 +100,12 @@ impl LightsBlock {
                         "[rswebgl-scene] more than {MAX_LIGHTS} lights; the rest are ignored"
                     ));
                     break;
+                }
+                if matches!(light.kind, crate::lighting::LightKind::Directional) {
+                    let power = light.intensity * light.color.max_element();
+                    if key.is_none_or(|(p, _)| power > p) {
+                        key = Some((power, shadows.len()));
+                    }
                 }
                 lights.extend(light.packed(&m.0));
                 // x its first view (−1: none), y how many, z its kind (0
@@ -119,7 +128,8 @@ impl LightsBlock {
         splits.resize(MAX_LIGHTS, Vec4::splat(f32::MAX));
         let mut data = lights;
         let debug = if debug { 1.0 } else { 0.0 };
-        data.push(Vec4::new(count as f32, debug, overlap, 0.0));
+        let key = key.map_or(-1.0, |(_, i)| i as f32);
+        data.push(Vec4::new(count as f32, debug, overlap, key));
         data.extend(shadows);
         data.extend(splits);
         for i in 0..MAX_SHADOW_VIEWS {

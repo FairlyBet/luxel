@@ -94,7 +94,12 @@ impl Scene {
     /// Screen-space contact shadows of the brightest directional light, as
     /// a post-pass over the opaque scene's depth (Filament's): the small
     /// shadows its map is too coarse for, where things touch. `ContactShadowsOptions`,
-    /// or null to turn them off (off by default). HDR output only.
+    /// or null to turn them off (off by default). HDR output only. They take
+    /// away that light's share of each pixel only (the opaque pass writes
+    /// it beside the color), not the environment's or other lights' — while
+    /// every opaque mesh is the built-in PBR's; with a shader of your own
+    /// among them (it has no output for the share) the whole pixel is
+    /// dimmed, as a plain post-pass would.
     #[wasm_bindgen(js_name = setContactShadows)]
     pub fn set_contact_shadows(
         &mut self,
@@ -394,6 +399,17 @@ impl Scene {
             }
         }
         if let Some(out) = &mut self.hdr {
+            // Contact shadows dim the key light's share: the opaque pass
+            // writes it then.
+            let pbr_only = self
+                .world
+                .storage::<crate::render::MeshRenderer>()
+                .is_none_or(|m| {
+                    m.data()
+                        .iter()
+                        .all(|m| m.transparent || m.transmissive || self.pbr.is_pbr(m.program))
+                });
+            out.set_key_output(&self.ctx, self.contact_shadows.is_some() && pbr_only);
             out.set_transmission_scale(self.transmission_scale);
             match out.prepare_split(&self.ctx, w, h, pass, false) {
                 Ok(()) => {
@@ -552,7 +568,8 @@ impl Scene {
         let Some(depth) = out.screen_depth(&self.ctx) else {
             return;
         };
-        let (target, size) = out.draw_target();
+        let (_, size) = out.draw_target();
+        let (target, key) = out.occlusion_target();
         // The scene's size (the shadow casters' box), for the auto lengths.
         let scene_size = crate::lighting::scene_bounds(&self.world)
             .map_or(2.0, |(lo, hi)| (hi - lo).length().max(1e-3));
@@ -564,6 +581,7 @@ impl Scene {
                 contact.as_ref().map(|(c, l)| (c, *l)),
                 depth,
                 target,
+                key,
                 size,
                 &proj,
                 scene_size,

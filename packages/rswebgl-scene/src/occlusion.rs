@@ -139,6 +139,7 @@ impl Occlusion {
             APPLY_FRAG,
             ParamLayoutBuilder::new()
                 .texture("u_ao")
+                .texture("u_key")
                 .uniform("u_apply", UniformType::Vec4),
         )?;
         let mut plain = RenderState::new();
@@ -185,6 +186,7 @@ impl Occlusion {
         contact: Option<(&ContactShadows, Vec3)>,
         depth: TextureId,
         target: FramebufferId,
+        key: TextureId,
         size: (i32, i32),
         proj: &Mat4,
         scene_size: f32,
@@ -259,9 +261,17 @@ impl Occlusion {
 
         let (program, _, g) = self.apply;
         ctx.param_set_texture_by_name(g, "u_ao", self.smooth.0);
+        // The key light's share (contact shadows dim it alone); without
+        // one, all of the pixel.
+        let has_key = if key.is_null() { 0.0 } else { 1.0 };
+        ctx.param_set_texture_by_name(g, "u_key", if key.is_null() { self.smooth.0 } else { key });
         let ao_intensity = ao.map_or(0.0, |a| a.intensity);
         let contact_intensity = contact.map_or(0.0, |(c, _)| c.intensity);
-        ctx.param_set_floats_by_name(g, "u_apply", &[ao_intensity, contact_intensity, 0.0, 0.0]);
+        ctx.param_set_floats_by_name(
+            g,
+            "u_apply",
+            &[ao_intensity, contact_intensity, has_key, 0.0],
+        );
         self.fullscreen(ctx, program, g, self.multiply, target, size);
     }
 
