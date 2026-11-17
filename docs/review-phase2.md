@@ -135,7 +135,19 @@ release reads the log by tick. What follows is the item as reviewed.
 - Docs: rows are unstable across removals; which calls panic; the two
   stamping behaviours. Not wanted: a scheduler, resources, events.
 
-## 6. Core gaps — M
+## 6. Core gaps — M — done (but labels, an external framebuffer)
+
+Error kinds (`ContextLostError`, `ShaderError`) and `ctx.programError`,
+`programsReady` rejecting; the profiler's time → update → render order;
+`ctx.limits()` / `gpuInfo()`; `Pass.setResolveAttachments` /
+`setResolveDepth` and `blitFramebufferAttachment`; `ctx.resourceStats()`;
+VaoBuilder `setDivisor` / `setUsage` and a vertex array's buffers;
+`rawGl`, raw objects, `resetGlState`. Left: resource labels; importing an
+external framebuffer (WebXR's layer: needs a framebuffer kind without
+tracked attachments); the image-load callbacks' (0, 0) failure stays (the
+scene's and loader's promises wrap it). What follows is the item as
+reviewed.
+
 
 - **Shader errors with parallel compile**: `programsReady` never rejects
   and there's no info-log getter; editors, hot reload and fallbacks need
