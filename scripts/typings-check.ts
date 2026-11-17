@@ -6,8 +6,10 @@
 // @ts-types="../dist/npm/rswebgl.d.ts"
 import init, {
   Context,
+  type CameraOptions,
   type Entity,
   type Handles,
+  type LightOptions,
   loadModel,
   type Model,
   type ParamGroupId,
@@ -59,3 +61,16 @@ export async function check(canvas: HTMLCanvasElement, ctx: Context, scene: Scen
   ctx.destroyProgram(m);
   return [canvas, ready, name, bytes, warnings];
 }
+
+// Getters read back what setters take.
+declare const gs: Scene;
+declare const ge: Entity;
+const camOpts: CameraOptions | undefined = gs.camera(ge);
+if (camOpts) gs.setCamera(ge, camOpts);
+const lightOpts: LightOptions | undefined = gs.light(ge);
+if (lightOpts) gs.setLight(ge, lightOpts);
+const kids: Handles<Entity> = gs.children(ge);
+const firstKid: Entity = kids[0];
+const variantName: string | undefined = gs.materialVariant(ge);
+const blur: number | undefined = gs.background();
+void [firstKid, variantName, blur];

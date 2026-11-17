@@ -468,6 +468,19 @@ impl SceneRenderer {
         self.background = blur.map(|b| b.clamp(0.0, 1.0));
     }
 
+    pub fn environment_rotation(&self) -> f32 {
+        self.env_rotation
+    }
+
+    /// The background's blur, or None when it is off.
+    pub fn background(&self) -> Option<f32> {
+        self.background
+    }
+
+    pub fn debug_cascades(&self) -> bool {
+        self.lights.debug_cascades()
+    }
+
     fn environment(&self) -> &Environment {
         self.env.as_ref().unwrap_or(&self.default_env)
     }

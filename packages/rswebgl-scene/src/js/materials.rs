@@ -146,6 +146,15 @@ impl Scene {
                     as u32,
             ),
         };
+        match &name {
+            Some(n) => {
+                self.active_variants.insert(root, n.clone());
+            }
+            None => {
+                self.active_variants.remove(&root);
+            }
+        }
+        let model = self.model(root).expect("checked above");
         let default = default_material();
         let groups = model.material_groups();
         let mut changes = Vec::new();

@@ -182,6 +182,10 @@ impl LightingSystem {
 
     /// Tints what each cascade shades (red, green, blue, yellow nearest
     /// first): to see where they split.
+    pub fn debug_cascades(&self) -> bool {
+        self.debug_cascades
+    }
+
     pub fn set_debug_cascades(&mut self, on: bool) {
         self.debug_cascades = on;
     }

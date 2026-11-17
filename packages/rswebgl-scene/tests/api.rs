@@ -1454,7 +1454,11 @@ async fn a_variant_reads_its_own_texcoord_set() {
         px = s.frame().await[1];
     }
     assert_eq!(px, BLUE);
+    assert_eq!(s.scene.material_variant(quad).as_deref(), Some("blue"));
+    assert!(s.scene.set_material_variant(quad, Some("none".into())).is_err());
+    assert_eq!(s.scene.material_variant(quad).as_deref(), Some("blue"));
     s.scene.set_material_variant(quad, None).unwrap();
+    assert_eq!(s.scene.material_variant(quad), None);
     assert_eq!(s.frame().await[1], WHITE);
 }
 
@@ -1524,4 +1528,71 @@ async fn an_instance_starts_from_the_models_own_materials() {
         .set_material_variant(copy, Some("blue".into()))
         .unwrap();
     assert_eq!(s.frame().await[1], BLUE);
+}
+
+// Every setter reads back.
+#[wasm_bindgen_test]
+async fn getters_read_back_the_setters() {
+    let mut s = setup().await;
+    let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &k.into()).unwrap();
+    let cam = s.scene.camera(s.camera);
+    assert_eq!(get(&cam, "type"), "orthographic");
+    assert_eq!(get(&cam, "ymag").as_f64(), Some(0.5));
+    assert_eq!(get(&cam, "zfar").as_f64(), Some(100.0));
+    assert!(s.scene.camera(s.root).is_undefined());
+
+    let light = s.scene.spawn();
+    s.scene
+        .set_light(
+            light,
+            json(r#"{ "type": "spot", "intensity": 3, "color": [1, 0.5, 0.25], "outerConeAngle": 0.5, "castShadow": true, "shadowCascades": 2 }"#),
+        )
+        .unwrap();
+    let l = s.scene.light(light);
+    assert_eq!(get(&l, "type"), "spot");
+    assert_eq!(get(&l, "intensity").as_f64(), Some(3.0));
+    assert_eq!(get(&l, "outerConeAngle").as_f64(), Some(0.5));
+    assert_eq!(get(&l, "castShadow"), JsValue::TRUE);
+    assert_eq!(get(&l, "shadowCascades").as_f64(), Some(2.0));
+    let color: js_sys::Float32Array = get(&l, "color").dyn_into().unwrap();
+    assert_eq!(color.to_vec(), vec![1.0, 0.5, 0.25]);
+    // What it returns, setLight takes back.
+    s.scene.set_light(light, l).unwrap();
+    assert_eq!(get(&s.scene.light(light), "shadowCascades").as_f64(), Some(2.0));
+    assert!(s.scene.light(s.camera).is_undefined());
+
+    s.scene.set_exposure(1.5);
+    assert_eq!(s.scene.exposure(), 1.5);
+    s.scene.set_environment_intensity(1.0, 2.0, 3.0);
+    assert_eq!(s.scene.environment_intensity(), vec![1.0, 2.0, 3.0]);
+    s.scene.set_environment_rotation(0.25);
+    assert_eq!(s.scene.environment_rotation(), 0.25);
+    s.scene.set_background(0.5);
+    assert_eq!(s.scene.background(), Some(0.5));
+    s.scene.clear_background();
+    assert_eq!(s.scene.background(), None);
+    s.scene.set_shadow_cascade_debug(true);
+    assert!(s.scene.shadow_cascade_debug());
+    s.scene.set_auto_exposure_options(0.2, -2.0, 2.0, 1.0);
+    assert_eq!(s.scene.auto_exposure_options(), vec![0.2, -2.0, 2.0, 1.0]);
+    assert!(!s.scene.dither());
+    s.scene.set_restore_models(false);
+    assert!(!s.scene.restores_models());
+
+    let kids = s.scene.children(s.root);
+    assert_eq!(kids.len(), 3);
+    let part = Entity::from_raw(kids[0]);
+    s.scene.set_visible(s.root, false);
+    assert!(s.scene.visible(part) && !s.scene.is_shown(part));
+    assert!(!s.scene.visible(s.root));
+    s.scene.set_visible(s.root, true);
+    assert!(s.scene.is_shown(part));
+    s.scene.set_bounds(part, &[-1.0, -2.0, -3.0], &[1.0, 2.0, 3.0]);
+    assert_eq!(s.scene.bounds(part), vec![-1.0, -2.0, -3.0, 1.0, 2.0, 3.0]);
+    s.scene.set_translation(part, 4.0, 5.0, 6.0);
+    assert_eq!(&s.scene.local_matrix(part)[12..15], &[4.0, 5.0, 6.0]);
+    // A mesh node holds its primitives as children; a new entity none.
+    let lone = s.scene.spawn();
+    assert!(s.scene.children(lone).is_empty());
+    s.frame().await;
 }

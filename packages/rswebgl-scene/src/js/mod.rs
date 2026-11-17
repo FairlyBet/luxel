@@ -26,6 +26,7 @@
 
 mod animation;
 mod capture;
+mod getters;
 mod lights;
 mod materials;
 mod on_demand;
@@ -77,6 +78,8 @@ pub struct Scene {
     // Every root a model is spawned under (`addModel`, `instantiate`) →
     // the key of its model in `models` (the first root's entity).
     model_roots: HashMap<Entity, Entity>,
+    // The material variant each model root shows (`setMaterialVariant`).
+    active_variants: HashMap<Entity, String>,
     // Every material the scene knows (models' and clones), by group.
     materials: HashMap<ParamGroupId, MaterialRecord>,
     pbr: PbrShaders,
@@ -202,6 +205,7 @@ impl Scene {
             renderer: SceneRenderer::new(ctx)?,
             models: HashMap::new(),
             model_roots: HashMap::new(),
+            active_variants: HashMap::new(),
             materials: HashMap::new(),
             pbr: PbrShaders::new(),
             textures: Vec::new(),
@@ -275,6 +279,7 @@ impl Scene {
         // group goes with the group.
         if !self.model_roots.is_empty() {
             for d in descendants(&self.world, e) {
+                self.active_variants.remove(&d);
                 let Some(key) = self.model_roots.remove(&d) else {
                     continue;
                 };
