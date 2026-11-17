@@ -854,7 +854,7 @@ fn apply_depth(
 }
 
 // `draw_buffers` is per-FBO state, so it's part of realization too.
-fn sync_draw_buffers(fb: &FramebufferObj, gl: &WebGl2RenderingContext) {
+pub(crate) fn sync_draw_buffers(fb: &FramebufferObj, gl: &WebGl2RenderingContext) {
     let arr = js_sys::Array::new();
     if fb.color.iter().all(|s| s.is_none()) {
         // Depth/stencil-only (or empty) FBO: a single NONE tells GL there's no

@@ -144,3 +144,64 @@ fn assert_near(got: [u8; 2], want: [u8; 2]) {
         "{got:?} vs {want:?}"
     );
 }
+
+// Red into 0, green into 1.
+const TWO_COLORS_FRAG: &str = "#version 300 es\nprecision highp float;\n\
+    layout(location = 0) out vec4 a;\nlayout(location = 1) out vec4 b;\n\
+    void main() { a = vec4(1.0, 0.0, 0.0, 1.0); b = vec4(0.0, 1.0, 0.0, 1.0); }\n";
+
+// A multisampled MRT pass resolves each listed attachment into its own:
+// red into 0, green into 1 (before: color 0 into both).
+#[wasm_bindgen_test]
+fn a_multisampled_mrt_pass_resolves_each_attachment() {
+    let f = fixture();
+    let ms = f.ctx.create_framebuffer(W, H).unwrap();
+    let out = f.ctx.create_framebuffer(W, H).unwrap();
+    for i in 0..2 {
+        let rb = f
+            .ctx
+            .create_renderbuffer_multisample(RenderbufferFormat::Rgba8, 4, W, H)
+            .unwrap();
+        f.ctx.framebuffer_attach_color_renderbuffer(ms, i, rb);
+        let plain = f
+            .ctx
+            .create_renderbuffer(RenderbufferFormat::Rgba8, W, H)
+            .unwrap();
+        f.ctx.framebuffer_attach_color_renderbuffer(out, i, plain);
+    }
+    let program = f.ctx.create_program(VERT, TWO_COLORS_FRAG).unwrap();
+    let state = f.ctx.render_state(&RenderState::new());
+    let mut pass = Pass::new(ms);
+    pass.set_clear(&ClearMask::color());
+    pass.set_resolve(out);
+    pass.set_resolve_attachments(&[0, 1]);
+    pass.push(
+        program,
+        state,
+        f.quad,
+        NULL,
+        NULL,
+        NULL,
+        quad(&f, 1),
+        &quad_cmd(),
+    );
+    f.ctx.render(&pass);
+    let read = |i| {
+        f.ctx
+            .read_pixels(out, i, W / 2, H / 2, 1, 1, ReadFormat::Rgba8)
+            .unwrap()
+    };
+    assert_eq!(read(0)[..3], [255, 0, 0]);
+    assert_eq!(read(1)[..3], [0, 255, 0]);
+    // The resolve target's draw buffers were put back: a clear (which
+    // writes only the enabled ones) reaches both.
+    for i in 0..2 {
+        f.ctx
+            .framebuffer_set_color_clear_f32(out, i, 0.0, 0.0, 1.0, 1.0);
+    }
+    let mut again = Pass::new(out);
+    again.set_clear(&ClearMask::color());
+    f.ctx.render(&again);
+    assert_eq!(read(0)[..3], [0, 0, 255]);
+    assert_eq!(read(1)[..3], [0, 0, 255]);
+}

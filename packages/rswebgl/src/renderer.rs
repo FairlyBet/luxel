@@ -405,15 +405,61 @@ fn run_pass(
             Ok(d) => {
                 let (w, h) = size(target);
                 let all = Viewport::new(0, 0, w, h);
-                copy::blit(
-                    gl,
-                    target.map(|f| &f.raw),
-                    d.map(|f| &f.raw),
-                    all,
-                    all,
-                    WebGl2RenderingContext::COLOR_BUFFER_BIT,
-                    WebGl2RenderingContext::NEAREST,
-                );
+                if pass.resolve_color.is_empty() {
+                    copy::blit(
+                        gl,
+                        target.map(|f| &f.raw),
+                        d.map(|f| &f.raw),
+                        all,
+                        all,
+                        WebGl2RenderingContext::COLOR_BUFFER_BIT,
+                        WebGl2RenderingContext::NEAREST,
+                    );
+                } else {
+                    // Each listed attachment into the same one.
+                    let restore = d.map(|f| {
+                        move |gl: &WebGl2RenderingContext| {
+                            crate::framebuffer::sync_draw_buffers(f, gl)
+                        }
+                    });
+                    for &i in &pass.resolve_color {
+                        let present = target.is_none_or(|f| f.has_color(i))
+                            && d.is_none_or(|f| f.has_color(i))
+                            && (d.is_some() || i == 0);
+                        if !present {
+                            console::error_once(&format!(
+                                "[rswebgl] resolve: color attachment {i} is missing on the \
+                                 target or the resolve target; skipped"
+                            ));
+                            continue;
+                        }
+                        copy::blit_attachment(
+                            gl,
+                            target.map(|f| &f.raw),
+                            i,
+                            d.map(|f| &f.raw),
+                            i,
+                            all,
+                            all,
+                            WebGl2RenderingContext::NEAREST,
+                            restore
+                                .as_ref()
+                                .map(|r| r as &dyn Fn(&WebGl2RenderingContext)),
+                        );
+                    }
+                }
+                if pass.resolve_depth {
+                    copy::blit(
+                        gl,
+                        target.map(|f| &f.raw),
+                        d.map(|f| &f.raw),
+                        all,
+                        all,
+                        WebGl2RenderingContext::DEPTH_BUFFER_BIT
+                            | WebGl2RenderingContext::STENCIL_BUFFER_BIT,
+                        WebGl2RenderingContext::NEAREST,
+                    );
+                }
                 fb_binding = WebGl2RenderingContext::READ_FRAMEBUFFER;
                 resolved_into = Some((dst, d.map(|f| &f.raw)));
             }

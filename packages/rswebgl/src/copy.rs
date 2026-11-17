@@ -64,6 +64,69 @@ pub(crate) fn blit(
     }
 }
 
+/// `blit` of one color attachment into one: `src`'s `src_index` read, only
+/// `dst`'s `dst_index` written (the canvas: index 0, its back buffer).
+/// `dst_buffers` restores `dst`'s draw buffers after (`None` for the canvas).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn blit_attachment(
+    gl: &Gl,
+    src: Option<&WebGlFramebuffer>,
+    src_index: u32,
+    dst: Option<&WebGlFramebuffer>,
+    dst_index: u32,
+    s: Viewport,
+    d: Viewport,
+    filter: u32,
+    restore_dst: Option<&dyn Fn(&Gl)>,
+) {
+    gl.bind_framebuffer(Gl::READ_FRAMEBUFFER, src);
+    gl.read_buffer(if src.is_some() {
+        Gl::COLOR_ATTACHMENT0 + src_index
+    } else {
+        Gl::BACK
+    });
+    gl.bind_framebuffer(Gl::DRAW_FRAMEBUFFER, dst);
+    if dst.is_some() {
+        let arr = js_sys::Array::new();
+        for i in 0..=dst_index {
+            let v = if i == dst_index {
+                Gl::COLOR_ATTACHMENT0 + i
+            } else {
+                Gl::NONE
+            };
+            arr.push(&JsValue::from(v));
+        }
+        gl.draw_buffers(arr.as_ref());
+    }
+    let scissored = gl.is_enabled(Gl::SCISSOR_TEST);
+    if scissored {
+        gl.disable(Gl::SCISSOR_TEST);
+    }
+    gl.blit_framebuffer(
+        s.x,
+        s.y,
+        s.x + s.width,
+        s.y + s.height,
+        d.x,
+        d.y,
+        d.x + d.width,
+        d.y + d.height,
+        Gl::COLOR_BUFFER_BIT,
+        filter,
+    );
+    if scissored {
+        gl.enable(Gl::SCISSOR_TEST);
+    }
+    if let Some(restore) = restore_dst {
+        restore(gl);
+    }
+    // READ_BUFFER back to attachment 0 (what a plain blit and readPixels
+    // expect).
+    if src.is_some() {
+        gl.read_buffer(Gl::COLOR_ATTACHMENT0);
+    }
+}
+
 /// Whether the canvas's drawing buffer is multisampled (antialias): a blit
 /// can't write into it then (GL ES 3.0: DRAW with SAMPLE_BUFFERS > 0).
 pub(crate) fn canvas_multisampled(gl: &Gl) -> bool {
@@ -163,6 +226,82 @@ impl Context {
         }
         self.gl_state().forget_target();
         blit(gl, s, d, *src_rect, *dst_rect, mask.as_gl(), filter as u32);
+    }
+
+    /// `blit_framebuffer` of one color attachment: `src`'s `src_index` into
+    /// `dst`'s `dst_index` only (`FramebufferId::NULL` = the canvas, index
+    /// 0). From a multisampled `src` the resolve of that attachment (same
+    /// rectangles then); the other attachments of `dst` are left alone.
+    #[allow(clippy::too_many_arguments)]
+    #[wasm_bindgen(js_name = blitFramebufferAttachment)]
+    pub fn blit_framebuffer_attachment(
+        &self,
+        src: FramebufferId,
+        src_index: u32,
+        src_rect: &Viewport,
+        dst: FramebufferId,
+        dst_index: u32,
+        dst_rect: &Viewport,
+        filter: TextureMagFilter,
+    ) {
+        const OP: &str = "blit_framebuffer_attachment";
+        let gl = self.gl();
+        let res = self.res();
+        let get = |fb: FramebufferId| -> Result<Option<&crate::framebuffer::FramebufferObj>, ()> {
+            if fb.is_null() {
+                return Ok(None);
+            }
+            res.framebuffers
+                .get(fb.0)
+                .map(Some)
+                .ok_or_else(|| stale("framebuffer", OP, fb))
+        };
+        let (Ok(s), Ok(d)) = (get(src), get(dst)) else {
+            return;
+        };
+        let problem = if s.is_some_and(|f| !f.has_color(src_index))
+            || (s.is_none() && src_index != 0)
+        {
+            Some(format!("the source has no color attachment {src_index}"))
+        } else if d.is_some_and(|f| !f.has_color(dst_index)) || (d.is_none() && dst_index != 0) {
+            Some(format!(
+                "the destination has no color attachment {dst_index}"
+            ))
+        } else if d.is_none() && canvas_multisampled(gl) {
+            Some(
+                "the canvas is multisampled (ContextOptions.antialias), a blit can't write into it"
+                    .into(),
+            )
+        } else if d
+            .and_then(|f| f.color_format(&res, dst_index))
+            .is_some_and(|(_, n)| n > 0)
+        {
+            Some("the destination is multisampled (only reading from one resolves)".into())
+        } else if s
+            .and_then(|f| f.color_format(&res, src_index))
+            .is_some_and(|(_, n)| n > 0)
+            && src_rect != dst_rect
+        {
+            Some("a multisampled source copies into the same rectangle only".into())
+        } else {
+            None
+        };
+        if let Some(p) = problem {
+            return console::error(&format!("[rswebgl] {OP}: {p}; ignored"));
+        }
+        self.gl_state().forget_target();
+        let restore = d.map(|f| move |gl: &Gl| crate::framebuffer::sync_draw_buffers(f, gl));
+        blit_attachment(
+            gl,
+            s.map(|f| &f.raw),
+            src_index,
+            d.map(|f| &f.raw),
+            dst_index,
+            *src_rect,
+            *dst_rect,
+            filter as u32,
+            restore.as_ref().map(|r| r as &dyn Fn(&Gl)),
+        );
     }
 
     /// Copies `size` bytes from `src` at `src_offset` to `dst` at `dst_offset`

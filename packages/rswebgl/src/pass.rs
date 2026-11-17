@@ -190,6 +190,11 @@ pub struct Pass {
     pub(crate) invalidate: InvalidateMask,
     // Some(NULL) = resolve into the canvas.
     pub(crate) resolve: Option<FramebufferId>,
+    // The color attachments resolved, each into the same index of the
+    // resolve target (empty: attachment 0 into every one, as a blit does),
+    // and whether depth is too.
+    pub(crate) resolve_color: Vec<u32>,
+    pub(crate) resolve_depth: bool,
     // NULL = none; else a TimeElapsed query around the whole pass.
     pub(crate) timer: QueryId,
     // Some = the draws record into a transform feedback object.
@@ -206,6 +211,8 @@ impl Pass {
             clear_rect: None,
             invalidate: InvalidateMask::none(),
             resolve: None,
+            resolve_color: Vec::new(),
+            resolve_depth: false,
             timer: QueryId::NULL,
             feedback: None,
             items: Vec::new(),
@@ -315,6 +322,26 @@ impl Pass {
     #[wasm_bindgen(js_name = clearResolve)]
     pub fn clear_resolve(&mut self) {
         self.resolve = None;
+        self.resolve_color.clear();
+        self.resolve_depth = false;
+    }
+
+    /// With `set_resolve`: which color attachments resolve, each into the
+    /// same attachment of the resolve target (a multisampled G-buffer or
+    /// MRT pass: color, normals, velocity, IDs). Empty (the default):
+    /// attachment 0 into every color attachment of the target. Into the
+    /// canvas only attachment 0 can go.
+    #[wasm_bindgen(js_name = setResolveAttachments)]
+    pub fn set_resolve_attachments(&mut self, attachments: &[u32]) {
+        self.resolve_color = attachments.to_vec();
+    }
+
+    /// With `set_resolve`: resolve the depth (and stencil) too, into the
+    /// resolve target's depth attachment (formats must match; GL takes one
+    /// sample's value, not an average).
+    #[wasm_bindgen(js_name = setResolveDepth)]
+    pub fn set_resolve_depth(&mut self, on: bool) {
+        self.resolve_depth = on;
     }
 
     /// Measures the GPU time of the whole pass (clear, draws, resolve) with
