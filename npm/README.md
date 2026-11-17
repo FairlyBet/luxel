@@ -110,6 +110,42 @@ load, no second copy on the GPU. Each copy has its own transforms,
 visibility, animation and material variant; a material edited shows on
 every copy (`cloneMaterial` + `setMaterial` for one of its own).
 
+## Animation
+
+A model's glTF animations are listed by `scene.animations(root)` and play
+on its root. `advanceAnimations(seconds)` moves every playing one on and
+returns what happened on the way: `{ type: "finished" | "loop", root,
+animation }`.
+
+```js
+scene.playAnimation(root, 0, true);              // index, looping
+scene.crossfadeAnimation(root, 1, 0.4, false);   // fade into clip 1 over 0.4 s
+scene.setAnimationTime(root, 1.25);              // seek
+scene.setAnimationSpeed(root, -1);               // backwards
+for (const e of scene.advanceAnimations(dt)) {
+  if (e.type === "finished") scene.crossfadeAnimation(e.root, 0, 0.4, true);
+}
+```
+
+During a crossfade both clips move on and their poses mix by a weight
+rising from 0 to 1. A property only one clip animates mixes with where it
+stood when the fade began.
+
+## Background
+
+Behind the scene goes one of:
+- the environment: `scene.setBackground(blur)`, with blur from 0 (sharp)
+  to 1;
+- a flat color: `scene.setBackgroundColor([1, 1, 1])`;
+- a gradient: `scene.setBackgroundGradient(from, to, "vertical" | "radial")`.
+
+Colors are display values (sRGB 0–1, like CSS). They show exactly as given,
+neither exposed nor tone mapped, so white stays white. Glass and other
+transmissive materials see them behind the scene.
+
+`scene.clearBackground()` removes all of these: the canvas's clear color
+shows, or the page behind a transparent canvas.
+
 ## Quality, resolution, screenshots
 
 `scene.setQuality("low" | "medium" | "high")` sets antialiasing, shadow
@@ -144,6 +180,29 @@ The scene's HDR target is multisampled by default (`scene.setSamples(4)`).
 `scene.setTaa(true)` switches to temporal antialiasing, which also smooths
 shading and thin geometry; pair it with `scene.setSharpening(0.5)`.
 
+## Context loss
+
+When the browser takes the WebGL context away (a GPU reset, too many tabs),
+the scene rebuilds itself on its first call after the context is back:
+- shaders, the environment and `loadTexture` textures are made again;
+- models are fetched again from their URLs (`setRestoreModels(false)` turns
+  that off).
+
+Material handles and edits survive. `scene.whenReady()` resolves once
+everything is back, models with their images; it rejects while the context
+is lost. `scene.setOnLost(f)` and `scene.setOnRestored(f)` tell the app.
+Rebuild what you made yourself (meshes from `setMesh`, programs from
+`ctx`) in `setOnRestored`:
+
+```js
+scene.setOnLost(() => overlay.show());
+scene.setOnRestored(async () => {
+  rebuildMyMeshes();
+  await scene.whenReady();
+  overlay.hide();
+});
+```
+
 ## Bundlers
 
 The module finds its `.wasm` with `new URL("rswebgl_bg.wasm", import.meta.url)`,
@@ -166,8 +225,19 @@ other GPU objects are **handles**: plain numbers at run time, typed by kind
 (`Entity`, `ParamGroupId`, `TextureId`, `ProgramId`, …), so TypeScript
 catches a texture passed where an entity goes. Handles are freed explicitly
 (`scene.despawn`, `scene.destroyTexture`, `ctx.destroyProgram`, …).
-`cameras`, `lights` and `materials` return `Handles<T>`: a `Uint32Array`
-whose elements read as `T`.
+`cameras`, `lights`, `materials` and `children` return `Handles<T>`: a
+`Uint32Array` whose elements read as `T`.
+
+Most setters have a getter that reads the value back, often in the shape
+the setter takes:
+- `camera(e)` and `light(e)` give the options of `setCamera` and
+  `setLight`;
+- also `exposure()`, `environmentIntensity()`, `backgroundFill()`,
+  `visible(e)`, `localMatrix(e)`, `bounds(e)`, `animationSpeed(root)` and
+  `materialVariant(root)`.
+
+`visible(e)` is `e`'s own flag. `isShown(e)` also counts hidden ancestors,
+as glTF's `KHR_node_visibility` does.
 
 Objects (`Scene`, `Model`, `Pass`, `FrameStats`, `RenderState`, …) are
 freed by the garbage collector once unreachable; `free()` frees one at
