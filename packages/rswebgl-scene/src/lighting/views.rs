@@ -529,6 +529,35 @@ pub(crate) fn caster_bounds(world: &World) -> Option<(Vec3, Vec3)> {
     (lo.x <= hi.x).then_some((lo, hi))
 }
 
+/// Where the ground shadow lies: the casters' box grown by every visible
+/// mesh with bounds — glass and other meshes that cast no shadow stand on
+/// the ground too (a lamp's bulb below its shade), so the ground is under
+/// them all; only the casters darken it.
+pub(crate) fn ground_bounds(world: &World) -> Option<(Vec3, Vec3)> {
+    let mut out = caster_bounds(world);
+    let (Some(meshes), Some(bounds), Some(worlds)) = (
+        world.storage::<crate::render::MeshRenderer>(),
+        world.storage::<Bounds>(),
+        world.storage::<WorldMatrix>(),
+    ) else {
+        return out;
+    };
+    let any_hidden = world
+        .storage::<Visible>()
+        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    for (e, _) in meshes.iter() {
+        let (Some(b), Some(m)) = (bounds.get(e), worlds.get(e)) else {
+            continue;
+        };
+        if any_hidden && hidden(world, e) {
+            continue;
+        }
+        let (c, h) = b.transformed(&m.0);
+        out = Some(out.map_or((c - h, c + h), |(lo, hi)| (lo.min(c - h), hi.max(c + h))));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -49,7 +49,7 @@ use maps::ShadowMaps;
 use pack::LightsBlock;
 use settings::ShadowOptions;
 use views::{
-    CASCADE_OVERLAP, ShadowView, ViewCamera, cascade_views, caster_bounds, ground_view,
+    CASCADE_OVERLAP, ShadowView, ViewCamera, cascade_views, caster_bounds, ground_bounds, ground_view,
     point_views, shadow_view,
 };
 
@@ -363,7 +363,7 @@ impl LightingSystem {
     fn prepare_ground(&mut self, world: &World, ctx: &Context) -> usize {
         let view = if self.ground_on {
             let s = self.ground.settings;
-            caster_bounds(world).and_then(|b| ground_view(b, s.reach, s.size, ctx.reverse_z()))
+            ground_bounds(world).and_then(|b| ground_view(b, s.reach, s.size, ctx.reverse_z()))
         } else {
             None
         };

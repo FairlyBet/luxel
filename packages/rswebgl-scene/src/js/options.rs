@@ -60,8 +60,9 @@ export interface LightOptions {
   shadowMapSize?: number;
 }
 
-/** The ground shadow (`setGroundShadow`): a soft dark patch under the
- *  shadow casters, on the ground at their lowest point. */
+/** The ground shadow (`setGroundShadow`): a soft dark patch from the
+ *  shadow casters, on the ground under every visible mesh (glass too) at
+ *  their lowest point. */
 export interface GroundShadowOptions {
   /** How dark where a caster touches the ground; default 1 (above 1
    *  darkens higher parts too). */
