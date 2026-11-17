@@ -543,8 +543,10 @@ impl SceneRenderer {
         let Some(program) = self.background_program(ctx) else {
             return;
         };
-        // Still compiling: no background this frame rather than a stall.
+        // Still compiling: no background this frame rather than a stall —
+        // counted as pending, so the frame is known to be unfinished.
         if ctx.program_link_pending(program) {
+            self.stats.pending += 1;
             return;
         }
         ctx.param_set_f32(self.frame_group, self.f_background_blur, blur);

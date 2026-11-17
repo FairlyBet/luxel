@@ -1646,6 +1646,14 @@ async fn background_colors_and_gradients_show_as_given() {
     };
     let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 3);
     let color = [51u8, 102, 153, 255];
+    // Straight to the canvas the fill needs the background shader: a frame
+    // drawn while it links is unfinished, and says so.
+    s.scene.set_hdr(false);
+    s.scene.set_background_color(&[0.2, 0.4, 0.6]).unwrap();
+    s.scene.render_frame(s.camera);
+    if s.scene.pending() > 0 {
+        assert!(s.scene.needs_render(Some(s.camera.to_raw())), "redrawn once linked");
+    }
     for hdr in [true, false] {
         s.scene.set_hdr(hdr);
         s.scene.set_background_color(&[0.2, 0.4, 0.6]).unwrap();

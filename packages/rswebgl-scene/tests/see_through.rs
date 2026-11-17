@@ -138,6 +138,11 @@ async fn glass_shows_transparent_meshes_behind_it() {
     scene.set_background_color(&[0.0, 1.0, 0.0]).unwrap();
     let px = center(&gl, &mut scene, camera).await;
     assert!(px[1] > 150 && px[0] < 60, "glass over green: {px:?}");
+    // Straight to the canvas (no scene copy): the fill still, not the
+    // (black) environment.
+    scene.set_hdr(false);
+    let px = center(&gl, &mut scene, camera).await;
+    assert!(px[1] > 150 && px[0] < 60, "direct: glass over green: {px:?}");
     scene.destroy();
 }
 

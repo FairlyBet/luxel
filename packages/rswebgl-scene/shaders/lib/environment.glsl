@@ -54,15 +54,28 @@ bool scene_color_available() {
     return u_output.z > 0.5;
 }
 
-// The opaque scene seen at world point `p`, blurred for `roughness`
-// (perceptual; 1 → the last mip).
-vec3 scene_color_at(vec3 p, float roughness) {
+// Where world point `p` lands on the screen (0..1).
+vec2 screen_uv(vec3 p) {
     vec4 clip = u_view_proj * vec4(p, 1.0);
-    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    return clip.xy / clip.w * 0.5 + 0.5;
+}
+
+bool background_filled() {
+    return u_fill_a.w > 0.5;
+}
+
+// The background fill (shown as is) at screen position `uv`, as radiance
+// that displays near it: the set exposure undone; not auto exposure, nor
+// the tone mapping.
+vec3 background_radiance(vec2 uv) {
+    return srgb_to_linear(background_fill(uv, u_fill_a, u_fill_b)) / max(u_lighting.y, 1e-6);
+}
+
+// The opaque scene seen at world point `p`, blurred for `roughness`
+// (perceptual; 1 → the last mip): over the background fill if there is one.
+vec3 scene_color_at(vec3 p, float roughness) {
+    vec2 uv = screen_uv(p);
     vec4 s = textureLod(u_scene_color, uv, max(roughness * u_output.w, u_output.z - 1.0));
-    if (u_fill_a.w < 0.5) return s.rgb;
-    // Behind the scene, the background fill (shown as is): as radiance that
-    // displays near it (exposure undone, tone mapping not).
-    vec3 fill = srgb_to_linear(background_fill(uv, u_fill_a, u_fill_b)) / max(u_lighting.y, 1e-6);
-    return s.rgb + fill * (1.0 - s.a);
+    if (!background_filled()) return s.rgb;
+    return s.rgb + background_radiance(uv) * (1.0 - s.a);
 }
