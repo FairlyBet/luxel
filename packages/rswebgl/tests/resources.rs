@@ -252,3 +252,53 @@ fn array_mip_levels_follow_width_and_height_only() {
     );
     f.ctx.destroy_texture(ok);
 }
+
+// Live objects and their memory, counted up and back down.
+#[wasm_bindgen_test]
+fn resource_stats_count_objects_and_bytes() {
+    use rswebgl::renderbuffer::RenderbufferFormat;
+    let f = fixture();
+    let stat = |k: &str| {
+        js_sys::Reflect::get(&f.ctx.resource_stats(), &k.into())
+            .unwrap()
+            .as_f64()
+            .unwrap()
+    };
+    let (buffers, bytes) = (stat("buffers"), stat("bufferBytes"));
+    let (textures, tex_bytes, rb_bytes) = (
+        stat("textures"),
+        stat("textureBytes"),
+        stat("renderbufferBytes"),
+    );
+    let buf = f
+        .ctx
+        .create_buffer(BufferUsage::StaticDraw, &[0; 100])
+        .unwrap();
+    let tex = f
+        .ctx
+        .create_texture(
+            TextureTarget::Texture2D,
+            TextureMinFilter::Linear,
+            TextureMagFilter::Linear,
+        )
+        .unwrap();
+    // 64² RGBA8 with a full chain: 64² + 32² + … + 1 texels × 4 bytes.
+    f.ctx
+        .texture_storage_2d(tex, 7, &TextureFormat::rgba8(), 64, 64);
+    let rb = f
+        .ctx
+        .create_renderbuffer_multisample(RenderbufferFormat::Rgba8, 4, 8, 8)
+        .unwrap();
+    assert_eq!(stat("buffers"), buffers + 1.0);
+    assert_eq!(stat("bufferBytes"), bytes + 100.0);
+    assert_eq!(stat("textures"), textures + 1.0);
+    let chain: f64 = (0..7).map(|l| ((64 >> l) * (64 >> l) * 4) as f64).sum();
+    assert_eq!(stat("textureBytes"), tex_bytes + chain);
+    assert_eq!(stat("renderbufferBytes"), rb_bytes + (8 * 8 * 4 * 4) as f64);
+    f.ctx.destroy_buffer(buf);
+    f.ctx.destroy_texture(tex);
+    f.ctx.destroy_renderbuffer(rb);
+    assert_eq!(stat("buffers"), buffers);
+    assert_eq!(stat("textureBytes"), tex_bytes);
+    assert_eq!(stat("renderbufferBytes"), rb_bytes);
+}

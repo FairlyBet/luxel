@@ -55,6 +55,12 @@ pub(crate) struct RenderbufferObj {
 }
 
 impl RenderbufferObj {
+    // Its storage, every sample (an estimate: `resource_stats`).
+    pub(crate) fn bytes(&self) -> u64 {
+        crate::stats::image_bytes(self.internal(), self.width, self.height)
+            * self.samples.max(1) as u64
+    }
+
     pub(crate) fn internal(&self) -> u32 {
         self.format.as_gl()
     }
