@@ -29,7 +29,17 @@ impl Scene {
         self.invalidate();
         let aspect = self.world.get::<Camera>(e).map_or(1.0, |c| c.aspect);
         let near = options::f32_or(&camera, "znear", 0.1)?;
-        let far = options::f32_or(&camera, "zfar", 1000.0)?;
+        // Infinity: no far plane (a glTF camera without zfar; perspective
+        // only).
+        let infinite = js_sys::Reflect::get(&camera, &"zfar".into())
+            .ok()
+            .and_then(|v| v.as_f64())
+            == Some(f64::INFINITY);
+        let far = if infinite {
+            f32::INFINITY
+        } else {
+            options::f32_or(&camera, "zfar", 1000.0)?
+        };
         if !(near > 0.0 && far > near) {
             return Err("setCamera: needs 0 < znear < zfar".into());
         }
@@ -39,6 +49,9 @@ impl Scene {
                 Camera::perspective(fov, aspect, near, far)
             }
             "orthographic" => {
+                if infinite {
+                    return Err("setCamera: an orthographic camera needs a finite zfar".into());
+                }
                 let ymag = options::f32_or(&camera, "ymag", 1.0)?;
                 Camera::orthographic(ymag, aspect, near, far)
             }

@@ -110,7 +110,7 @@ export interface ContactShadowsOptions {
 
 /** A camera. It looks down its entity's −Z, +Y up. */
 export type CameraOptions =
-  | { type: "perspective"; /** radians; default π/4 */ yfov?: number; znear?: number; zfar?: number }
+  | { type: "perspective"; /** radians; default π/4 */ yfov?: number; znear?: number; /** Infinity: no far plane */ zfar?: number }
   | { type: "orthographic"; /** half the view height; default 1 */ ymag?: number; znear?: number; zfar?: number };
 
 /** How `loadTexture` makes a texture. */

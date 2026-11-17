@@ -158,7 +158,8 @@ impl Scene {
         let default = default_material();
         let groups = model.material_groups();
         let mut changes = Vec::new();
-        for e in descendants(&self.world, root) {
+        // Its own meshes: a model hung under it has its own items.
+        for e in self.own_entities(root) {
             let Some(prim) = self.world.get::<Primitive>(e) else {
                 continue;
             };
@@ -589,6 +590,15 @@ impl Scene {
 
     // The model mesh `e` belongs to: the nearest ancestor (or itself) that
     // is a model root.
+    /// The entities of the model at `root` (at or under it, not inside
+    /// another model hung under it).
+    pub(super) fn own_entities(&self, root: Entity) -> Vec<Entity> {
+        descendants(&self.world, root)
+            .into_iter()
+            .filter(|&e| self.model_root_of(e) == Some(root))
+            .collect()
+    }
+
     pub(super) fn model_root_of(&self, mut e: Entity) -> Option<Entity> {
         for _ in 0..=self.world.len() {
             if self.model_roots.contains_key(&e) {

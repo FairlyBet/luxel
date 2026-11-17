@@ -1493,6 +1493,15 @@ async fn a_variant_reads_its_own_texcoord_set() {
     s.scene.set_material_variant(quad, None).unwrap();
     assert_eq!(s.scene.material_variant(quad), None);
     assert_eq!(s.frame().await[1], WHITE);
+    // A model hung under it keeps its own materials when it switches.
+    let nested = load_model(&s.ctx, &asset_url()).await.unwrap();
+    let nested = s.scene.add_model(nested);
+    s.scene.set_parent(nested, quad);
+    let own = s.scene.materials(nested);
+    s.scene
+        .set_material_variant(quad, Some("blue".into()))
+        .unwrap();
+    assert_eq!(s.scene.materials(nested), own);
 }
 
 // A model spawned again shares its GPU data: drawn twice, still drawn with
@@ -1573,6 +1582,17 @@ async fn getters_read_back_the_setters() {
     assert_eq!(get(&cam, "ymag").as_f64(), Some(0.5));
     assert_eq!(get(&cam, "zfar").as_f64(), Some(100.0));
     assert!(s.scene.camera(s.root).is_undefined());
+    // No far plane (a glTF camera without zfar) reads back and goes back.
+    let far = s.scene.spawn();
+    let opts = json(r#"{ "type": "perspective", "yfov": 0.5 }"#);
+    js_sys::Reflect::set(&opts, &"zfar".into(), &f64::INFINITY.into()).unwrap();
+    s.scene.set_camera(far, opts).unwrap();
+    let back = s.scene.camera(far);
+    assert_eq!(get(&back, "zfar").as_f64(), Some(f64::INFINITY));
+    s.scene.set_camera(far, back).unwrap();
+    let ortho = json(r#"{ "type": "orthographic" }"#);
+    js_sys::Reflect::set(&ortho, &"zfar".into(), &f64::INFINITY.into()).unwrap();
+    assert!(s.scene.set_camera(far, ortho).is_err());
 
     let light = s.scene.spawn();
     s.scene

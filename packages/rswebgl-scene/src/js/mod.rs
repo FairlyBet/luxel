@@ -985,7 +985,7 @@ impl Scene {
     /// the images of the models added (`Model.whenLoaded`). After a context
     /// loss, for what the scene reloads too: its models (fetched again, with
     /// their images) and `loadTexture` textures. Rejects (ContextLostError)
-    /// while the context is lost.
+    /// when the context is lost, or was while it waited.
     #[wasm_bindgen(js_name = whenReady)]
     #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn when_ready(&mut self) -> js_sys::Promise {
@@ -1011,10 +1011,13 @@ impl Scene {
         let environment = self.env_pending.as_ref().map(|p| p.finished());
         let images: Vec<js_sys::Promise> = self.models.values().map(|m| m.when_loaded()).collect();
         let restoring = self.restore_tasks.clone();
-        let lost = self.ctx.is_lost();
+        let (ctx, generation) = (self.ctx.clone(), self.ctx.generation());
         wasm_bindgen_futures::future_to_promise(async move {
-            if lost {
-                return Err(Error::context_lost("whenReady: the WebGL context is lost").into());
+            // Lost (now, or while waiting: what it waited for is gone).
+            let lost = || ctx.is_lost() || ctx.generation() != generation;
+            let error = || Err(Error::context_lost("whenReady: the WebGL context was lost").into());
+            if lost() {
+                return error();
             }
             ready.await;
             for task in restoring {
@@ -1025,6 +1028,9 @@ impl Scene {
             }
             for loaded in images {
                 let _ = wasm_bindgen_futures::JsFuture::from(loaded).await;
+            }
+            if lost() {
+                return error();
             }
             Ok(JsValue::UNDEFINED)
         })

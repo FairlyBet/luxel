@@ -9,16 +9,23 @@ use crate::hierarchy::descendants;
 use crate::transform::{Transform, WorldMatrix};
 
 /// The world-space box around the `Bounds` of `root` and everything under it
-/// (as of the last `TransformSystem::update`), or None when none has bounds.
+/// that is shown (`Visible`, KHR_node_visibility) — as of the last
+/// `TransformSystem::update` — or None when none has bounds.
 /// Rotated boxes count whole (the box around each, not its exact shape).
 pub fn world_bounds(world: &World, root: Entity) -> Option<(Vec3, Vec3)> {
     let bounds = world.storage::<Bounds>()?;
     let worlds = world.storage::<WorldMatrix>()?;
+    let any_hidden = world
+        .storage::<crate::render::Visible>()
+        .is_some_and(|v| v.data().iter().any(|v| !v.0));
     let mut out: Option<(Vec3, Vec3)> = None;
     for e in descendants(world, root) {
         let (Some(b), Some(m)) = (bounds.get(e), worlds.get(e)) else {
             continue;
         };
+        if any_hidden && crate::render::hidden(world, e) {
+            continue;
+        }
         let (c, h) = b.transformed(&m.0);
         let (lo, hi) = (c - h, c + h);
         out = Some(out.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))));

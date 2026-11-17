@@ -32,7 +32,6 @@ use wasm_bindgen::prelude::*;
 use super::Scene;
 
 use crate::hdr::decode_hdr_rgbe;
-use crate::hierarchy::descendants;
 use crate::model::{Morph, Primitive};
 use crate::pbr::PbrShaders;
 use crate::render::{MeshRenderer, Reloading};
@@ -118,7 +117,12 @@ impl Scene {
         self.reload_models();
         // After this call returns (the app may call the scene from it).
         if let Some(f) = self.loss_events.on_restored.clone() {
+            let alive = self.alive.clone();
             wasm_bindgen_futures::spawn_local(async move {
+                // Not for a scene destroyed since.
+                if !alive.get() {
+                    return;
+                }
                 if let Err(e) = f.call0(&JsValue::NULL) {
                     console::error(&format!("[rswebgl-scene] onRestored threw: {e:?}"));
                 }
@@ -198,9 +202,11 @@ impl Scene {
             let mut resolve = None;
             let loaded = js_sys::Promise::new(&mut |r, _| resolve = Some(r));
             let resolve = resolve.expect("the executor runs at once");
-            let on_load = move |_| -> js_sys::Function {
+            let ctx = self.ctx.clone();
+            let on_load = move |tex: TextureId| -> js_sys::Function {
                 Closure::once_into_js(move |w: f64, _h: f64| {
-                    if w == 0.0 {
+                    // Not for a texture gone meanwhile (another loss).
+                    if w == 0.0 && ctx.texture_is_valid(tex) {
                         console::error(&format!("[rswebgl-scene] restore: can't load {url}"));
                     }
                     let _ = resolve.call0(&JsValue::NULL);
@@ -289,7 +295,7 @@ impl Scene {
                      (setRestoreModels(false)): their meshes stay out of frames until replaced",
                 );
                 for r in self.roots_of(root) {
-                    for e in descendants(&self.world, r) {
+                    for e in self.own_entities(r) {
                         if self.world.get::<MeshRenderer>(e).is_some() {
                             self.world.insert(e, Reloading);
                         }
@@ -298,7 +304,7 @@ impl Scene {
                 return;
             };
             for r in self.roots_of(root) {
-                for e in descendants(&self.world, r) {
+                for e in self.own_entities(r) {
                     if self.world.get::<MeshRenderer>(e).is_some() {
                         self.world.insert(e, Reloading);
                     }
@@ -374,10 +380,12 @@ impl Scene {
                 }
             }
             let items: Vec<_> = model.items().iter().map(|i| (i.vao(), i.morph())).collect();
+            // Its own meshes (a model hung under one of its roots reloads
+            // on its own).
             let meshes: Vec<Entity> = self
                 .roots_of(root)
                 .into_iter()
-                .flat_map(|r| descendants(&self.world, r))
+                .flat_map(|r| self.own_entities(r))
                 .collect();
             for e in meshes {
                 let Some(item) = self.world.get::<Primitive>(e).map(|p| p.item as usize) else {
