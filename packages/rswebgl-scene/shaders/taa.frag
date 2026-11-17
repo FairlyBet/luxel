@@ -13,8 +13,10 @@
 // - the tonemap for filtering, clipping and blending sees the exposed
 //   color (the display's exposure: Bevy's targets are pre-exposed);
 // - the history holds linear premultiplied radiance and the confidence in
-//   its alpha; coverage alpha is read from the current frame by the
-//   display;
+//   its alpha; the coverage (what the display lays a background fill or
+//   the page under) is resolved beside it, in the motion target's z, with
+//   the same history, clip and weight — the frame's own 0-or-1 coverage
+//   under resolved edges would fringe them;
 // - the opaque scene only: transmissive and transparent meshes draw after
 //   the resolve, unjittered — refraction turns the jitter into jumps of
 //   several pixels, and their motion isn't the depth's — so no reactive
@@ -32,7 +34,7 @@ precision highp sampler2D;
 
 in vec2 v_ndc;
 layout(location = 0) out vec4 frag_color; // rgb linear premultiplied, a confidence
-layout(location = 1) out vec4 frag_motion; // xy the motion used (uv now − uv then)
+layout(location = 1) out vec4 frag_motion; // xy the motion used (uv now − uv then), z the coverage
 
 uniform sampler2D u_current;  // this frame (jittered), linear HDR
 uniform sampler2D u_history;  // the last resolve
@@ -78,12 +80,13 @@ vec3 ycocg_to_rgb(vec3 c) {
     return clamp(vec3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z), 0.0, 1.0);
 }
 
-vec3 clip_towards_aabb_center(vec3 history, vec3 lo, vec3 hi) {
-    vec3 p = 0.5 * (hi + lo);
-    vec3 e = 0.5 * (hi - lo) + 1e-8;
-    vec3 v = history - p;
-    float m = max3(abs(v / e));
-    return m > 1.0 ? p + v / m : history;
+// w counts only with `coverage` (else as the 3D clip).
+vec4 clip_towards_aabb_center(vec4 history, vec4 lo, vec4 hi, bool coverage) {
+    vec4 p = 0.5 * (hi + lo);
+    vec4 e = 0.5 * (hi - lo) + 1e-8;
+    vec4 v = abs((history - p) / e);
+    float m = coverage ? max(max3(v.xyz), v.w) : max3(v.xyz);
+    return m > 1.0 ? p + (history - p) / m : history;
 }
 
 vec3 sample_history(vec2 uv) {
@@ -134,7 +137,7 @@ void main() {
     vec4 original = texelFetch(u_current, px, 0);
     if (u_taa.x > 0.5) {
         frag_color = vec4(original.rgb, 1.0 / MIN_HISTORY_BLEND_RATE);
-        frag_motion = vec4(0.0);
+        frag_motion = vec4(0.0, 0.0, original.a, 0.0);
         return;
     }
     vec3 current = tonemap(original.rgb);
@@ -183,38 +186,59 @@ void main() {
     vec2 pixel_motion = abs(motion) * size;
     bool still = pixel_motion.x < 0.01 && pixel_motion.y < 0.01;
 
-    // Clipped to the 3×3 neighborhood's spread in YCoCg (Salvi 2016).
-    vec3 m1 = vec3(0.0);
-    vec3 m2 = vec3(0.0);
+    // Clipped to the 3×3 neighborhood's spread in YCoCg (Salvi 2016) — with
+    // the coverage as a fourth axis, in the tonemap's weighting (each
+    // sample's 1 / (1 + max) = 1 − max of its tonemapped value), the color
+    // is. A shape's edge over nothing has its samples on one ray from the
+    // origin; clipping and mixing along it keep color and coverage in
+    // ratio (the unpremultiplied color the display divides out), where
+    // clipping the color alone would darken the edge against a fill.
+    ivec2 then = clamp(ivec2(history_uv * size), ivec2(0), ivec2(size) - 1);
+    float history_coverage = texelFetch(u_prev_motion, then, 0).z;
+    vec4 h4 = vec4(rgb_to_ycocg(history), history_coverage * (1.0 - max3(history)));
+    vec4 m1 = vec4(0.0);
+    vec4 m2 = vec4(0.0);
+    float a_min = history_coverage;
+    ivec2 isize = ivec2(size);
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
-            vec3 s = (x == 0 && y == 0) ? rgb_to_ycocg(current) : sample_current(px + ivec2(x, y));
+            vec4 c = texelFetch(u_current, clamp(px + ivec2(x, y), ivec2(0), isize - 1), 0);
+            vec3 t = (x == 0 && y == 0) ? current : tonemap(c.rgb);
+            vec4 s = vec4(rgb_to_ycocg(t), c.a * (1.0 - max3(t)));
             m1 += s;
             m2 += s * s;
+            a_min = min(a_min, c.a);
         }
     }
-    vec3 mean = m1 / 9.0;
-    vec3 sd = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
-    history = ycocg_to_rgb(clip_towards_aabb_center(rgb_to_ycocg(history), mean - sd, mean + sd));
+    vec4 mean = m1 / 9.0;
+    vec4 sd = sqrt(max(m2 / 9.0 - mean * mean, vec4(0.0)));
+    // All covered (an opaque background): the color alone, as without.
+    bool partial = a_min < 1.0;
+    h4 = clip_towards_aabb_center(h4, mean - sd, mean + sd, partial);
+    history = ycocg_to_rgb(h4.xyz);
 
     // Confidence grows while the pixel holds still, resets when it moves.
     float confidence = texelFetch(u_history, px, 0).a;
     confidence = still ? min(confidence + 10.0, 1000.0) : 1.0;
     float factor = clamp(1.0 / confidence, MIN_HISTORY_BLEND_RATE, DEFAULT_HISTORY_BLEND_RATE);
     // Disocclusion: the history's pixel moved otherwise last frame.
-    ivec2 then = clamp(ivec2(history_uv * size), ivec2(0), ivec2(size) - 1);
     vec2 prev_motion = texelFetch(u_prev_motion, then, 0).xy;
     float disocclusion = (length((prev_motion - motion) * size) - DISOCCLUSION_THRESHOLD) * DISOCCLUSION_SCALE;
     if (disocclusion > 0.0) {
         factor = min(factor + disocclusion, 1.0);
         confidence = 1.0;
     }
-    frag_motion = vec4(motion, 0.0, 0.0);
     // History from off screen: none to use.
     if (any(notEqual(clamp(history_uv, 0.0, 1.0), history_uv))) {
         factor = 1.0;
         confidence = 1.0;
     }
-    current = mix(history, current, factor);
+    // The coverage mixed as the color is, then out of the tonemap's
+    // weighting as the color comes out of it.
+    vec3 mixed = mix(history, current, factor);
+    float weighted = mix(h4.w, original.a * (1.0 - max3(current)), factor);
+    float coverage = partial ? clamp(weighted / max(1.0 - max3(mixed), 1e-4), 0.0, 1.0) : 1.0;
+    frag_motion = vec4(motion, coverage, 0.0);
+    current = mixed;
     frag_color = vec4(reverse_tonemap(current), confidence);
 }

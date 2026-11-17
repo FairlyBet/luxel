@@ -36,13 +36,16 @@ use crate::shader::chunk;
 
 const PRESENT_FRAG: &str = include_str!("../shaders/present.frag");
 const TAA_FRAG: &str = include_str!("../shaders/taa.frag");
-/// The resolved history back into the target (its rgb; alpha masked off).
+/// The resolved history back into the target: its rgb, and the resolved
+/// coverage (the motion target's z) as alpha.
 const TAA_COPY_FRAG: &str = "precision highp float;
 precision highp sampler2D;
 out vec4 frag_color;
 uniform sampler2D u_source;
+uniform sampler2D u_coverage;
 void main() {
-    frag_color = vec4(texelFetch(u_source, ivec2(gl_FragCoord.xy), 0).rgb, 1.0);
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    frag_color = vec4(texelFetch(u_source, p, 0).rgb, texelFetch(u_coverage, p, 0).z);
 }
 ";
 const FXAA_FRAG: &str = include_str!("../shaders/fxaa.frag");
@@ -504,11 +507,10 @@ impl HdrOutput {
                 ShaderSource::plain("taa_copy.frag", &format!("{prefix}{TAA_COPY_FRAG}"));
             let copy_program = ctx.create_program_from(&vert, &copy_frag)?;
             let copy_layout =
-                ctx.create_param_layout(&ParamLayoutBuilder::new().texture("u_source"))?;
+                ctx.create_param_layout(&ParamLayoutBuilder::new().texture("u_source").texture("u_coverage"))?;
             let mut copy_state = RenderState::new();
             copy_state.depth_test = false;
             copy_state.depth_mask = false;
-            copy_state.color_mask_a = false; // the target's coverage stays
             Some(Taa {
                 program,
                 layout,
@@ -800,6 +802,7 @@ impl HdrOutput {
         // Back into the target: what the late meshes draw over.
         let (copy_program, _, copy_group) = taa.copy;
         ctx.param_set_texture_by_name(copy_group, "u_source", out_tex);
+        ctx.param_set_texture_by_name(copy_group, "u_coverage", taa.motions[next]);
         let mut pass = Pass::new(resolve_fb);
         pass.set_viewport(&viewport);
         groups[0] = copy_group;
@@ -1425,10 +1428,10 @@ impl HdrOutput {
                 ctx.framebuffer_attach_color_texture_2d(fb, 0, t, 0);
                 *h_slot = (t, fb);
             }
-            // Each resolve's motion next to its history (renderable with
-            // the half-float color the HDR target needs).
+            // Each resolve's motion and coverage next to its history
+            // (renderable with the half-float color the HDR target needs).
             for i in 0..2 {
-                let m = tex(&TextureFormat::rg16f(), TextureMinFilter::Nearest)?;
+                let m = tex(&TextureFormat::rgba16f(), TextureMinFilter::Nearest)?;
                 ctx.framebuffer_attach_color_texture_2d(taa.history[i].1, 1, m, 0);
                 taa.motions[i] = m;
             }

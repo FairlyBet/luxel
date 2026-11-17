@@ -1673,3 +1673,36 @@ async fn background_colors_and_gradients_show_as_given() {
     s.scene.clear_background();
     assert!(s.scene.background_fill().is_undefined());
 }
+
+// TAA over a background fill: edges resolve their coverage with their color
+// — a yellow quad on white stays between the two (red 255 throughout), no
+// dark fringe from resolved color under the frame's own 0-or-1 coverage.
+#[wasm_bindgen_test]
+async fn taa_edges_over_a_fill_have_no_fringe() {
+    let mut s = setup().await;
+    if !s.scene.is_hdr() {
+        return;
+    }
+    s.scene.set_taa(true);
+    s.scene.set_background_color(&[1.0, 1.0, 1.0]).unwrap();
+    // The band alone (yellow), its edges between pixels, turned a little.
+    for name in ["stone_a", "stone_b"] {
+        let e = s.scene.find_by_name(s.root, name);
+        s.scene.set_visible(e, false);
+    }
+    s.scene.set_translation(s.root, 1.013, 0.0, 0.0);
+    s.scene.set_rotation_euler(s.root, 0.0, 0.0, 0.3);
+    s.scene.set_scale(s.root, 0.6, 0.6, 1.0);
+    for _ in 0..24 {
+        s.frame().await;
+    }
+    let mut row = vec![0u8; (W * H * 4) as usize];
+    s.gl.read_pixels_with_opt_u8_array(0, 0, W, H, Gl::RGBA, Gl::UNSIGNED_BYTE, Some(&mut row[..]))
+        .unwrap();
+    let px: Vec<&[u8]> = row.chunks(4).collect();
+    let partial = px.iter().filter(|p| p[2] > 20 && p[2] < 235).count();
+    assert!(partial > 4, "antialiased edges: {partial}");
+    let min_red = px.iter().map(|p| p[0]).min().unwrap();
+    let fringe: Vec<_> = px.iter().filter(|p| p[0] < 240).collect();
+    assert!(fringe.is_empty(), "{} fringe pixels, min red {min_red}, e.g. {:?}", fringe.len(), fringe.first());
+}
