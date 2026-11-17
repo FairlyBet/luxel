@@ -205,6 +205,11 @@ Not done from this item:
 Known limit: glass sees the background fill without auto exposure or tone
 mapping undone, so a white fill looks light grey through clear glass.
 
+**Open bugs (phone, Mali-G57, 2026-11-18):** contact shadows show for an
+instant when switched on, then vanish; ambient occlusion never shows.
+Auto exposure without HDR output does nothing — by design (it meters the
+HDR target).
+
 ## 8. Later — L
 
 Post-processing hooks (bloom is in TODO), material extension hooks
