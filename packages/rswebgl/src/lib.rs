@@ -39,6 +39,7 @@ pub mod extension;
 pub mod feedback;
 pub mod float_targets;
 pub mod framebuffer;
+mod gpu_info;
 pub mod ids;
 pub mod limits;
 pub mod param;

@@ -203,3 +203,25 @@ fn renderbuffer_samples_are_bounded_per_format() {
     assert!(err.to_string().contains("samples"), "{err}");
     assert_no_gl_error(&f);
 }
+
+// JS sees the limits and the GPU's names.
+#[wasm_bindgen_test]
+fn limits_and_gpu_info_from_js() {
+    let f = fixture();
+    let limits = f.ctx.limits_js();
+    let get = |k: &str| js_sys::Reflect::get(&limits, &k.into()).unwrap().as_f64();
+    assert!(get("maxTextureSize").unwrap() >= 2048.0);
+    assert!(get("uniformBufferOffsetAlignment").unwrap() >= 1.0);
+    assert_eq!(
+        get("maxSamples"),
+        Some(rswebgl::limits::max_samples() as f64)
+    );
+    let info = f.ctx.gpu_info();
+    let renderer = js_sys::Reflect::get(&info, &"renderer".into()).unwrap();
+    assert!(!renderer.as_string().unwrap().is_empty());
+    assert!(
+        js_sys::Reflect::get(&info, &"unmaskedRenderer".into())
+            .unwrap()
+            .is_string()
+    );
+}
