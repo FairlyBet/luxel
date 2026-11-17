@@ -36,6 +36,22 @@ pub struct Playback {
     pub speed: f32,
     /// Wraps at the end (else holds the last pose).
     pub looping: bool,
+    /// A clip that doesn't loop has told it reached its end (`Finished`);
+    /// cleared once it leaves it.
+    pub done: bool,
+}
+
+impl Playback {
+    /// Clip `clip` from its start at speed 1.
+    pub fn new(clip: usize, looping: bool) -> Self {
+        Self {
+            clip,
+            time: 0.0,
+            speed: 1.0,
+            looping,
+            done: false,
+        }
+    }
 }
 
 /// One animated property: a glTF node and what of it (`path_key`).
@@ -62,11 +78,13 @@ fn key_path(key: u8) -> AnimationPath {
 /// A crossfade from the clip that played into the one playing now: the
 /// pose is `from`'s and the new clip's mixed, the new one's weight rising
 /// from 0 to 1 over `duration` seconds (as three.js's `crossFadeTo`, both
-/// clips moving on meanwhile).
+/// clips moving on meanwhile). At the end every property is the new clip's,
+/// or `base`'s where it doesn't animate it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fade {
-    /// The clip fading out.
-    pub from: Playback,
+    /// The clip fading out; None for the pose `base` holds (a fade begun
+    /// during another fades from the mix it had reached, held still).
+    pub from: Option<Playback>,
     /// Seconds of the fade gone, of `duration`.
     pub elapsed: f32,
     pub duration: f32,
@@ -220,13 +238,15 @@ fn current(world: &World, e: Entity, path: AnimationPath) -> Option<Vec<f32>> {
 }
 
 /// The pose to fade from: every property clip `a` (playing) and clip `b`
-/// animate, as it is now on the nodes (or as `a` samples it, if the node
-/// has no value yet: morph weights never set).
+/// animate — and `previous`'s, a fade under way — as it is now on the
+/// nodes (or as `a` samples it, if the node has no value yet: morph
+/// weights never set).
 pub fn fade_base(
     world: &World,
     clips: &[Animation],
     nodes: &HashMap<u32, Entity>,
     a: &Playback,
+    previous: Option<&Fade>,
     b: usize,
 ) -> HashMap<Target, Vec<f32>> {
     let from = clips
@@ -234,6 +254,13 @@ pub fn fade_base(
         .map(|c| sample_clip(c, a.time))
         .unwrap_or_default();
     let mut base = HashMap::new();
+    for (&target, value) in previous.iter().flat_map(|f| f.base.iter()) {
+        let Some(&e) = nodes.get(&target.0) else {
+            continue;
+        };
+        let now = current(world, e, key_path(target.1)).unwrap_or_else(|| value.clone());
+        base.insert(target, now);
+    }
     for clip in [a.clip, b] {
         let Some(clip) = clips.get(clip) else {
             continue;
@@ -255,13 +282,20 @@ pub fn fade_base(
     base
 }
 
-// `a` toward `b` by `w` (rotations the short way round).
+// `a` toward `b` by `w` (rotations the short way round), as long as `b`
+// (morph weights set with another count: what `a` lacks is `b`'s).
 fn mix(a: &[f32], b: &[f32], w: f32, path: AnimationPath) -> Vec<f32> {
     if path == AnimationPath::Rotation && a.len() == 4 && b.len() == 4 {
         let q = Quat::from_slice(a).slerp(Quat::from_slice(b), w).normalize();
         return q.to_array().to_vec();
     }
-    a.iter().zip(b).map(|(a, b)| a + (b - a) * w).collect()
+    b.iter()
+        .enumerate()
+        .map(|(i, &b)| {
+            let a = a.get(i).copied().unwrap_or(b);
+            a + (b - a) * w
+        })
+        .collect()
 }
 
 /// Poses a crossfade: `fade.from`'s clip and `to`'s mixed by how far the
@@ -278,9 +312,10 @@ pub fn apply_fade(
     } else {
         1.0
     };
-    let a = clips
-        .get(fade.from.clip)
-        .map(|c| sample_clip(c, fade.from.time))
+    // Without a clip fading out: `base` throughout.
+    let a = fade
+        .from
+        .and_then(|f| clips.get(f.clip).map(|c| sample_clip(c, f.time)))
         .unwrap_or_default();
     let b = clips
         .get(to.clip)
@@ -334,10 +369,10 @@ pub fn place(time: f32, duration: f32, looping: bool) -> f32 {
 }
 
 // Moves `p` on by `dt` seconds: Some(true) if it wrapped round, Some(false)
-// if it reached its end.
+// if it reached its end (once while it stays there; a clip with no length,
+// or played backwards from its start, reaches it at once).
 fn step(p: &mut Playback, duration: f32, dt: f32) -> Option<bool> {
-    let before = p.time;
-    let t = before + dt * p.speed;
+    let t = p.time + dt * p.speed;
     // An infinite speed starts over rather than sticks.
     p.time = place(t, duration, p.looping);
     if !t.is_finite() {
@@ -347,7 +382,11 @@ fn step(p: &mut Playback, duration: f32, dt: f32) -> Option<bool> {
         (duration > 0.0 && (t < 0.0 || t >= duration)).then_some(true)
     } else {
         let end = (p.speed > 0.0 && p.time == duration) || (p.speed < 0.0 && p.time == 0.0);
-        (end && p.time != before).then_some(false)
+        if !end {
+            p.done = false;
+            return None;
+        }
+        (!std::mem::replace(&mut p.done, true)).then_some(false)
     }
 }
 
@@ -378,17 +417,23 @@ pub fn advance(world: &mut World, dt: f32) -> Vec<AnimationEvent> {
             Some(false) => events.push(AnimationEvent::Finished { root, clip: p.clip }),
             None => {}
         }
-        let fade = anims.fade.clone().and_then(|mut f| {
-            let from = anims.clips.get(f.from.clip).map_or(0.0, |c| c.duration);
-            step(&mut f.from, from, dt);
-            f.elapsed += dt.abs();
-            (f.elapsed < f.duration).then_some(f)
-        });
+        let mut fade = anims.fade.clone();
+        if let Some(f) = &mut fade {
+            if let Some(from) = &mut f.from {
+                let d = anims.clips.get(from.clip).map_or(0.0, |c| c.duration);
+                step(from, d, dt);
+            }
+            f.elapsed = (f.elapsed + dt.abs()).min(f.duration);
+            // Its last pose too (weight 1: what only the old clip moved
+            // back at `base`), then done.
+            apply_fade(world, &anims.clips, &anims.nodes, &p, f);
+        }
         match &fade {
-            Some(f) => apply_fade(world, &anims.clips, &anims.nodes, &p, f),
-            // Held (at its end, or not moving) with no fade to end: nothing
-            // is written, so a still scene stays unchanged.
-            None if anims.fade.is_none() && anims.playing == Some(p) => continue,
+            Some(f) if f.elapsed >= f.duration => fade = None,
+            Some(_) => {}
+            // Held (at its end, or not moving): nothing is written, so a
+            // still scene stays unchanged.
+            None if anims.playing == Some(p) => continue,
             None => apply(world, clip, &anims.nodes, p.time),
         }
         if let Some(mut a) = world.get_mut::<ModelAnimations>(root) {
@@ -466,12 +511,7 @@ mod tests {
     }
 
     fn play(clip: usize, looping: bool) -> Playback {
-        Playback {
-            clip,
-            time: 0.0,
-            speed: 1.0,
-            looping,
-        }
+        Playback::new(clip, looping)
     }
 
     fn pos(world: &World, e: Entity) -> Vec3 {
@@ -505,6 +545,81 @@ mod tests {
         assert_eq!(advance(&mut world, 1.0), [AnimationEvent::Looped { root, clip: 0 }]);
     }
 
+    // A fade begun with `fade_base` as `crossfadeAnimation` begins one.
+    fn crossfade(world: &mut World, root: Entity, to: usize, seconds: f32) {
+        let a = world.get::<ModelAnimations>(root).unwrap().clone();
+        let from = a.playing.unwrap();
+        let base = fade_base(world, &a.clips, &a.nodes, &from, a.fade.as_ref(), to);
+        let fade = Fade {
+            from: if a.fade.is_some() { None } else { Some(from) },
+            elapsed: 0.0,
+            duration: seconds,
+            base: base.into(),
+        };
+        let p = play(to, true);
+        apply_fade(world, &a.clips, &a.nodes, &p, &fade);
+        let mut m = world.get_mut::<ModelAnimations>(root).unwrap();
+        m.playing = Some(p);
+        m.fade = Some(fade);
+    }
+
+    // Fading out of clip 1 (the only one moving node 1): once over, node 1
+    // is back where it stood as the fade began — however the last step
+    // falls.
+    #[test]
+    fn a_fade_ends_at_its_full_weight() {
+        for last in [0.2, 5.0] {
+            let (mut world, mut anims, [_, n1]) = two_clips();
+            anims.playing = Some(play(1, true));
+            let root = world.spawn();
+            world.insert(root, anims);
+            advance(&mut world, 1.0);
+            assert!((pos(&world, n1).y - 1.0).abs() < 1e-5);
+            crossfade(&mut world, root, 0, 1.0);
+            advance(&mut world, 0.9);
+            advance(&mut world, last);
+            assert!(world.get::<ModelAnimations>(root).unwrap().fade.is_none());
+            assert!((pos(&world, n1).y - 1.0).abs() < 1e-5, "{last}: {}", pos(&world, n1));
+        }
+    }
+
+    // A crossfade during one starts from the mix reached: no jump.
+    #[test]
+    fn a_fade_during_a_fade_starts_where_it_is() {
+        let (mut world, mut anims, [n0, _]) = two_clips();
+        anims.playing = Some(play(0, true));
+        let root = world.spawn();
+        world.insert(root, anims);
+        crossfade(&mut world, root, 1, 1.0);
+        advance(&mut world, 0.5);
+        let mid = pos(&world, n0);
+        assert!(mid.x > 1.0 && mid.x < 10.0, "{mid}");
+        crossfade(&mut world, root, 0, 1.0);
+        assert_eq!(pos(&world, n0), mid, "no jump");
+        advance(&mut world, 1.0);
+        let a = world.get::<ModelAnimations>(root).unwrap();
+        let t = a.playing.unwrap().time;
+        assert!((pos(&world, n0).x - t).abs() < 1e-5, "clip 0 alone at its end");
+    }
+
+    // Played backwards from its start (or a clip with no length): finished
+    // at once, and once.
+    #[test]
+    fn finished_at_once_when_already_at_the_end() {
+        let (mut world, mut anims, _) = two_clips();
+        anims.playing = Some(Playback { speed: -1.0, ..play(0, false) });
+        let root = world.spawn();
+        world.insert(root, anims);
+        assert_eq!(advance(&mut world, 0.1), [AnimationEvent::Finished { root, clip: 0 }]);
+        assert!(advance(&mut world, 0.1).is_empty());
+    }
+
+    #[test]
+    fn mixing_weights_of_another_count_keeps_the_target_count() {
+        let m = mix(&[1.0], &[0.0, 0.0], 0.5, AnimationPath::Weights);
+        assert_eq!(m, [0.5, 0.0]);
+    }
+
     #[test]
     fn place_wraps_or_holds() {
         assert_eq!(place(2.5, 1.0, true), 0.5);
@@ -522,10 +637,10 @@ mod tests {
         let (mut world, mut anims, [n0, n1]) = two_clips();
         let from = Playback { time: 0.25, ..play(0, true) };
         apply(&mut world, &anims.clips[0], &anims.nodes, from.time);
-        let base = fade_base(&world, &anims.clips, &anims.nodes, &from, 1);
+        let base = fade_base(&world, &anims.clips, &anims.nodes, &from, None, 1);
         assert_eq!(base.len(), 2, "both nodes' translations");
         let fade = Fade {
-            from,
+            from: Some(from),
             elapsed: 0.0,
             duration: 1.0,
             base: base.into(),

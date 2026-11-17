@@ -76,12 +76,9 @@ impl Scene {
         };
         apply(&mut self.world, clip, &anims.nodes, 0.0);
         if let Some(mut a) = self.world.get_mut::<ModelAnimations>(root) {
-            a.playing = Some(Playback {
-                clip: index,
-                time: 0.0,
-                speed: 1.0,
-                looping,
-            });
+            // A fade under way ends where it is (as the pose stays for
+            // what the new clip doesn't animate).
+            a.playing = Some(Playback::new(index, looping));
             a.fade = None;
         }
         Ok(())
@@ -92,7 +89,8 @@ impl Scene {
     /// weight rising from 0 to 1, both clips moving on meanwhile (the old
     /// at its speed; the new at 1). A property only one of them animates
     /// mixes with where it stood when the fade began. Fading again during a
-    /// fade starts from the pose then. Without a playing animation, or with
+    /// fade starts from the mix reached, held still as the new clip comes
+    /// in. Without a playing animation, or with
     /// `seconds` ≤ 0, as `playAnimation`.
     #[wasm_bindgen(js_name = crossfadeAnimation)]
     pub fn crossfade_animation(
@@ -116,15 +114,12 @@ impl Scene {
             return self.play_animation(root, index, looping);
         };
         self.invalidate();
-        let base = fade_base(&self.world, &anims.clips, &anims.nodes, &from, index);
-        let to = Playback {
-            clip: index,
-            time: 0.0,
-            speed: 1.0,
-            looping,
-        };
+        let previous = anims.fade.as_ref();
+        let base = fade_base(&self.world, &anims.clips, &anims.nodes, &from, previous, index);
+        let to = Playback::new(index, looping);
         let fade = Fade {
-            from,
+            // During a fade: from the mix it reached (`base`), not either clip.
+            from: if previous.is_some() { None } else { Some(from) },
             elapsed: 0.0,
             duration: seconds,
             base: base.into(),
@@ -139,7 +134,8 @@ impl Scene {
 
     /// Moves `root`'s animation to `seconds` into its clip (wrapped if it
     /// loops, else held within it) and poses the model there; a crossfade
-    /// under way ends. Nothing without a playing animation.
+    /// under way ends as it would (what only the old clip moved back where
+    /// it stood when the fade began). Nothing without a playing animation.
     #[wasm_bindgen(js_name = setAnimationTime)]
     pub fn set_animation_time(&mut self, root: Entity, seconds: f32) {
         self.invalidate();
@@ -160,7 +156,14 @@ impl Scene {
             return;
         };
         p.time = place(seconds, clip.duration, p.looping);
-        apply(&mut self.world, clip, &anims.nodes, p.time);
+        p.done = false;
+        match anims.fade {
+            Some(mut f) => {
+                f.elapsed = f.duration;
+                apply_fade(&mut self.world, &anims.clips, &anims.nodes, &p, &f);
+            }
+            None => apply(&mut self.world, clip, &anims.nodes, p.time),
+        }
         if let Some(mut a) = self.world.get_mut::<ModelAnimations>(root) {
             a.playing = Some(p);
             a.fade = None;
