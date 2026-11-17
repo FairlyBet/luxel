@@ -174,6 +174,7 @@ pub fn spawn_model(
                 clips: model.animations().into(),
                 nodes: by_index,
                 playing: None,
+                fade: None,
             },
         );
     }

@@ -17,12 +17,13 @@ use crate::transform::Transform;
 pub struct MorphWeights(pub Vec<f32>);
 
 /// A model's animations, on its root entity: the clips, which entity each
-/// glTF node became, and what plays.
+/// glTF node became, what plays, and the crossfade into it if one runs.
 #[derive(Clone)]
 pub struct ModelAnimations {
     pub clips: Rc<[Animation]>,
     pub nodes: HashMap<u32, Entity>,
     pub playing: Option<Playback>,
+    pub fade: Option<Fade>,
 }
 
 /// A clip playing: where it is and how it goes on.
@@ -35,6 +36,52 @@ pub struct Playback {
     pub speed: f32,
     /// Wraps at the end (else holds the last pose).
     pub looping: bool,
+}
+
+/// One animated property: a glTF node and what of it (`path_key`).
+pub type Target = (u32, u8);
+
+fn path_key(path: AnimationPath) -> u8 {
+    match path {
+        AnimationPath::Translation => 0,
+        AnimationPath::Rotation => 1,
+        AnimationPath::Scale => 2,
+        AnimationPath::Weights => 3,
+    }
+}
+
+fn key_path(key: u8) -> AnimationPath {
+    match key {
+        0 => AnimationPath::Translation,
+        1 => AnimationPath::Rotation,
+        2 => AnimationPath::Scale,
+        _ => AnimationPath::Weights,
+    }
+}
+
+/// A crossfade from the clip that played into the one playing now: the
+/// pose is `from`'s and the new clip's mixed, the new one's weight rising
+/// from 0 to 1 over `duration` seconds (as three.js's `crossFadeTo`, both
+/// clips moving on meanwhile).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fade {
+    /// The clip fading out.
+    pub from: Playback,
+    /// Seconds of the fade gone, of `duration`.
+    pub elapsed: f32,
+    pub duration: f32,
+    /// Each property either clip animates as it was when the fade began:
+    /// what stands in for a clip that doesn't animate it.
+    pub base: Rc<HashMap<Target, Vec<f32>>>,
+}
+
+/// Something an animation did in an `advance`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnimationEvent {
+    /// A clip that doesn't loop reached its end (its start, backwards).
+    Finished { root: Entity, clip: usize },
+    /// A looping clip wrapped round.
+    Looped { root: Entity, clip: usize },
 }
 
 /// `channel`'s value at `t` seconds into `out` (`channel.components` floats):
@@ -105,6 +152,34 @@ pub fn sample(channel: &AnimationChannel, t: f32, out: &mut [f32]) {
     }
 }
 
+// Writes one property's value into node entity `e`.
+fn write(world: &mut World, e: Entity, path: AnimationPath, value: &[f32]) {
+    match path {
+        AnimationPath::Weights => {
+            let weights = MorphWeights(value.to_vec());
+            match world.get_mut::<MorphWeights>(e) {
+                Some(mut w) => w.set_if_neq(weights),
+                None => {
+                    world.insert(e, weights);
+                }
+            }
+        }
+        path => {
+            let Some(mut t) = world.get_mut::<Transform>(e) else {
+                return;
+            };
+            let mut next = *t;
+            match path {
+                AnimationPath::Translation => next.translation = Vec3::from_slice(value),
+                AnimationPath::Rotation => next.rotation = Quat::from_slice(value).normalize(),
+                AnimationPath::Scale => next.scale = Vec3::from_slice(value),
+                AnimationPath::Weights => unreachable!(),
+            }
+            t.set_if_neq(next);
+        }
+    }
+}
+
 /// Poses the nodes of `anim` at `t` seconds: each channel's node entity
 /// (looked up in `nodes`) gets its sampled translation, rotation, scale or
 /// morph weights.
@@ -116,55 +191,172 @@ pub fn apply(world: &mut World, anim: &Animation, nodes: &HashMap<u32, Entity>, 
         };
         buf.resize(channel.components.max(4), 0.0);
         sample(channel, t, &mut buf);
-        match channel.path {
-            AnimationPath::Weights => {
-                let weights = MorphWeights(buf[..channel.components].to_vec());
-                match world.get_mut::<MorphWeights>(e) {
-                    Some(mut w) => w.set_if_neq(weights),
-                    None => {
-                        world.insert(e, weights);
-                    }
-                }
+        write(world, e, channel.path, &buf[..channel.components]);
+    }
+}
+
+// Every property `anim` animates, at `t`.
+fn sample_clip(anim: &Animation, t: f32) -> HashMap<Target, Vec<f32>> {
+    let mut out = HashMap::new();
+    for channel in &anim.channels {
+        let mut v = vec![0.0; channel.components.max(4)];
+        sample(channel, t, &mut v);
+        v.truncate(channel.components);
+        out.insert((channel.node, path_key(channel.path)), v);
+    }
+    out
+}
+
+// A property's value on its node entity now (None without one).
+fn current(world: &World, e: Entity, path: AnimationPath) -> Option<Vec<f32>> {
+    match path {
+        AnimationPath::Weights => world.get::<MorphWeights>(e).map(|w| w.0.clone()),
+        path => world.get::<Transform>(e).map(|t| match path {
+            AnimationPath::Translation => t.translation.to_array().to_vec(),
+            AnimationPath::Rotation => t.rotation.to_array().to_vec(),
+            _ => t.scale.to_array().to_vec(),
+        }),
+    }
+}
+
+/// The pose to fade from: every property clip `a` (playing) and clip `b`
+/// animate, as it is now on the nodes (or as `a` samples it, if the node
+/// has no value yet: morph weights never set).
+pub fn fade_base(
+    world: &World,
+    clips: &[Animation],
+    nodes: &HashMap<u32, Entity>,
+    a: &Playback,
+    b: usize,
+) -> HashMap<Target, Vec<f32>> {
+    let from = clips
+        .get(a.clip)
+        .map(|c| sample_clip(c, a.time))
+        .unwrap_or_default();
+    let mut base = HashMap::new();
+    for clip in [a.clip, b] {
+        let Some(clip) = clips.get(clip) else {
+            continue;
+        };
+        for channel in &clip.channels {
+            let target = (channel.node, path_key(channel.path));
+            if base.contains_key(&target) {
+                continue;
             }
-            path => {
-                let Some(mut t) = world.get_mut::<Transform>(e) else {
-                    continue;
-                };
-                let mut next = *t;
-                match path {
-                    AnimationPath::Translation => next.translation = Vec3::from_slice(&buf),
-                    AnimationPath::Rotation => next.rotation = Quat::from_slice(&buf).normalize(),
-                    AnimationPath::Scale => next.scale = Vec3::from_slice(&buf),
-                    AnimationPath::Weights => unreachable!(),
-                }
-                t.set_if_neq(next);
-            }
+            let Some(&e) = nodes.get(&channel.node) else {
+                continue;
+            };
+            let value = current(world, e, channel.path)
+                .or_else(|| from.get(&target).cloned())
+                .unwrap_or_else(|| vec![0.0; channel.components]);
+            base.insert(target, value);
         }
+    }
+    base
+}
+
+// `a` toward `b` by `w` (rotations the short way round).
+fn mix(a: &[f32], b: &[f32], w: f32, path: AnimationPath) -> Vec<f32> {
+    if path == AnimationPath::Rotation && a.len() == 4 && b.len() == 4 {
+        let q = Quat::from_slice(a).slerp(Quat::from_slice(b), w).normalize();
+        return q.to_array().to_vec();
+    }
+    a.iter().zip(b).map(|(a, b)| a + (b - a) * w).collect()
+}
+
+/// Poses a crossfade: `fade.from`'s clip and `to`'s mixed by how far the
+/// fade has gone.
+pub fn apply_fade(
+    world: &mut World,
+    clips: &[Animation],
+    nodes: &HashMap<u32, Entity>,
+    to: &Playback,
+    fade: &Fade,
+) {
+    let w = if fade.duration > 0.0 {
+        (fade.elapsed / fade.duration).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let a = clips
+        .get(fade.from.clip)
+        .map(|c| sample_clip(c, fade.from.time))
+        .unwrap_or_default();
+    let b = clips
+        .get(to.clip)
+        .map(|c| sample_clip(c, to.time))
+        .unwrap_or_default();
+    for (target, base) in fade.base.iter() {
+        let Some(&e) = nodes.get(&target.0) else {
+            continue;
+        };
+        let path = key_path(target.1);
+        let value = mix(
+            a.get(target).unwrap_or(base),
+            b.get(target).unwrap_or(base),
+            w,
+            path,
+        );
+        write(world, e, path, &value);
     }
 }
 
 /// Whether an animation is moving: playing at a speed, and looping or not
-/// yet at its end (a held last pose doesn't change).
+/// yet at its end (a held last pose doesn't change); or crossfading.
 pub fn animating(world: &World) -> bool {
     let Some(s) = world.storage::<ModelAnimations>() else {
         return false;
     };
     s.data().iter().any(|a| {
-        a.playing.is_some_and(|p| {
-            let duration = a.clips.get(p.clip).map_or(0.0, |c| c.duration);
-            p.speed != 0.0
-                && duration > 0.0
-                && (p.looping
-                    || (p.speed > 0.0 && p.time < duration)
-                    || (p.speed < 0.0 && p.time > 0.0))
-        })
+        a.fade.is_some()
+            || a.playing.is_some_and(|p| {
+                let duration = a.clips.get(p.clip).map_or(0.0, |c| c.duration);
+                p.speed != 0.0
+                    && duration > 0.0
+                    && (p.looping
+                        || (p.speed > 0.0 && p.time < duration)
+                        || (p.speed < 0.0 && p.time > 0.0))
+            })
     })
 }
 
-/// Moves every playing animation on by `dt` seconds and poses its nodes.
-pub fn advance(world: &mut World, dt: f32) {
+/// Where `time` lands in a clip `duration` long: wrapped if `looping`,
+/// else held at an end (0 for a non-finite time).
+pub fn place(time: f32, duration: f32, looping: bool) -> f32 {
+    let t = if looping && duration > 0.0 {
+        let t = time.rem_euclid(duration);
+        // rem_euclid can round up to the duration itself.
+        if t >= duration { 0.0 } else { t }
+    } else {
+        time.clamp(0.0, duration)
+    };
+    if t.is_finite() { t } else { 0.0 }
+}
+
+// Moves `p` on by `dt` seconds: Some(true) if it wrapped round, Some(false)
+// if it reached its end.
+fn step(p: &mut Playback, duration: f32, dt: f32) -> Option<bool> {
+    let before = p.time;
+    let t = before + dt * p.speed;
+    // An infinite speed starts over rather than sticks.
+    p.time = place(t, duration, p.looping);
+    if !t.is_finite() {
+        return None;
+    }
+    if p.looping {
+        (duration > 0.0 && (t < 0.0 || t >= duration)).then_some(true)
+    } else {
+        let end = (p.speed > 0.0 && p.time == duration) || (p.speed < 0.0 && p.time == 0.0);
+        (end && p.time != before).then_some(false)
+    }
+}
+
+/// Moves every playing animation (and crossfade) on by `dt` seconds and
+/// poses its nodes; what clips did on the way.
+pub fn advance(world: &mut World, dt: f32) -> Vec<AnimationEvent> {
+    let mut events = Vec::new();
     if !dt.is_finite() {
-        return;
+        return events;
     }
     let playing: Vec<(Entity, ModelAnimations)> = match world.storage::<ModelAnimations>() {
         Some(s) => s
@@ -172,36 +364,39 @@ pub fn advance(world: &mut World, dt: f32) {
             .filter(|(_, a)| a.playing.is_some())
             .map(|(e, a)| (e, a.clone()))
             .collect(),
-        None => return,
+        None => return events,
     };
-    for (root, mut anims) in playing {
+    for (root, anims) in playing {
         let Some(mut p) = anims.playing else {
             continue;
         };
         let Some(clip) = anims.clips.get(p.clip) else {
             continue;
         };
-        let duration = clip.duration;
-        p.time += dt * p.speed;
-        p.time = if p.looping && duration > 0.0 {
-            p.time.rem_euclid(duration)
-        } else {
-            p.time.clamp(0.0, duration)
-        };
-        if !p.time.is_finite() {
-            p.time = 0.0; // an infinite speed: start over rather than stick
+        match step(&mut p, clip.duration, dt) {
+            Some(true) => events.push(AnimationEvent::Looped { root, clip: p.clip }),
+            Some(false) => events.push(AnimationEvent::Finished { root, clip: p.clip }),
+            None => {}
         }
-        // Held (at its end, or not moving): nothing is written, so a still
-        // scene stays unchanged.
-        if anims.playing == Some(p) {
-            continue;
+        let fade = anims.fade.clone().and_then(|mut f| {
+            let from = anims.clips.get(f.from.clip).map_or(0.0, |c| c.duration);
+            step(&mut f.from, from, dt);
+            f.elapsed += dt.abs();
+            (f.elapsed < f.duration).then_some(f)
+        });
+        match &fade {
+            Some(f) => apply_fade(world, &anims.clips, &anims.nodes, &p, f),
+            // Held (at its end, or not moving) with no fade to end: nothing
+            // is written, so a still scene stays unchanged.
+            None if anims.fade.is_none() && anims.playing == Some(p) => continue,
+            None => apply(world, clip, &anims.nodes, p.time),
         }
-        apply(world, clip, &anims.nodes, p.time);
-        anims.playing = Some(p);
         if let Some(mut a) = world.get_mut::<ModelAnimations>(root) {
-            a.playing = anims.playing;
+            a.playing = Some(p);
+            a.fade = fade;
         }
     }
+    events
 }
 
 #[cfg(test)]
@@ -230,6 +425,130 @@ mod tests {
         sample(c, t, &mut out);
         out.truncate(c.components);
         out
+    }
+
+    // Two nodes: clip 0 moves node 0's x from 0 to 1 over 1 s; clip 1
+    // moves node 0's x from 10 to 10 (held) and node 1's y from 0 to 2
+    // over 2 s.
+    fn two_clips() -> (World, ModelAnimations, [Entity; 2]) {
+        let mut world = World::new();
+        let n0 = world.spawn();
+        let n1 = world.spawn();
+        world.insert(n0, Transform::IDENTITY);
+        world.insert(n1, Transform::IDENTITY);
+        let tr = |node, times: &[f32], values: &[f32]| AnimationChannel {
+            node,
+            ..channel(AnimationPath::Translation, Interpolation::Linear, times, values, 3)
+        };
+        let clips: Rc<[Animation]> = vec![
+            Animation {
+                name: None,
+                channels: vec![tr(0, &[0.0, 1.0], &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0])],
+                duration: 1.0,
+            },
+            Animation {
+                name: None,
+                channels: vec![
+                    tr(0, &[0.0, 2.0], &[10.0, 0.0, 0.0, 10.0, 0.0, 0.0]),
+                    tr(1, &[0.0, 2.0], &[0.0, 0.0, 0.0, 0.0, 2.0, 0.0]),
+                ],
+                duration: 2.0,
+            },
+        ]
+        .into();
+        let anims = ModelAnimations {
+            clips,
+            nodes: HashMap::from([(0, n0), (1, n1)]),
+            playing: None,
+            fade: None,
+        };
+        (world, anims, [n0, n1])
+    }
+
+    fn play(clip: usize, looping: bool) -> Playback {
+        Playback {
+            clip,
+            time: 0.0,
+            speed: 1.0,
+            looping,
+        }
+    }
+
+    fn pos(world: &World, e: Entity) -> Vec3 {
+        world.get::<Transform>(e).unwrap().translation
+    }
+
+    #[test]
+    fn events_on_the_end_and_on_wrapping() {
+        let (mut world, mut anims, _) = two_clips();
+        anims.playing = Some(play(0, false));
+        let root = world.spawn();
+        world.insert(root, anims.clone());
+        assert!(advance(&mut world, 0.5).is_empty());
+        assert_eq!(
+            advance(&mut world, 0.6),
+            [AnimationEvent::Finished { root, clip: 0 }]
+        );
+        assert!(advance(&mut world, 0.5).is_empty(), "held: once");
+        anims.playing = Some(play(0, true));
+        world.insert(root, anims.clone());
+        assert!(advance(&mut world, 0.9).is_empty());
+        assert_eq!(advance(&mut world, 0.2), [AnimationEvent::Looped { root, clip: 0 }]);
+        let p = world.get::<ModelAnimations>(root).unwrap().playing.unwrap();
+        assert!((p.time - 0.1).abs() < 1e-5, "{}", p.time);
+        // Backwards: the start is the end, wrapping below 0 a loop.
+        anims.playing = Some(Playback { speed: -1.0, time: 0.5, ..play(0, false) });
+        world.insert(root, anims.clone());
+        assert_eq!(advance(&mut world, 1.0), [AnimationEvent::Finished { root, clip: 0 }]);
+        anims.playing = Some(Playback { speed: -1.0, time: 0.5, ..play(0, true) });
+        world.insert(root, anims);
+        assert_eq!(advance(&mut world, 1.0), [AnimationEvent::Looped { root, clip: 0 }]);
+    }
+
+    #[test]
+    fn place_wraps_or_holds() {
+        assert_eq!(place(2.5, 1.0, true), 0.5);
+        assert_eq!(place(-0.25, 1.0, true), 0.75);
+        assert_eq!(place(2.5, 1.0, false), 1.0);
+        assert_eq!(place(-1.0, 1.0, false), 0.0);
+        assert_eq!(place(f32::INFINITY, 1.0, true), 0.0);
+        assert!(place(-1e-9, 1.0, true) < 1.0, "never the duration itself");
+    }
+
+    // Halfway through a 1 s fade from clip 0 (at 0.5 s: x = 0.5) into clip 1
+    // (x = 10; node 1 only in clip 1, from its pose at the start, y = 0).
+    #[test]
+    fn a_crossfade_mixes_the_clips_then_hands_over() {
+        let (mut world, mut anims, [n0, n1]) = two_clips();
+        let from = Playback { time: 0.25, ..play(0, true) };
+        apply(&mut world, &anims.clips[0], &anims.nodes, from.time);
+        let base = fade_base(&world, &anims.clips, &anims.nodes, &from, 1);
+        assert_eq!(base.len(), 2, "both nodes' translations");
+        let fade = Fade {
+            from,
+            elapsed: 0.0,
+            duration: 1.0,
+            base: base.into(),
+        };
+        let to = play(1, true);
+        apply_fade(&mut world, &anims.clips, &anims.nodes, &to, &fade);
+        assert_eq!(pos(&world, n0).x, 0.25, "no jump as it starts");
+        anims.playing = Some(to);
+        anims.fade = Some(fade);
+        let root = world.spawn();
+        world.insert(root, anims);
+        assert!(animating(&world));
+        advance(&mut world, 0.25);
+        // from at 0.5 (x 0.5), to at 0.25 (x 10, y 0.25), weight 0.25.
+        let p = pos(&world, n0);
+        assert!((p.x - (0.5 + (10.0 - 0.5) * 0.25)).abs() < 1e-4, "{p}");
+        let q = pos(&world, n1);
+        assert!((q.y - 0.25 * 0.25).abs() < 1e-5, "{q}");
+        advance(&mut world, 0.75);
+        let a = world.get::<ModelAnimations>(root).unwrap();
+        assert!(a.fade.is_none(), "over");
+        assert_eq!(pos(&world, n0).x, 10.0);
+        assert!((pos(&world, n1).y - 1.0).abs() < 1e-5);
     }
 
     #[test]

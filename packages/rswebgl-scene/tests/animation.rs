@@ -197,6 +197,27 @@ async fn skins_and_morph_targets_follow_the_animation() {
     // Not looping: it holds the last pose.
     scene.advance_animations(0.5);
     assert_eq!(scene.animation_time(root), Some(1.0));
+    // Seeking poses at once.
+    scene.set_animation_time(root, 0.0);
+    assert_eq!(frame(&mut scene).await, [RED, BLACK, GREEN], "seek to 0");
+    // The end, once.
+    let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &k.into()).unwrap();
+    let events = scene.advance_animations(1.5);
+    assert_eq!(events.length(), 1);
+    let e = events.get(0);
+    assert_eq!(get(&e, "type"), "finished");
+    assert_eq!(get(&e, "root").as_f64(), Some(root.to_raw() as f64));
+    assert_eq!(get(&e, "animation").as_f64(), Some(0.0));
+    assert_eq!(scene.advance_animations(1.0).length(), 0);
+    // A crossfade from the end pose into the clip from its start: no jump
+    // as it begins; once over (the new clip at 1 s wraps to 0: a loop),
+    // the start pose.
+    scene.crossfade_animation(root, 0, 1.0, true).unwrap();
+    assert_eq!(frame(&mut scene).await, [BLACK, RED, BLACK], "fade begins");
+    let events = scene.advance_animations(1.0);
+    assert_eq!(get(&events.get(0), "type"), "loop");
+    assert_eq!(frame(&mut scene).await, [RED, BLACK, GREEN], "fade over");
+    assert!(scene.crossfade_animation(root, 3, 1.0, true).is_err());
     assert!(scene.play_animation(root, 3, true).is_err());
     // Non-finite steps and speeds don't break it.
     scene.play_animation(root, 0, true).unwrap();

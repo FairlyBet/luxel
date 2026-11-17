@@ -7,6 +7,7 @@
 import init, {
   Context,
   type CameraOptions,
+  type AnimationEvent,
   type Entity,
   type Handles,
   type LightOptions,
@@ -74,3 +75,13 @@ const firstKid: Entity = kids[0];
 const variantName: string | undefined = gs.materialVariant(ge);
 const blur: number | undefined = gs.background();
 void [firstKid, variantName, blur];
+
+// Animation events name their model root and clip.
+const animEvents: AnimationEvent[] = gs.advanceAnimations(0.016);
+for (const ev of animEvents) {
+  const evRoot: Entity = ev.root;
+  if (ev.type === "finished") gs.crossfadeAnimation(evRoot, ev.animation, 0.3, true);
+  // @ts-expect-error: only "finished" and "loop"
+  if (ev.type === "started") void 0;
+}
+gs.setAnimationTime(ge, 0.5);
