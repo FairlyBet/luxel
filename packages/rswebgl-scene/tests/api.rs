@@ -766,6 +766,14 @@ void main() { frag_color = vec4(1.0); }",
     let push = js_sys::Function::new_with_args("m", "this.push(String(m))").bind0(&errors);
     js_sys::Reflect::set(&console, &"error".into(), &push).unwrap();
 
+    // The scene's own loss events, beside the app's ctx callbacks.
+    let events = js_sys::Array::new();
+    let note = |what: &str| {
+        js_sys::Function::new_no_args(&format!("this.push('{what}')")).bind0(&events)
+    };
+    s.scene.set_on_lost(Some(note("lost")));
+    s.scene.set_on_restored(Some(note("restored")));
+
     assert!(s.ctx.simulate_context_loss());
     let generation = s.ctx.generation();
     for _ in 0..100 {
@@ -775,12 +783,37 @@ void main() { frag_color = vec4(1.0); }",
         sleep_ms(10).await;
     }
     assert_ne!(s.ctx.generation(), generation, "the loss arrived");
+    assert_eq!(events.join(",").as_string().unwrap(), "lost");
+    let lost = wasm_bindgen_futures::JsFuture::from(s.scene.when_ready()).await;
+    assert!(lost.is_err(), "whenReady rejects while lost");
     assert_eq!(
         s.scene.render_frame(s.camera),
         0,
         "nothing to draw while lost"
     );
+    // Fetches slowed down: the reload outlasts the shaders' compiles.
+    let global = js_sys::global();
+    let fetch = js_sys::Reflect::get(&global, &"fetch".into()).unwrap();
+    let slow = js_sys::Function::new_with_args(
+        "f",
+        "return (...a) => new Promise(r => setTimeout(r, 300)).then(() => f(...a))",
+    )
+    .call1(&JsValue::NULL, &fetch)
+    .unwrap();
+    js_sys::Reflect::set(&global, &"fetch".into(), &slow).unwrap();
     assert!(s.ctx.simulate_context_restore());
+    for _ in 0..200 {
+        if !s.ctx.is_lost() {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    // The first frame after whenReady: the scene whole again — its model
+    // fetched again with its image, the loaded texture back.
+    let px = s.frame().await;
+    js_sys::Reflect::set(&global, &"fetch".into(), &fetch).unwrap();
+    assert_eq!((px, s.scene.drawn()), ([GREEN, BLUE, RED], 3), "at once after whenReady");
+    assert_eq!(events.join(",").as_string().unwrap(), "lost,restored");
     let mut restored = None;
     for _ in 0..200 {
         sleep_ms(10).await;

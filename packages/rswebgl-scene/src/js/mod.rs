@@ -117,6 +117,11 @@ pub struct Scene {
     // False once destroyed: background work finishing later frees what it
     // made instead of handing it in.
     alive: std::rc::Rc<std::cell::Cell<bool>>,
+    // What the last restore started (model reloads with their images,
+    // texture reloads): `whenReady` waits for them too.
+    restore_tasks: Vec<js_sys::Promise>,
+    // `setOnLost` / `setOnRestored`.
+    loss_events: restore::LossEvents,
     // HDR output: wanted (and supported), its target once made, how it is
     // displayed.
     hdr_wanted: bool,
@@ -206,6 +211,8 @@ impl Scene {
             models: HashMap::new(),
             model_roots: HashMap::new(),
             active_variants: HashMap::new(),
+            restore_tasks: Vec::new(),
+            loss_events: restore::LossEvents::default(),
             materials: HashMap::new(),
             pbr: PbrShaders::new(),
             textures: Vec::new(),
@@ -975,7 +982,10 @@ impl Scene {
     /// those meshes out rather than stall. Await it after `addModel` to show
     /// a model whole; resolves at once where compiles are synchronous. Also
     /// waits for an environment bake under way (`setEnvironmentHdr`) and for
-    /// the images of the models added (`Model.whenLoaded`).
+    /// the images of the models added (`Model.whenLoaded`). After a context
+    /// loss, for what the scene reloads too: its models (fetched again, with
+    /// their images) and `loadTexture` textures. Rejects (ContextLostError)
+    /// while the context is lost.
     #[wasm_bindgen(js_name = whenReady)]
     #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn when_ready(&mut self) -> js_sys::Promise {
@@ -1000,8 +1010,16 @@ impl Scene {
         let ready = self.ctx.programs_ready(programs);
         let environment = self.env_pending.as_ref().map(|p| p.finished());
         let images: Vec<js_sys::Promise> = self.models.values().map(|m| m.when_loaded()).collect();
+        let restoring = self.restore_tasks.clone();
+        let lost = self.ctx.is_lost();
         wasm_bindgen_futures::future_to_promise(async move {
+            if lost {
+                return Err(Error::context_lost("whenReady: the WebGL context is lost").into());
+            }
             ready.await;
+            for task in restoring {
+                let _ = wasm_bindgen_futures::JsFuture::from(task).await;
+            }
             if let Some(environment) = environment {
                 environment.await;
             }

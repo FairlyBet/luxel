@@ -94,3 +94,7 @@ gs.setBackgroundGradient([1, 1, 1], new Float32Array([0.8, 0.8, 0.8]), "radial")
 gs.setBackgroundGradient([1, 1, 1], [0, 0, 0], "conic");
 const fill: BackgroundFill | undefined = gs.backgroundFill();
 if (fill?.type === "vertical") void fill.to;
+
+// Scene loss events.
+gs.setOnLost(() => console.log("lost"));
+gs.setOnRestored(undefined);

@@ -18,6 +18,7 @@ wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = "0.4"
 js-sys = { workspace = true }
 tracing = { workspace = true }
+web-sys = { workspace = true, features = ["Event", "EventTarget", "WebGl2RenderingContext"] }
 
 # Host tests: `cargo test -p rswebgl-scene`.
 # Browser tests: `wasm-pack test --headless --chrome packages/rswebgl-scene`.
@@ -26,4 +27,4 @@ wasm-bindgen-test = "0.3"
 wasm-bindgen-futures = "0.4"
 js-sys = { workspace = true }
 base64 = "0.22"
-web-sys = { workspace = true, features = ["Document", "HtmlCanvasElement", "WebGl2RenderingContext"] }
+web-sys = { workspace = true, features = ["Document", "Event", "EventTarget", "HtmlCanvasElement", "WebGl2RenderingContext"] }

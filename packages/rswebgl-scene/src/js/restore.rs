@@ -42,6 +42,29 @@ use crate::shader::create_scene_program;
 /// model root and the fresh load.
 pub(crate) type Reloads = Rc<RefCell<Vec<(Entity, Result<Model, Error>)>>>;
 
+/// The app's `setOnLost` / `setOnRestored` callbacks: the first called
+/// from a listener on the canvas (the context's own slot stays the app's),
+/// the second once the scene has rebuilt.
+type LossListener = Closure<dyn FnMut(web_sys::Event)>;
+
+#[derive(Default)]
+pub(crate) struct LossEvents {
+    on_lost: Rc<RefCell<Option<js_sys::Function>>>,
+    on_restored: Option<js_sys::Function>,
+    listener: Option<(web_sys::EventTarget, LossListener)>,
+}
+
+impl Drop for LossEvents {
+    fn drop(&mut self) {
+        if let Some((target, f)) = self.listener.take() {
+            let _ = target.remove_event_listener_with_callback(
+                "webglcontextlost",
+                f.as_ref().unchecked_ref(),
+            );
+        }
+    }
+}
+
 /// A scene shader's sources, to compile it again after a loss.
 pub(crate) struct SceneProgram {
     pub(crate) id: ProgramId,
@@ -65,6 +88,8 @@ impl Scene {
     fn restore(&mut self) {
         let ctx = self.ctx.clone();
         self.generation = ctx.generation();
+        // What an earlier restore started is moot now.
+        self.restore_tasks.clear();
         console::log("[rswebgl-scene] rebuilding the scene after a context loss");
 
         if let Err(e) = self.renderer.rebuild(&ctx) {
@@ -91,6 +116,14 @@ impl Scene {
         self.restore_programs();
         self.restore_textures();
         self.reload_models();
+        // After this call returns (the app may call the scene from it).
+        if let Some(f) = self.loss_events.on_restored.clone() {
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(e) = f.call0(&JsValue::NULL) {
+                    console::error(&format!("[rswebgl-scene] onRestored threw: {e:?}"));
+                }
+            });
+        }
     }
 
     // Recompiles PBR variants and scene shaders and switches meshes to them.
@@ -161,11 +194,16 @@ impl Scene {
         let mut remap = HashMap::new();
         for t in &mut self.textures {
             let url = t.spec.url().to_string();
+            // Settled once it loads (or fails): `whenReady` waits for it.
+            let mut resolve = None;
+            let loaded = js_sys::Promise::new(&mut |r, _| resolve = Some(r));
+            let resolve = resolve.expect("the executor runs at once");
             let on_load = move |_| -> js_sys::Function {
                 Closure::once_into_js(move |w: f64, _h: f64| {
                     if w == 0.0 {
                         console::error(&format!("[rswebgl-scene] restore: can't load {url}"));
                     }
+                    let _ = resolve.call0(&JsValue::NULL);
                 })
                 .unchecked_into()
             };
@@ -173,6 +211,7 @@ impl Scene {
                 Ok(new) => {
                     remap.insert(t.id, new);
                     t.id = new;
+                    self.restore_tasks.push(loaded);
                 }
                 Err(e) => console::error(&format!("[rswebgl-scene] restore: a texture: {e}")),
             }
@@ -266,17 +305,25 @@ impl Scene {
                 }
             }
             let (ctx, inbox, alive) = (self.ctx.clone(), self.reloads.clone(), self.alive.clone());
-            wasm_bindgen_futures::spawn_local(async move {
+            // Settles once the model is back and its images are in (or it
+            // failed): `whenReady` waits for it.
+            let task = wasm_bindgen_futures::future_to_promise(async move {
                 let result = rswebgl_gltf::load_request(&ctx, request).await;
                 if !alive.get() {
                     // The scene was destroyed meanwhile.
                     if let Ok(model) = result {
                         model.destroy(&ctx);
                     }
-                    return;
+                    return Ok(JsValue::UNDEFINED);
                 }
+                let images = result.as_ref().ok().map(|m| m.when_loaded());
                 inbox.borrow_mut().push((root, result));
+                if let Some(images) = images {
+                    let _ = wasm_bindgen_futures::JsFuture::from(images).await;
+                }
+                Ok(JsValue::UNDEFINED)
             });
+            self.restore_tasks.push(task);
         }
     }
 
@@ -361,6 +408,53 @@ impl Scene {
 
 #[wasm_bindgen]
 impl Scene {
+    /// Calls `f` when the WebGL context is lost (frames draw nothing until
+    /// it is back); undefined removes it. Beside `ctx.setOnLost`, which
+    /// stays the app's.
+    #[wasm_bindgen(js_name = setOnLost)]
+    pub fn set_on_lost(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<js_sys::Function>,
+    ) {
+        *self.loss_events.on_lost.borrow_mut() = f;
+        if self.loss_events.listener.is_some() {
+            return;
+        }
+        let Some(target) = self
+            .ctx
+            .raw_gl()
+            .canvas()
+            .and_then(|c| c.dyn_into::<web_sys::EventTarget>().ok())
+        else {
+            return;
+        };
+        let slot = self.loss_events.on_lost.clone();
+        let listener = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            let f = slot.borrow().clone();
+            if let Some(f) = f
+                && let Err(e) = f.call0(&JsValue::NULL)
+            {
+                console::error(&format!("[rswebgl-scene] onLost threw: {e:?}"));
+            }
+        });
+        let _ = target
+            .add_event_listener_with_callback("webglcontextlost", listener.as_ref().unchecked_ref());
+        self.loss_events.listener = Some((target, listener));
+    }
+
+    /// Calls `f` once the scene has rebuilt itself after a context loss —
+    /// at its first call after the context is back (a frame, `needsRender`)
+    /// — to rebuild what the app made itself (`setMesh` meshes, programs
+    /// from `ctx`). Models are being fetched again then: `whenReady`
+    /// waits for them. Undefined removes it.
+    #[wasm_bindgen(js_name = setOnRestored)]
+    pub fn set_on_restored(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<js_sys::Function>,
+    ) {
+        self.loss_events.on_restored = f;
+    }
+
     /// The live handle of a `createProgram` shader: after a context loss the
     /// scene compiles it again under a new handle, and this maps the one you
     /// hold to it (the same handle when there was no loss). `setMesh` and
