@@ -768,5 +768,34 @@ async fn contact_shadows_without_a_shadow_map() {
         (with_contact as i32 - without as i32).abs() <= 2,
         "environment light under the square: {with_contact} (without contact shadows {without})"
     );
+
+    // A point light up and to the left, giving the most light (the key
+    // light): each pixel's ray goes to where it is — from x = +0.5 that
+    // passes the square (shadowed), from x = −0.5 it doesn't (lit).
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    let bulb = scene.spawn();
+    scene.set_translation(bulb, -0.5, 0.0, 2.0);
+    scene
+        .set_light(
+            bulb,
+            js_sys::JSON::parse(r#"{ "type": "point", "intensity": 20 }"#).unwrap(),
+        )
+        .unwrap();
+    let (left, right) = sides(&gl, &mut scene, camera).await;
+    assert!(right > 40, "lit by the bulb: {right}");
+    scene
+        .set_contact_shadows(
+            js_sys::JSON::parse(r#"{ "length": 2, "thickness": 0.5, "steps": 32 }"#).unwrap(),
+        )
+        .unwrap();
+    let (lit, shadowed) = sides(&gl, &mut scene, camera).await;
+    assert!(
+        (shadowed as u32) < right as u32 * 85 / 100,
+        "the bulb's light under the square: {shadowed} (was {right})"
+    );
+    assert!(
+        (lit as i32 - left as i32).abs() <= 3,
+        "toward the bulb unblocked: {lit} (was {left})"
+    );
     scene.destroy();
 }

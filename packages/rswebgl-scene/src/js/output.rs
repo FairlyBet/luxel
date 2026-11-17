@@ -91,7 +91,8 @@ impl Scene {
         Ok(())
     }
 
-    /// Screen-space contact shadows of the brightest directional light, as
+    /// Screen-space contact shadows of the key light (the one giving the
+    /// most light at the scene's centre: directional, point or spot), as
     /// a post-pass over the opaque scene's depth (Filament's): the small
     /// shadows its map is too coarse for, where things touch. `ContactShadowsOptions`,
     /// or null to turn them off (off by default). HDR output only. They take
@@ -529,16 +530,16 @@ impl Scene {
     // loss.
     pub(super) fn apply_occlusion(&mut self, camera: rswebgl_ecs::Entity) {
         let ao = self.ambient_occlusion;
-        // Contact shadows: of the brightest visible directional light,
-        // toward it in the camera's view.
+        // Contact shadows: of the key light, in the camera's view (where it
+        // is, or the way toward it).
         let contact = self.contact_shadows.and_then(|c| {
             let view = self
                 .world
                 .get::<crate::transform::WorldMatrix>(camera)?
                 .0
                 .inverse();
-            let toward = self.key_light_direction()?;
-            Some((c, view.transform_vector3(toward)))
+            let (_, at) = crate::lighting::key_light(&self.world)?;
+            Some((c, view * at))
         });
         if ao.is_none() && contact.is_none() {
             return;
@@ -592,27 +593,4 @@ impl Scene {
         out.resolve_again(&self.ctx);
     }
 
-    // The direction toward the brightest visible directional light (world
-    // space), if there is one.
-    fn key_light_direction(&self) -> Option<glam::Vec3> {
-        let lights = self.world.storage::<crate::lighting::Light>()?;
-        let worlds = self.world.storage::<crate::transform::WorldMatrix>()?;
-        let mut best: Option<(f32, glam::Vec3)> = None;
-        for (e, light) in lights.iter() {
-            if !matches!(light.kind, crate::lighting::LightKind::Directional)
-                || crate::render::hidden(&self.world, e)
-            {
-                continue;
-            }
-            let Some(m) = worlds.get(e) else {
-                continue;
-            };
-            let power = light.intensity * light.color.max_element();
-            if best.is_none_or(|(p, _)| power > p) {
-                // It shines down its −Z: toward it is +Z.
-                best = Some((power, m.0.z_axis.truncate().normalize_or_zero()));
-            }
-        }
-        best.map(|(_, d)| d)
-    }
 }

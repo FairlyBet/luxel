@@ -6,7 +6,7 @@
 //! direct light and reflections too — where a depth prepass would let each
 //! darken only its own light (TODO.md: for later).
 
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use rswebgl::context::Context;
 use rswebgl::draw::{DrawCommand, DrawMode, Viewport};
 use rswebgl::error::Error;
@@ -183,7 +183,9 @@ impl Occlusion {
         &mut self,
         ctx: &Context,
         ao: Option<&AmbientOcclusion>,
-        contact: Option<(&ContactShadows, Vec3)>,
+        // With the key light in view space: its position (w 1) or the
+        // direction toward it (w 0).
+        contact: Option<(&ContactShadows, glam::Vec4)>,
         depth: TextureId,
         target: FramebufferId,
         key: TextureId,
@@ -232,8 +234,9 @@ impl Occlusion {
             &[settings.power, reverse, (frame % 64) as f32, with_ao],
         );
         let (c, toward) = match contact {
-            Some((c, l)) => (*c, l.normalize_or_zero()),
-            None => (ContactShadows::default(), Vec3::Z),
+            Some((c, l)) if l.w > 0.5 => (*c, l),
+            Some((c, l)) => (*c, l.truncate().normalize_or_zero().extend(0.0)),
+            None => (ContactShadows::default(), glam::Vec4::Z),
         };
         let length = match contact {
             None => 0.0,
@@ -249,7 +252,7 @@ impl Occlusion {
         ctx.param_set_floats_by_name(
             g,
             "u_contact_steps",
-            &[thickness, c.steps.clamp(1, 64) as f32, 0.0, 0.0],
+            &[thickness, c.steps.clamp(1, 64) as f32, toward.w, 0.0],
         );
         self.fullscreen(ctx, program, g, self.plain, self.raw.1, ao_size);
 

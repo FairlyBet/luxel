@@ -48,7 +48,8 @@ uniform vec4 u_gtao_frame;
 // The contact shadow: xyz the light's direction toward it (view space), w
 // the ray's length (0: off).
 uniform vec4 u_contact;
-// x its thickness, y steps.
+// x its thickness, y steps, z 1 when u_contact.xyz is the light's position
+// (a point or spot light, view space) rather than the way toward it.
 uniform vec4 u_contact_steps;
 out vec4 frag_color;
 
@@ -114,9 +115,11 @@ float contact_shadow(vec3 view_pos, vec3 n, vec3 l) {
     int steps = int(u_contact_steps.y);
     float dt = 1.0 / float(steps);
     float t = dt * (ign(gl_FragCoord.xy + vec2(7.0, 3.0)) - 0.5) + dt;
-    // Starts a hair off the surface, against self-shadowing.
+    // Starts a hair off the surface, against self-shadowing; no further
+    // than a point light itself.
     vec3 start = view_pos + n * (u_contact.w * 0.02);
-    vec3 ray = l * u_contact.w;
+    float reach = u_contact_steps.z > 0.5 ? min(u_contact.w, distance(u_contact.xyz, view_pos)) : u_contact.w;
+    vec3 ray = l * reach;
     vec2 last_uv = vec2(0.5);
     for (int i = 0; i < 64; ++i) {
         if (i >= steps) break;
@@ -144,7 +147,10 @@ void main() {
     }
     vec3 view_pos = view_position(uv, depth);
     vec3 view_normal = normal_from_depth(uv);
-    float contact = u_contact.w > 0.0 ? contact_shadow(view_pos, view_normal, u_contact.xyz) : 1.0;
+    // Toward the light: its direction, or for a point or spot light the
+    // way to where it is.
+    vec3 to_light = u_contact_steps.z > 0.5 ? normalize(u_contact.xyz - view_pos) : u_contact.xyz;
+    float contact = u_contact.w > 0.0 ? contact_shadow(view_pos, view_normal, to_light) : 1.0;
     if (u_gtao_frame.w < 0.5) {
         frag_color = vec4(1.0, contact, 0.0, 1.0);
         return;

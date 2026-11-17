@@ -94,8 +94,9 @@ export interface AmbientOcclusionOptions {
   halfResolution?: boolean;
 }
 
-/** Contact shadows (`setContactShadows`) of the brightest directional
- *  light. Lengths in world units. */
+/** Contact shadows (`setContactShadows`) of the key light: the one giving
+ *  the most light at the scene's centre (directional, point or spot).
+ *  Lengths in world units. */
 export interface ContactShadowsOptions {
   /** How far toward the light to look; default 0: a fiftieth of the
    *  scene's size. */
