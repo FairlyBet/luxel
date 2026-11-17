@@ -186,6 +186,25 @@ reviewed.
 - JS API docs: a package README (loop, `whenReady`, resize, destroy,
   ownership of `addModel`'s `Model`, what `cloneMaterial` shares).
 
+**Status (2026-11-18):** done and reviewed:
+- getters and `children` (f385929);
+- seek, crossfade and finished / loop events (b2e7571, fixes e5de8f5);
+- KHR_node_visibility (f001ceb);
+- background colour and gradient (6aef081; TAA coverage fix 85b1413, d7c87d8);
+- `whenReady` after a loss and scene loss events (bab643a, c101951);
+- the npm README (dfb16ed).
+
+Not done from this item:
+- several clips per root (weights);
+- `KHR_animation_pointer`;
+- environment from KTX2, cube maps or EXR;
+- fog;
+- setters returning the clamped value;
+- one getter style (`isHdr` vs `ambientOcclusion`).
+
+Known limit: glass sees the background fill without auto exposure or tone
+mapping undone, so a white fill looks light grey through clear glass.
+
 ## 8. Later — L
 
 Post-processing hooks (bloom is in TODO), material extension hooks
