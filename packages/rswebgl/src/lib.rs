@@ -41,6 +41,7 @@ pub mod float_targets;
 pub mod framebuffer;
 mod gpu_info;
 pub mod ids;
+mod interop;
 pub mod limits;
 pub mod param;
 pub mod pass;

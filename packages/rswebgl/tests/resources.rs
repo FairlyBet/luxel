@@ -302,3 +302,44 @@ fn resource_stats_count_objects_and_bytes() {
     assert_eq!(stat("textureBytes"), tex_bytes);
     assert_eq!(stat("renderbufferBytes"), rb_bytes);
 }
+
+// Raw GL interop: the objects behind handles, and the state cache reset
+// after code of one's own changed GL state.
+#[wasm_bindgen_test]
+fn raw_gl_and_a_state_reset() {
+    let f = fixture();
+    let frag = "#version 300 es\nprecision highp float;\nout vec4 c;\n\
+                void main() { c = vec4(1.0, 0.0, 0.0, 1.0); }\n";
+    let program = f.ctx.create_program(VERT, frag).unwrap();
+    let state = f.ctx.render_state(&RenderState::new());
+    let frame = || {
+        let mut b = Batch::new(program, state);
+        draw_quad(&mut b, &f, 1);
+        render(&f, vec![b]);
+        read_quads(&f.gl)[1]
+    };
+    assert_eq!(frame(), RED);
+    // Foreign GL: another program current, no vertex array, a blend that
+    // zeroes everything, a color mask off.
+    let gl = f.ctx.raw_gl();
+    let other = f.ctx.create_program(VERT, frag).unwrap();
+    gl.use_program(f.ctx.raw_program(other).as_ref());
+    gl.bind_vertex_array(None);
+    gl.enable(WebGl2RenderingContext::BLEND);
+    gl.blend_func(WebGl2RenderingContext::ZERO, WebGl2RenderingContext::ZERO);
+    gl.color_mask(false, false, false, false);
+    f.ctx.reset_gl_state();
+    assert_eq!(frame(), RED);
+    // The raw objects are the handles' own.
+    let tex = f
+        .ctx
+        .create_texture(
+            TextureTarget::Texture2D,
+            TextureMinFilter::Linear,
+            TextureMagFilter::Linear,
+        )
+        .unwrap();
+    assert!(gl.is_texture(f.ctx.raw_texture(tex).as_ref()));
+    f.ctx.destroy_texture(tex);
+    assert!(f.ctx.raw_texture(tex).is_none());
+}
