@@ -1210,7 +1210,7 @@ impl Scene {
     #[wasm_bindgen(unchecked_return_type = "Promise<PickHit | null>")]
     pub fn pick(&mut self, camera: Entity, x: f32, y: f32) -> Result<js_sys::Promise, Error> {
         if !self.sync_context() {
-            return Err("pick: the WebGL context is lost".into());
+            return Err(Error::context_lost("pick: the WebGL context is lost"));
         }
         self.transforms.update(&mut self.world);
         let fb = self.ctx.default_framebuffer();

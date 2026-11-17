@@ -278,7 +278,7 @@ impl Context {
             let run = started.ok_or("query: destroyed or invalid")?;
             loop {
                 if ctx.is_lost() || ctx.core.epoch.get() != epoch {
-                    return Err("query: the WebGL context was lost".into());
+                    return Err(Error::context_lost("query: the WebGL context was lost"));
                 }
                 let state = match ctx.poll_query(q) {
                     None => return Err("query: destroyed or invalid".into()),

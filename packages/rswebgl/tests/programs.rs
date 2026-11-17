@@ -79,3 +79,45 @@ fn errors_reach_js_as_error_objects() {
     let js: wasm_bindgen::JsValue = err.into();
     assert!(wasm_bindgen::JsCast::is_instance_of::<js_sys::Error>(&js));
 }
+
+// A shader error says so (kind and JS name), as does a lost context.
+#[wasm_bindgen_test]
+fn errors_say_their_kind() {
+    use rswebgl::error::ErrorKind;
+    let f = fixture();
+    let err = f.ctx.create_program(VERT, BROKEN_FRAG).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Shader);
+    let js: wasm_bindgen::JsValue = err.into();
+    let name = js_sys::Reflect::get(&js, &"name".into()).unwrap();
+    assert_eq!(name.as_string().as_deref(), Some("ShaderError"));
+
+    assert!(f.ctx.simulate_context_loss());
+    let lost = f.ctx.create_program(VERT, RED_FRAG).unwrap_err();
+    assert_eq!(lost.kind(), ErrorKind::ContextLost, "{lost}");
+}
+
+// With parallel compile: programError has the log once the link is done,
+// and programsReady rejects with a ShaderError.
+#[wasm_bindgen_test]
+async fn a_failed_parallel_link_is_reported() {
+    let f = fixture();
+    if !f.ctx.enable_extension(Extension::KhrParallelShaderCompile) {
+        return;
+    }
+    let broken = f.ctx.create_program(VERT, BROKEN_FRAG).expect("deferred");
+    let good = f.ctx.create_program(VERT, RED_FRAG).expect("program");
+    let result = wasm_bindgen_futures::JsFuture::from(
+        f.ctx.programs_ready_js(&[broken.to_raw(), good.to_raw()]),
+    )
+    .await;
+    let err = result.expect_err("rejects");
+    let name = js_sys::Reflect::get(&err, &"name".into()).unwrap();
+    assert_eq!(name.as_string().as_deref(), Some("ShaderError"));
+    let log = f.ctx.program_error(broken).expect("a log");
+    assert!(log.contains("fragment shader:"), "{log}");
+    assert_eq!(f.ctx.program_error(good), None);
+    // Only good ones: resolves.
+    wasm_bindgen_futures::JsFuture::from(f.ctx.programs_ready_js(&[good.to_raw()]))
+        .await
+        .expect("resolves");
+}

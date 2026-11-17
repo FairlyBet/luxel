@@ -530,7 +530,7 @@ impl Context {
 
     pub(crate) fn check_alive(&self) -> Result<(), Error> {
         if self.core.gl.is_context_lost() {
-            Err("WebGL context is lost".into())
+            Err(Error::context_lost("WebGL context is lost"))
         } else {
             Ok(())
         }

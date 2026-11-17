@@ -48,7 +48,7 @@ impl Scene {
         let fb = self.ctx.default_framebuffer();
         let canvas = fb.canvas().ok_or("capture: the context has no canvas")?;
         if self.ctx.is_lost() {
-            return Err("capture: the WebGL context is lost".into());
+            return Err(Error::context_lost("capture: the WebGL context is lost"));
         }
         let (old_w, old_h) = (canvas.width(), canvas.height());
         let max = rswebgl::limits::max_renderbuffer_size().clamp(1, 8192);

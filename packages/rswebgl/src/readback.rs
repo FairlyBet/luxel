@@ -357,7 +357,7 @@ impl PendingRead {
         let gl = self.ctx.gl().clone();
         loop {
             if !self.alive() {
-                return Err("read: the WebGL context was lost".into());
+                return Err(Error::context_lost("read: the WebGL context was lost"));
             }
             match gl.client_wait_sync_with_u32(&self.sync, 0, 0) {
                 Gl::ALREADY_SIGNALED | Gl::CONDITION_SATISFIED => break,

@@ -914,7 +914,9 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
     // collapse into one).
     // The context may have been lost while the files downloaded.
     if ctx.is_lost() {
-        return Err("WebGL context lost while the model loaded".into());
+        return Err(Error::context_lost(
+            "WebGL context lost while the model loaded",
+        ));
     }
     // Everything below is created synchronously, in this generation, with
     // the settings the load started with.

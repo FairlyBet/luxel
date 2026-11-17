@@ -317,6 +317,8 @@ pub(crate) struct ProgramObj {
     // Source-string names per stage (vertex, fragment), for error logs; empty
     // for plain sources.
     files: [Vec<String>; 2],
+    // The compile / link logs of a failed program (once linked).
+    error: Option<String>,
 }
 
 impl ProgramObj {
@@ -355,6 +357,7 @@ impl ProgramObj {
             feedback_mode: feedback.map(|(_, m)| m),
             feedback: None,
             files,
+            error: None,
         };
 
         // Without parallel compile the first status query blocks on the link
@@ -428,7 +431,8 @@ impl ProgramObj {
 
         gl.delete_shader(self.vert.take().as_ref());
         gl.delete_shader(self.frag.take().as_ref());
-        result.map_err(Error::from)
+        self.error = result.as_ref().err().cloned();
+        result.map_err(Error::shader)
     }
 
     // Call right after the program is made current: writes each sampler's unit
@@ -845,17 +849,44 @@ impl Context {
 
 #[wasm_bindgen]
 impl Context {
-    /// `programs_ready` as a Promise (resolves with `undefined`).
+    /// `programs_ready` as a Promise: resolves once none of `programs` is
+    /// still linking, or rejects with a `ShaderError` (`name`) carrying the
+    /// compile / link logs of those that failed. Stale handles are skipped.
     #[wasm_bindgen(js_name = programsReady)]
     #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn programs_ready_js(
         &self,
         #[wasm_bindgen(unchecked_param_type = "Uint32Array | ProgramId[]")] programs: &[u32],
     ) -> js_sys::Promise {
-        let ready = self.programs_ready(programs.iter().map(|&p| ProgramId::from_raw(p)).collect());
+        let ids: Vec<ProgramId> = programs.iter().map(|&p| ProgramId::from_raw(p)).collect();
+        let ready = self.programs_ready(ids.clone());
+        let ctx = self.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             ready.await;
-            Ok(JsValue::UNDEFINED)
+            let failed: Vec<String> = ids.iter().filter_map(|&p| ctx.program_error(p)).collect();
+            if failed.is_empty() {
+                Ok(JsValue::UNDEFINED)
+            } else {
+                Err(Error::shader(failed.join(
+                    "
+
+",
+                ))
+                .into())
+            }
         })
+    }
+
+    /// Why `program` failed: its compile / link logs, once its link has
+    /// finished (polled, no wait) and failed; undefined while it links, when
+    /// it linked, or for a stale handle. For editors, hot reload and
+    /// fallbacks (the console has them too).
+    #[wasm_bindgen(js_name = programError)]
+    pub fn program_error(&self, program: ProgramId) -> Option<String> {
+        self.program_link_pending(program);
+        self.res()
+            .programs
+            .get(program.0)
+            .and_then(|p| p.error.clone())
     }
 }
