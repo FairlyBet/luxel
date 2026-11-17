@@ -1495,3 +1495,33 @@ async fn instances_share_a_model_and_free_it_last() {
         "freed"
     );
 }
+
+// An instance of a model showing a variant starts from the model's own
+// materials (drawn right for them), and takes the variant on its own.
+#[wasm_bindgen_test]
+async fn an_instance_starts_from_the_models_own_materials() {
+    let mut s = setup().await;
+    let quad = load_model(&s.ctx, &variant_uv_quad_url()).await.unwrap();
+    let quad = s.scene.add_model(quad);
+    s.scene.set_translation(quad, 0.0, 0.0, 0.5);
+    s.scene
+        .set_material_variant(quad, Some("blue".into()))
+        .unwrap();
+    let mut px = s.frame().await[1];
+    for _ in 0..50 {
+        if px == BLUE {
+            break;
+        }
+        sleep_ms(20).await;
+        px = s.frame().await[1];
+    }
+    assert_eq!(px, BLUE);
+    // The copy in front of it, white (its own material).
+    let copy = s.scene.instantiate(quad).unwrap();
+    s.scene.set_translation(copy, 0.0, 0.0, 1.0);
+    assert_eq!(s.frame().await[1], WHITE);
+    s.scene
+        .set_material_variant(copy, Some("blue".into()))
+        .unwrap();
+    assert_eq!(s.frame().await[1], BLUE);
+}

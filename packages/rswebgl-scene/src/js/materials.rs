@@ -16,7 +16,7 @@
 
 use rswebgl::console;
 use rswebgl::error::Error;
-use rswebgl::ids::{ParamGroupId, SamplerId, TextureId};
+use rswebgl::ids::{ParamGroupId, SamplerId, TextureId, VertexArrayId};
 use rswebgl::render_state::FrontFace;
 use rswebgl::texture::{
     TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget, TextureWrap,
@@ -106,7 +106,7 @@ impl Scene {
             if let Some(mut m) = self.world.get_mut::<MeshRenderer>(d) {
                 m.material = material;
             }
-            self.update_variant(d);
+            self.apply_material(d);
         }
     }
 
@@ -580,7 +580,7 @@ impl Scene {
 
     // The model mesh `e` belongs to: the nearest ancestor (or itself) that
     // is a model root.
-    fn model_root_of(&self, mut e: Entity) -> Option<Entity> {
+    pub(super) fn model_root_of(&self, mut e: Entity) -> Option<Entity> {
         for _ in 0..=self.world.len() {
             if self.model_roots.contains_key(&e) {
                 return Some(e);
@@ -590,81 +590,94 @@ impl Scene {
         None
     }
 
-    // After a reload: mesh `e`'s render state from the material it draws
-    // with now (its item's own was put back), and the vertex array for it.
-    pub(super) fn refit_material(&mut self, e: Entity) {
-        let (Some(mesh), Some(prim)) = (
+    // Mesh `e` takes on the material it draws with now: its render state
+    // (blending, culling; mirroring from its node), the vertex array it
+    // needs and its shader variant. For a group without a record (the app's
+    // own) only what the shader variant follows.
+    pub(super) fn apply_material(&mut self, e: Entity) {
+        if let (Some(mesh), Some(prim)) = (
             self.world.get::<MeshRenderer>(e).copied(),
             self.world.get::<Primitive>(e).copied(),
-        ) else {
-            return;
-        };
-        let Some(record) = self.materials.get(&mesh.material) else {
-            return;
-        };
-        let mirrored = self
-            .model_root_of(e)
-            .and_then(|r| self.model(r))
-            .and_then(|m| m.items().get(prim.item as usize))
-            .is_some_and(|i| i.render_state().front_face == FrontFace::Cw);
-        let state = render_state_for(&record.material, mirrored);
-        let id = self.ctx.render_state(&state);
-        if let Some(mut m) = self.world.get_mut::<MeshRenderer>(e) {
-            m.state = id;
-            m.transparent = state.blend;
+        ) && let Some(record) = self.materials.get(&mesh.material)
+        {
+            let mirrored = self
+                .model_root_of(e)
+                .and_then(|r| self.model(r))
+                .and_then(|m| m.items().get(prim.item as usize))
+                .is_some_and(|i| i.render_state().front_face == FrontFace::Cw);
+            let state = render_state_for(&record.material, mirrored);
+            let id = self.ctx.render_state(&state);
+            if (mesh.state, mesh.transparent) != (id, state.blend)
+                && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
+            {
+                m.state = id;
+                m.transparent = state.blend;
+            }
         }
-        self.fit_vertex_array(e);
+        self.update_variant(e);
     }
 
-    // A glTF mesh draws with the vertex array its material needs (its
-    // TEXCOORD sets, tangents for its normal map): a variant's, built at
-    // load, or its own.
-    fn fit_vertex_array(&mut self, e: Entity) {
-        let (Some(mesh), Some(prim)) = (
-            self.world.get::<MeshRenderer>(e).copied(),
-            self.world.get::<Primitive>(e).copied(),
-        ) else {
-            return;
-        };
+    // The vertex array mesh `e` needs for its material (its TEXCOORD sets,
+    // tangents for its normal map) and its `ATTR_*` bits: a variant's, built
+    // at load, else the item's own. None for a mesh not from a model.
+    pub(super) fn wanted_vertex_array(&self, e: Entity) -> Option<(VertexArrayId, u32)> {
+        let mesh = self.world.get::<MeshRenderer>(e)?;
+        let prim = self.world.get::<Primitive>(e)?;
+        let model = self.model(self.model_root_of(e)?)?;
+        let item = model.items().get(prim.item as usize)?;
+        let own = (item.vao(), item.attributes());
         let Some(record) = self.materials.get(&mesh.material) else {
-            return;
+            return Some(own);
         };
-        let key = record.material.vertex_key();
-        let Some(model) = self.model_root_of(e).and_then(|r| self.model(r)) else {
-            return;
-        };
-        let Some((vao, attributes)) = model.vertex_array_for(prim.item as usize, key) else {
-            return;
-        };
-        if mesh.vao != vao
-            && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
+        Some(
+            model
+                .vertex_array_for(prim.item as usize, record.material.vertex_key())
+                .unwrap_or(own),
+        )
+    }
+
+    // Draws `e` with `vao` / `attributes` (the shader variant then follows).
+    pub(super) fn set_vertex_array(
+        world: &mut rswebgl_ecs::World,
+        e: Entity,
+        vao: VertexArrayId,
+        attributes: u32,
+    ) {
+        if let Some(mut m) = world.get_mut::<MeshRenderer>(e)
+            && m.vao != vao
         {
             m.vao = vao;
         }
-        if prim.attributes != attributes
-            && let Some(mut p) = self.world.get_mut::<Primitive>(e)
+        if let Some(mut p) = world.get_mut::<Primitive>(e)
+            && p.attributes != attributes
         {
             p.attributes = attributes;
         }
     }
 
     // A glTF mesh on the built-in PBR: its program follows its material's
-    // variant.
+    // variant (and the vertex array that material needs: switched together
+    // with the program, so neither draws with the other's layout).
     fn update_variant(&mut self, e: Entity) {
-        self.fit_vertex_array(e);
         let Some(mesh) = self.world.get::<MeshRenderer>(e).copied() else {
             return;
         };
-        let (Some(prim), Some(record)) = (
-            self.world.get::<Primitive>(e),
-            self.materials.get(&mesh.material),
-        ) else {
+        let Some(prim) = self.world.get::<Primitive>(e).copied() else {
+            return;
+        };
+        let (vao, attributes) = self
+            .wanted_vertex_array(e)
+            .unwrap_or((mesh.vao, prim.attributes));
+        let Some(record) = self.materials.get(&mesh.material) else {
+            Self::set_vertex_array(&mut self.world, e, vao, attributes);
             return;
         };
         if !self.pbr.is_pbr(mesh.program) {
+            // The app's shader: the layout at once.
+            Self::set_vertex_array(&mut self.world, e, vao, attributes);
             return;
         }
-        let key = PbrKey::new(prim.attributes, &record.material);
+        let key = PbrKey::new(attributes, &record.material);
         let transmissive = record.material.transmission() > 0.0;
         if mesh.transmissive != transmissive
             && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
@@ -673,17 +686,18 @@ impl Scene {
         }
         match self.pbr.program(&self.ctx, key) {
             // A new variant still linking: keep drawing with the current one
-            // (if it is ready) and switch when the new one is.
+            // (if it is ready) and its layout; switch both when it is.
             Ok(program)
                 if program != mesh.program
                     && self.ctx.program_link_pending(program)
                     && !self.ctx.program_link_pending(mesh.program) =>
             {
-                self.pending_variants.retain(|&(p, _)| p != e);
-                self.pending_variants.push((e, program));
+                self.pending_variants.retain(|p| p.0 != e);
+                self.pending_variants.push((e, program, vao, attributes));
             }
             Ok(program) => {
-                self.pending_variants.retain(|&(p, _)| p != e);
+                self.pending_variants.retain(|p| p.0 != e);
+                Self::set_vertex_array(&mut self.world, e, vao, attributes);
                 if program != mesh.program
                     && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
                 {
@@ -698,22 +712,31 @@ impl Scene {
     }
 
     // Switches meshes whose new variant has finished linking (or failed:
-    // then the draw reports it, as any broken program).
+    // then the draw reports it, as any broken program), with the layout it
+    // was built for.
     pub(super) fn apply_pending_variants(&mut self) {
         if self.pending_variants.is_empty() {
             return;
         }
         let ctx = &self.ctx;
         let world = &mut self.world;
-        self.pending_variants.retain(|&(e, program)| {
-            if ctx.program_link_pending(program) {
-                return world.is_alive(e);
-            }
-            if let Some(mut m) = world.get_mut::<MeshRenderer>(e) {
-                m.program = program;
-            }
-            false
-        });
+        let mut switched = Vec::new();
+        self.pending_variants
+            .retain(|&(e, program, vao, attributes)| {
+                if ctx.program_link_pending(program) {
+                    return world.is_alive(e);
+                }
+                Self::set_vertex_array(world, e, vao, attributes);
+                if let Some(mut m) = world.get_mut::<MeshRenderer>(e) {
+                    m.program = program;
+                }
+                switched.push(e);
+                false
+            });
+        // Their depth-only variants follow the new layout.
+        for e in switched {
+            self.refresh_shadow_caster(e);
+        }
     }
 }
 

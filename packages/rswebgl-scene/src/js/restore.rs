@@ -326,11 +326,7 @@ impl Scene {
                     }
                 }
             }
-            let items: Vec<_> = model
-                .items()
-                .iter()
-                .map(|i| (i.vao(), i.state(), i.morph()))
-                .collect();
+            let items: Vec<_> = model.items().iter().map(|i| (i.vao(), i.morph())).collect();
             let meshes: Vec<Entity> = self
                 .roots_of(root)
                 .into_iter()
@@ -340,20 +336,24 @@ impl Scene {
                 let Some(item) = self.world.get::<Primitive>(e).map(|p| p.item as usize) else {
                     continue;
                 };
-                let Some(&(vao, state, morph)) = items.get(item) else {
+                let Some(&(own, morph)) = items.get(item) else {
                     continue;
                 };
-                if let Some(mut m) = self.world.get_mut::<MeshRenderer>(e) {
-                    m.vao = vao;
-                    m.state = state;
-                }
+                // The new vertex array its material needs, at once (the old
+                // is dead); render states outlive a loss, so its own stays.
+                let (vao, attributes) = self.wanted_vertex_array(e).unwrap_or_else(|| {
+                    (
+                        own,
+                        self.world.get::<Primitive>(e).map_or(0, |p| p.attributes),
+                    )
+                });
+                Self::set_vertex_array(&mut self.world, e, vao, attributes);
                 if let (Some((texture, _)), Some(mut m)) = (morph, self.world.get_mut::<Morph>(e)) {
                     m.texture = texture;
                 }
                 self.world.remove::<Reloading>(e);
-                // A material other than the item's own (a variant, setMaterial):
-                // its render state and vertex array again, not the item's.
-                self.refit_material(e);
+                // Its shader variant for that layout (and its shadow caster).
+                self.apply_material(e);
             }
         }
     }

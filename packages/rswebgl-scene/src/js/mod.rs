@@ -161,7 +161,9 @@ pub struct Scene {
     stats: RenderStats,
     // PBR variant switches waiting for the new program to link: the mesh
     // keeps drawing with its old one meanwhile.
-    pending_variants: Vec<(Entity, ProgramId)>,
+    // Meshes waiting for their new variant to link: the program, and the
+    // vertex array and attributes it is for.
+    pending_variants: Vec<(Entity, ProgramId, VertexArrayId, u32)>,
 }
 
 // A rejected call on a dead entity: reported once per call site, no-op.
@@ -533,7 +535,7 @@ impl Scene {
         if mesh.program.is_null() || mesh.state.is_null() {
             return Err("setMesh: \"program\" and \"state\" are required".into());
         }
-        self.pending_variants.retain(|&(p, _)| p != e);
+        self.pending_variants.retain(|p| p.0 != e);
         self.insert(e, "setMesh", mesh);
         Ok(())
     }
@@ -625,7 +627,10 @@ impl Scene {
     /// it: vertex arrays, textures, and materials (a material edited shows
     /// on every instance; `cloneMaterial` + `setMaterial` for one of its
     /// own). Each instance has its own transforms, visibility, animation
-    /// and variant. The GPU data is freed with the last instance despawned.
+    /// and variant, and starts from the model's own materials (as
+    /// `addModel` left them, with your edits to them; not the copy's variant
+    /// or `setMaterial`). The GPU data is freed with the last instance
+    /// despawned.
     /// Throws if `root` isn't a model's root.
     pub fn instantiate(&mut self, root: Entity) -> Result<Entity, Error> {
         self.invalidate();
@@ -639,17 +644,21 @@ impl Scene {
             .models
             .get(&key)
             .ok_or("instantiate: the model is gone")?;
-        let (ctx, pbr) = (&self.ctx, &mut self.pbr);
-        // The same programs as the meshes it copies (one of the app's
-        // included): by item, from the first instance.
+        // The app's own shader where the first copy has one
+        // (`addModelWithProgram`), by item — from this model's meshes only,
+        // not another model hung under the root.
         let programs: HashMap<u32, ProgramId> = descendants(&self.world, root)
             .into_iter()
+            .filter(|&e| self.model_root_of(e) == Some(root))
             .filter_map(|e| {
                 let item = self.world.get::<crate::model::Primitive>(e)?.item;
-                Some((item, self.world.get::<MeshRenderer>(e)?.program))
+                let program = self.world.get::<MeshRenderer>(e)?.program;
+                (!self.pbr.is_pbr(program)).then_some((item, program))
             })
             .collect();
+        let (ctx, pbr) = (&self.ctx, &mut self.pbr);
         let items = model.items();
+        let lost = model.is_lost(ctx);
         let new_root = spawn_model(&mut self.world, model, |item| {
             let index = items.iter().position(|i| std::ptr::eq(i, item))? as u32;
             match programs.get(&index) {
@@ -665,8 +674,17 @@ impl Scene {
             }
         });
         self.model_roots.insert(new_root, key);
+        // Its own materials as the scene has them now (edits included):
+        // state, vertex array, shader variant, shadow caster.
         for e in descendants(&self.world, new_root) {
-            self.refresh_shadow_caster(e);
+            if self.world.has::<MeshRenderer>(e) {
+                self.apply_material(e);
+                // A model waiting for its reload (lost): out of frames
+                // until it lands, as its other copies.
+                if lost {
+                    self.world.insert(e, crate::render::Reloading);
+                }
+            }
         }
         Ok(new_root)
     }
@@ -964,7 +982,7 @@ impl Scene {
             .storage::<MeshRenderer>()
             .map(|m| m.data().iter().map(|m| m.program).collect())
             .unwrap_or_default();
-        programs.extend(self.pending_variants.iter().map(|&(_, p)| p));
+        programs.extend(self.pending_variants.iter().map(|p| p.1));
         programs.extend(self.renderer.built_background_program());
         programs.extend(self.renderer.motion_programs());
         // The shadow casters' depth-only programs, and the ground shadow's.
