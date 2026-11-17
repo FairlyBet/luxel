@@ -9,6 +9,16 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
 const TS_OPTIONS: &str = r#"
+/** The background color or gradient (`setBackgroundColor`,
+ *  `setBackgroundGradient`), in display (sRGB 0–1) values. */
+export interface BackgroundFill {
+  type: "color" | "vertical" | "radial";
+  /** The color; a gradient's bottom ("vertical") or center ("radial"). */
+  from: Float32Array;
+  /** A gradient's top or corners. */
+  to?: Float32Array;
+}
+
 /** A punctual light (names and units as in KHR_lights_punctual). */
 export interface LightOptions {
   type: "directional" | "point" | "spot";

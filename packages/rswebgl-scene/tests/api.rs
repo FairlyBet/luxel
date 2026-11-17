@@ -1596,3 +1596,47 @@ async fn getters_read_back_the_setters() {
     assert!(s.scene.children(lone).is_empty());
     s.frame().await;
 }
+
+// A background color or gradient shows exactly (exposure and tone mapping
+// leave it be), through HDR and straight to the canvas.
+#[wasm_bindgen_test]
+async fn background_colors_and_gradients_show_as_given() {
+    let mut s = setup().await;
+    s.scene.set_visible(s.root, false);
+    s.scene.set_tone_mapping("aces").unwrap();
+    s.scene.set_exposure(2.0);
+    let px = |s: &Setup, x: i32, y: i32| {
+        let mut out = [0u8; 4];
+        s.gl.read_pixels_with_opt_u8_array(x, y, 1, 1, Gl::RGBA, Gl::UNSIGNED_BYTE, Some(&mut out[..]))
+            .unwrap();
+        out
+    };
+    let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 3);
+    let color = [51u8, 102, 153, 255];
+    for hdr in [true, false] {
+        s.scene.set_hdr(hdr);
+        s.scene.set_background_color(&[0.2, 0.4, 0.6]).unwrap();
+        assert_eq!(s.frame().await, [color; 3], "hdr {hdr}");
+        s.scene.set_background_gradient(&[1.0, 0.0, 0.0], &[0.0, 0.0, 1.0], "vertical").unwrap();
+        s.frame().await;
+        let (bottom, top) = (px(&s, 0, 0), px(&s, 0, H - 1));
+        assert!(near(bottom, [251, 0, 4, 255]) && near(top, [4, 0, 251, 255]), "hdr {hdr}: {bottom:?} {top:?}");
+        s.scene.set_background_gradient(&[1.0, 1.0, 1.0], &[0.0, 0.0, 0.0], "radial").unwrap();
+        s.frame().await;
+        let (center, corner) = (px(&s, W / 2, H / 2), px(&s, 0, 0));
+        assert!(center[0] > 245 && corner[0] < 15, "hdr {hdr}: {center:?} {corner:?}");
+    }
+    let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &k.into()).unwrap();
+    let fill = s.scene.background_fill();
+    assert_eq!(get(&fill, "type"), "radial");
+    assert!(s.scene.set_background_gradient(&[0.0; 3], &[1.0; 3], "conic").is_err());
+    assert!(s.scene.set_background_color(&[0.0, 1.0]).is_err());
+    // The environment background replaces it, and the reverse.
+    s.scene.set_background(0.0);
+    assert!(s.scene.background_fill().is_undefined());
+    s.scene.set_background_color(&[1.0, 1.0, 1.0]).unwrap();
+    assert_eq!(s.scene.background(), None);
+    assert_eq!(s.frame().await, [WHITE; 3], "white stays white");
+    s.scene.clear_background();
+    assert!(s.scene.background_fill().is_undefined());
+}

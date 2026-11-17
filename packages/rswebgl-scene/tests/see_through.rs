@@ -105,7 +105,7 @@ async fn glass_shows_transparent_meshes_behind_it() {
             .unwrap();
     scene.set_camera(camera, cam).unwrap();
     scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
-    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    let root = scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
     for layers in [0u32, 2] {
         scene.set_transmission_layers(layers);
         wasm_bindgen_futures::JsFuture::from(scene.when_ready())
@@ -126,6 +126,18 @@ async fn glass_shows_transparent_meshes_behind_it() {
         .unwrap();
         assert!(px[0] > 150 && px[1] < 60, "layers {layers}: center {px:?}");
     }
+    // Nothing behind the glass but a background color: the glass shows it
+    // (else the empty, black scene copy).
+    let behind = scene
+        .children(root)
+        .into_iter()
+        .map(rswebgl_ecs::Entity::from_raw)
+        .find(|&e| scene.local_matrix(e)[0] == 2.0)
+        .expect("the red quad's node");
+    scene.set_visible(behind, false);
+    scene.set_background_color(&[0.0, 1.0, 0.0]).unwrap();
+    let px = center(&gl, &mut scene, camera).await;
+    assert!(px[1] > 150 && px[0] < 60, "glass over green: {px:?}");
     scene.destroy();
 }
 

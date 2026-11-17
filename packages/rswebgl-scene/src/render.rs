@@ -83,6 +83,8 @@ pub const INSTANCES_TEXTURE: &str = "u_instances";
 ///     vec4 u_output;      // x shows (1) or leaves linear radiance (0), y tone
 ///                         // mapper, z 1 with a scene copy, w its last mip
 ///     vec4 u_shading;     // x specular AA variance, y its threshold
+///     vec4 u_fill_a;      // the background fill: rgb a color (display
+///     vec4 u_fill_b;      // values), w its kind (0 none); b the second
 /// };
 /// uniform samplerCube u_env_diffuse;  // irradiance / π
 /// uniform samplerCube u_env_specular; // prefiltered: mip = roughness × w
@@ -212,6 +214,9 @@ pub struct SceneRenderer {
     f_background_blur: ParamField,
     // Some(blur): draw the environment behind everything.
     background: Option<f32>,
+    // The background fill: rgb a color (display values) and w its kind (1
+    // a color, 2 vertical, 3 radial; 0 none), the gradient's other color.
+    fill: [Vec4; 2],
     // Built on first use; None until then (Err once it failed).
     skybox: Option<Result<ProgramId, ()>>,
     skybox_state: StateId,
@@ -287,7 +292,9 @@ impl SceneRenderer {
                 .field("u_environment", UniformType::Vec4)
                 .field("u_lighting", UniformType::Vec4)
                 .field("u_output", UniformType::Vec4)
-                .field("u_shading", UniformType::Vec4),
+                .field("u_shading", UniformType::Vec4)
+                .field("u_fill_a", UniformType::Vec4)
+                .field("u_fill_b", UniformType::Vec4),
             BufferUsage::DynamicDraw,
         )?;
         undo.push(move |c| c.destroy_uniform_buffer(lighting_ubo));
@@ -362,6 +369,7 @@ impl SceneRenderer {
             f_env_specular: ctx.param_field(frame_layout, "u_env_specular")?,
             f_background_blur: ctx.param_field(frame_layout, "u_background_blur")?,
             background: None,
+            fill: [Vec4::ZERO; 2],
             skybox: None,
             skybox_state: ctx.render_state(&skybox_state),
             frame_layout,
@@ -468,6 +476,16 @@ impl SceneRenderer {
         self.background = blur.map(|b| b.clamp(0.0, 1.0));
     }
 
+    /// A flat color or gradient behind the scene (`fill`; w 0 none): shown
+    /// as is, neither exposed nor tone mapped; transmission sees it.
+    pub fn set_fill(&mut self, fill: [Vec4; 2]) {
+        self.fill = fill;
+    }
+
+    pub fn fill(&self) -> [Vec4; 2] {
+        self.fill
+    }
+
     pub fn environment_rotation(&self) -> f32 {
         self.env_rotation
     }
@@ -516,7 +534,10 @@ impl SceneRenderer {
     // The background draw: first in the pass (key 0, pushed before any
     // mesh), not writing depth.
     fn push_background(&mut self, ctx: &Context, pass: &mut Pass) {
-        let Some(blur) = self.background else {
+        // The fill draws here only straight to the canvas (to an HDR target
+        // the display pass lays it beneath).
+        let fill = self.fill[0].w > 0.5 && self.display_output;
+        let Some(blur) = self.background.or(fill.then_some(0.0)) else {
             return;
         };
         let Some(program) = self.background_program(ctx) else {
@@ -1258,6 +1279,7 @@ impl SceneRenderer {
         fresh.specular_aa = self.specular_aa;
         fresh.env_rotation = self.env_rotation;
         fresh.background = self.background;
+        fresh.fill = self.fill;
         fresh.display_output = self.display_output;
         fresh.tone_mapping = self.tone_mapping;
         fresh.lights.keep_settings(&self.lights);
@@ -1340,6 +1362,8 @@ impl SceneRenderer {
                 self.peel as f32,
                 reverse,
             ),
+            self.fill[0],
+            self.fill[1],
         ];
         if data == self.lighting {
             return;
@@ -1350,6 +1374,9 @@ impl SceneRenderer {
         ctx.ubo_set_vec4(ubo, "u_lighting", params.x, params.y, params.z, params.w);
         ctx.ubo_set_vec4(ubo, "u_output", output.x, output.y, output.z, output.w);
         ctx.ubo_set_vec4(ubo, "u_shading", shading.x, shading.y, shading.z, shading.w);
+        let (fa, fb) = (data[4], data[5]);
+        ctx.ubo_set_vec4(ubo, "u_fill_a", fa.x, fa.y, fa.z, fa.w);
+        ctx.ubo_set_vec4(ubo, "u_fill_b", fb.x, fb.y, fb.z, fb.w);
         self.lighting = data;
     }
 

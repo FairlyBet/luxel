@@ -1,6 +1,6 @@
 //! Cameras, lights and the environment for JS.
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use rswebgl::console;
 use rswebgl::error::Error;
 use rswebgl_ecs::Entity;
@@ -417,27 +417,113 @@ impl Scene {
         self.renderer.set_environment_rotation(radians);
     }
 
-    /// Shows the environment behind the scene, `blur` 0 (sharp) … 1.
+    /// Shows the environment behind the scene, `blur` 0 (sharp) … 1 (in
+    /// place of a background color or gradient).
     #[wasm_bindgen(js_name = setBackground)]
     pub fn set_background(&mut self, blur: f32) {
         self.invalidate();
         if !options::finite("setBackground", &[blur]) {
             return;
         }
+        self.renderer.set_fill([Vec4::ZERO; 2]);
         self.renderer.set_background(Some(blur));
         // Start compiling now; `whenReady` waits for it.
         self.renderer.background_program(&self.ctx);
     }
 
-    /// No background: the clear color shows.
+    /// No background — no environment, color or gradient: the canvas's
+    /// clear color shows.
     #[wasm_bindgen(js_name = clearBackground)]
     pub fn clear_background(&mut self) {
         self.invalidate();
         self.renderer.set_background(None);
+        self.renderer.set_fill([Vec4::ZERO; 2]);
+    }
+
+    /// A flat color behind the scene, in display values (sRGB 0–1, as CSS
+    /// colors): shown exactly, neither exposed nor tone mapped — white stays
+    /// white. Glass sees it. Replaces the environment background.
+    #[wasm_bindgen(js_name = setBackgroundColor)]
+    pub fn set_background_color(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] color: &[f32],
+    ) -> Result<(), Error> {
+        let c = fill_color("setBackgroundColor", color)?;
+        self.set_fill(c.extend(1.0), Vec4::ZERO);
+        Ok(())
+    }
+
+    /// A gradient behind the scene, as `setBackgroundColor` (display values,
+    /// shown exactly): "vertical" from `from` at the bottom to `to` at the
+    /// top, "radial" from `from` at the center to `to` at the corners;
+    /// mixed in sRGB, as CSS gradients are.
+    #[wasm_bindgen(js_name = setBackgroundGradient)]
+    pub fn set_background_gradient(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] from: &[f32],
+        #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] to: &[f32],
+        #[wasm_bindgen(unchecked_param_type = "\"vertical\" | \"radial\"")] kind: &str,
+    ) -> Result<(), Error> {
+        let a = fill_color("setBackgroundGradient", from)?;
+        let b = fill_color("setBackgroundGradient", to)?;
+        let w = match kind {
+            "vertical" => 2.0,
+            "radial" => 3.0,
+            other => {
+                return Err(format!(
+                    "setBackgroundGradient: kind \"{other}\" isn't \"vertical\" or \"radial\""
+                )
+                .into());
+            }
+        };
+        self.set_fill(a.extend(w), b.extend(0.0));
+        Ok(())
+    }
+
+    /// The background color or gradient (`setBackgroundColor`,
+    /// `setBackgroundGradient`), or undefined without one.
+    #[wasm_bindgen(js_name = backgroundFill, unchecked_return_type = "BackgroundFill | undefined")]
+    pub fn background_fill(&self) -> JsValue {
+        let [a, b] = self.renderer.fill();
+        let kind = match a.w as u32 {
+            1 => "color",
+            2 => "vertical",
+            3 => "radial",
+            _ => return JsValue::UNDEFINED,
+        };
+        let o = js_sys::Object::new();
+        let set = |k: &str, v: JsValue| {
+            let _ = js_sys::Reflect::set(&o, &k.into(), &v);
+        };
+        set("type", kind.into());
+        set("from", js_sys::Float32Array::from(&a.truncate().to_array()[..]).into());
+        if kind != "color" {
+            set("to", js_sys::Float32Array::from(&b.truncate().to_array()[..]).into());
+        }
+        o.into()
     }
 }
 
+// A background color: three (or four, alpha ignored) finite numbers,
+// clamped to 0–1.
+fn fill_color(what: &str, c: &[f32]) -> Result<Vec3, Error> {
+    if !(3..=4).contains(&c.len()) || c.iter().any(|v| !v.is_finite()) {
+        return Err(format!("{what}: a color is [r, g, b], finite, 0–1").into());
+    }
+    Ok(Vec3::new(c[0], c[1], c[2]).clamp(Vec3::ZERO, Vec3::ONE))
+}
+
 impl Scene {
+    // A background color or gradient, in place of the environment
+    // background.
+    fn set_fill(&mut self, a: Vec4, b: Vec4) {
+        self.invalidate();
+        self.renderer.set_background(None);
+        self.renderer.set_fill([a, b]);
+        // Straight to the canvas it draws with the background shader.
+        self.renderer.background_program(&self.ctx);
+    }
+
     /// `setCamera` from Rust.
     pub fn insert_camera(&mut self, e: Entity, camera: Camera) {
         self.invalidate();

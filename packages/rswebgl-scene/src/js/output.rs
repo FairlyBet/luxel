@@ -411,6 +411,7 @@ impl Scene {
                 });
             out.set_key_output(&self.ctx, self.contact_shadows.is_some() && pbr_only);
             out.set_transmission_scale(self.transmission_scale);
+            out.set_fill(self.renderer.fill());
             match out.prepare_split(&self.ctx, w, h, pass, false) {
                 Ok(()) => {
                     out.prepare_late(late);

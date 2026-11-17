@@ -8,6 +8,7 @@ import init, {
   Context,
   type CameraOptions,
   type AnimationEvent,
+  type BackgroundFill,
   type Entity,
   type Handles,
   type LightOptions,
@@ -85,3 +86,11 @@ for (const ev of animEvents) {
   if (ev.type === "started") void 0;
 }
 gs.setAnimationTime(ge, 0.5);
+
+// Background colors and gradients.
+gs.setBackgroundColor([1, 1, 1]);
+gs.setBackgroundGradient([1, 1, 1], new Float32Array([0.8, 0.8, 0.8]), "radial");
+// @ts-expect-error: "vertical" or "radial" only
+gs.setBackgroundGradient([1, 1, 1], [0, 0, 0], "conic");
+const fill: BackgroundFill | undefined = gs.backgroundFill();
+if (fill?.type === "vertical") void fill.to;

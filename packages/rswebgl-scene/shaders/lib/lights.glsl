@@ -53,6 +53,8 @@ layout(std140) uniform Lighting {
                         // scene copy for transmission, w its last mip
     vec4 u_shading;     // x specular antialiasing variance, y its threshold,
                         // z depth-peeling mode, w 1 under reverse-Z
+    vec4 u_fill_a;      // the background fill (background_fill: w its
+    vec4 u_fill_b;      // kind, 0 none), in display values
 };
 
 

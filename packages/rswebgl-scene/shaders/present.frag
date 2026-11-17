@@ -19,6 +19,9 @@ uniform float u_exposure;
 uniform int u_tone_mapping;
 uniform float u_dither; // 0 off, 1 on
 uniform float u_sharpness; // RCAS strength 0…1 (FSR1's 2^-stops), 0 off
+// The background fill under the scene (background_fill; w 0: none).
+uniform vec4 u_fill_a;
+uniform vec4 u_fill_b;
 // Auto exposure (exposure.frag): its 1×1 brightness, and the grey it maps
 // to (0: off) — Godot's full_exposure = exposure / (brightness / grey).
 uniform sampler2D u_auto_exposure;
@@ -84,6 +87,12 @@ void main() {
         c = clamp(rcas(p, c), 0.0, 1.0);
     }
     c = linear_to_srgb(c);
+    if (u_fill_a.w > 0.5) {
+        // Over the fill, in display values (as over a CSS background).
+        vec2 uv = gl_FragCoord.xy / vec2(textureSize(u_hdr, 0));
+        c = c * a + background_fill(uv, u_fill_a, u_fill_b) * (1.0 - a);
+        a = 1.0;
+    }
     c += (ign(gl_FragCoord.xy) - 0.5) / 255.0 * u_dither;
     // Premultiplied again for the canvas (WebGL's default
     // premultipliedAlpha: true).

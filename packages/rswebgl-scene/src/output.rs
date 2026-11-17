@@ -11,6 +11,7 @@
 //! canvas's clear color, so a canvas with a transparent clear color still
 //! composites over the page.
 
+use glam::Vec4;
 use rswebgl::context::Context;
 use rswebgl::draw::{DrawCommand, DrawMode, Viewport};
 use rswebgl::error::Error;
@@ -400,6 +401,9 @@ pub struct HdrOutput {
     f_tone_mapping: ParamField,
     f_dither: ParamField,
     f_sharpness: ParamField,
+    // The background fill (the renderer's `fill`; w 0: none): the target
+    // clears to nothing under it, and the display pass lays it beneath.
+    fill: [Vec4; 2],
     f_auto_grey: ParamField,
     // The scene copy's first mip: program, its layout and group.
     grab_down: (ProgramId, ParamLayoutId, ParamGroupId),
@@ -474,6 +478,8 @@ impl HdrOutput {
                 .uniform("u_tone_mapping", UniformType::I32)
                 .uniform("u_dither", UniformType::F32)
                 .uniform("u_sharpness", UniformType::F32)
+                .uniform("u_fill_a", UniformType::Vec4)
+                .uniform("u_fill_b", UniformType::Vec4)
                 .texture("u_auto_exposure")
                 .uniform("u_auto_grey", UniformType::F32),
         )?;
@@ -558,6 +564,7 @@ impl HdrOutput {
             f_tone_mapping: ctx.param_field(layout, "u_tone_mapping")?,
             f_dither: ctx.param_field(layout, "u_dither")?,
             f_sharpness: ctx.param_field(layout, "u_sharpness")?,
+            fill: [Vec4::ZERO; 2],
             f_auto_grey: ctx.param_field(layout, "u_auto_grey")?,
             grab_down,
             state: ctx.render_state(&state),
@@ -835,8 +842,13 @@ impl HdrOutput {
         if self.size != (w, h) || self.reverse_z != reverse_z || self.fb.is_null() {
             self.allocate(ctx, w, h, reverse_z)?;
         }
-        // The canvas's clear color, as premultiplied linear radiance.
-        let [r, g, b, a] = ctx.default_framebuffer().clear_color_rgba();
+        // The canvas's clear color, as premultiplied linear radiance (none
+        // under a background fill: the display pass lays that beneath).
+        let [r, g, b, a] = if self.fill[0].w > 0.5 {
+            [0.0; 4]
+        } else {
+            ctx.default_framebuffer().clear_color_rgba()
+        };
         let lin = |c: f32| {
             if c <= 0.04045 {
                 c / 12.92
@@ -1198,6 +1210,11 @@ impl HdrOutput {
         self.peel.as_ref().map(|p| (p.glass_fb, p.transparent_fb))
     }
 
+    /// The background fill (`SceneRenderer::fill`), from the next frame.
+    pub fn set_fill(&mut self, fill: [Vec4; 2]) {
+        self.fill = fill;
+    }
+
     /// Draws the target to the canvas (through FXAA when on).
     pub fn present(
         &mut self,
@@ -1219,6 +1236,9 @@ impl HdrOutput {
         ctx.param_set_i32(self.group, self.f_tone_mapping, tone_mapping as i32);
         ctx.param_set_f32(self.group, self.f_dither, if dither { 1.0 } else { 0.0 });
         ctx.param_set_f32(self.group, self.f_sharpness, sharpness.clamp(0.0, 1.0));
+        let [fa, fb] = self.fill;
+        ctx.param_set_floats_by_name(self.group, "u_fill_a", &fa.to_array());
+        ctx.param_set_floats_by_name(self.group, "u_fill_b", &fb.to_array());
         let fb = ctx.default_framebuffer();
         let (cw, ch) = (fb.width().max(1), fb.height().max(1));
         // With FXAA the display pass draws into its texture (it failing to

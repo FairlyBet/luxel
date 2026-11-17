@@ -59,5 +59,10 @@ bool scene_color_available() {
 vec3 scene_color_at(vec3 p, float roughness) {
     vec4 clip = u_view_proj * vec4(p, 1.0);
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
-    return textureLod(u_scene_color, uv, max(roughness * u_output.w, u_output.z - 1.0)).rgb;
+    vec4 s = textureLod(u_scene_color, uv, max(roughness * u_output.w, u_output.z - 1.0));
+    if (u_fill_a.w < 0.5) return s.rgb;
+    // Behind the scene, the background fill (shown as is): as radiance that
+    // displays near it (exposure undone, tone mapping not).
+    vec3 fill = srgb_to_linear(background_fill(uv, u_fill_a, u_fill_b)) / max(u_lighting.y, 1e-6);
+    return s.rgb + fill * (1.0 - s.a);
 }
