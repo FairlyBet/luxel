@@ -230,7 +230,11 @@ $("shadows").addEventListener("change", () => {
   castShadow = $("shadows").checked;
   setLight();
 });
-const setContact = () => scene.setContactShadows($("contact-shadows").checked ? {} : null);
+// Its length in multiples of the scene's default (a fiftieth of the casters'
+// box diagonal, about the model's radius / 25).
+let contactScale = 1;
+const setContact = () =>
+  scene.setContactShadows($("contact-shadows").checked ? { length: (contactScale * orbit.radius) / 25 } : null);
 setContact();
 $("contact-shadows").addEventListener("change", () => {
   setContact();
@@ -365,6 +369,7 @@ async function load(
     const [cx, cy, cz, r] = scene.modelBounds(root);
     orbit.target = [cx, cy, cz];
     orbit.radius = r || 1;
+    setContact();
     resetView();
     setCameraLens();
     inspect(0, "");
@@ -620,6 +625,10 @@ $("background").addEventListener("change", applyBackground);
 slider("blur", (v) => v.toFixed(2), (v) => {
   blur = v;
   applyBackground();
+});
+slider("contact-length", (v) => `×${v.toFixed(2)}`, (v) => {
+  contactScale = v;
+  setContact();
 });
 slider("light", (v) => v.toFixed(1), (v) => {
   lightIntensity = v;
