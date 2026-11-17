@@ -7,6 +7,16 @@
 // replaced by interleaved gradient noise (Jimenez 2014) moving each frame,
 // which TAA averages. Writes the visibility (1: open) to red.
 //
+// Each sample's weight falls off with its distance as XeGTAO weighs it
+// (Intel, MIT: XeGTAO.hlsli XeGTAO_MainPass — falloffMul / falloffAdd over
+// the last FalloffRange of the radius, the thin-occluder compensation
+// stretching the depth difference, the sample's horizon lerped toward the
+// low horizon by it, and the horizon the max): an occluder further than
+// the radius counts for nothing, so a thin wire well in front of a wall
+// leaves it be. three.js' hard thickness cut and
+// running average let such a wire blink in and out of the occlusion as the
+// jitter moves it.
+//
 // Green: the contact shadow of one light (Filament's
 // screenSpaceContactShadow, Apache-2.0): a short ray from the point toward
 // the light, dithered by the same noise, occluded where the scene's surface
@@ -19,6 +29,11 @@ precision highp float;
 #define PI 3.141592653589793
 #define DIRECTIONS 3
 #define STEPS 6
+// XeGTAO's defaults: the share of the radius the falloff takes, and how
+// much more a depth difference counts than a sideways one (0: none — more
+// cuts real occlusion from above as much as thin wires).
+#define FALLOFF_RANGE 0.615
+#define THIN_OCCLUDER_COMPENSATION 0.0
 
 in vec2 v_ndc;
 uniform highp sampler2D u_depth;
@@ -145,6 +160,12 @@ void main() {
     // Perspective: toward the eye; orthographic (w column = 0 on xy).
     vec3 view_dir = u_proj[3][3] < 0.5 ? normalize(-view_pos) : vec3(0.0, 0.0, 1.0);
 
+    float falloff_range = FALLOFF_RANGE * radius;
+    float falloff_from = radius * (1.0 - FALLOFF_RANGE);
+    float falloff_mul = -1.0 / falloff_range;
+    float falloff_add = falloff_from / falloff_range + 1.0;
+    const vec3 thin = vec3(1.0, 1.0, 1.0 + THIN_OCCLUDER_COMPENSATION);
+
     float ao = 0.0;
     for (int i = 0; i < DIRECTIONS; ++i) {
         float angle = float(i) / float(DIRECTIONS) * PI;
@@ -154,19 +175,25 @@ void main() {
         vec3 slice_tangent = cross(slice_bitangent, view_dir);
         vec3 normal_in_slice = normalize(view_normal - slice_bitangent * dot(view_normal, slice_bitangent));
         vec3 to_normal = cross(normal_in_slice, slice_bitangent);
-        vec2 cos_h = vec2(dot(view_dir, to_normal), dot(view_dir, -to_normal));
+        // The low horizons (the surface's own tangent): where nothing
+        // occludes.
+        vec2 low_h = vec2(dot(view_dir, to_normal), dot(view_dir, -to_normal));
+        vec2 cos_h = low_h;
         for (int j = 0; j < STEPS; ++j) {
             vec3 offset = dir.xyz * radius * dir.w * pow(float(j + 1) / float(STEPS), u_gtao.z);
-            float falloff = mix(1.0, 2.0 / float(j + 2), u_gtao.w);
             vec3 s = scene_uv_and_depth(view_pos + offset);
             vec3 delta = view_position(s.xy, s.z) - view_pos;
             if (abs(delta.z) < thickness) {
-                cos_h.x += max(0.0, (dot(view_dir, normalize(delta)) - cos_h.x) * falloff);
+                float weight = clamp(length(delta * thin) * falloff_mul + falloff_add, 0.0, 1.0);
+                float shc = mix(low_h.x, dot(view_dir, normalize(delta)), weight);
+                cos_h.x = max(cos_h.x, shc);
             }
             s = scene_uv_and_depth(view_pos - offset);
             delta = view_position(s.xy, s.z) - view_pos;
             if (abs(delta.z) < thickness) {
-                cos_h.y += max(0.0, (dot(view_dir, normalize(delta)) - cos_h.y) * falloff);
+                float weight = clamp(length(delta * thin) * falloff_mul + falloff_add, 0.0, 1.0);
+                float shc = mix(low_h.y, dot(view_dir, normalize(delta)), weight);
+                cos_h.y = max(cos_h.y, shc);
             }
         }
         cos_h = clamp(cos_h, -1.0, 1.0);

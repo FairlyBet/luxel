@@ -664,7 +664,7 @@ async fn ambient_occlusion_darkens_under_the_square() {
     assert!(near > 60 && near < 240, "lit by the environment: {near}");
 
     scene
-        .set_ambient_occlusion(js_sys::JSON::parse(r#"{ "radius": 1.5 }"#).unwrap())
+        .set_ambient_occlusion(js_sys::JSON::parse(r#"{ "radius": 3 }"#).unwrap())
         .unwrap();
     frames(&mut scene);
     let (near_ao, far_ao) = (read(&gl, 20), read(&gl, 31));
