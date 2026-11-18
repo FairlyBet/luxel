@@ -50,31 +50,31 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 
 - [x] material.rs `translate` repeats `default_material`'s ~45 defaults →
   `..default_material()`; `doc_maps` once.
-- [ ] Map slots by bare index (`maps[0..4]`, `maps()[2]`, `map == 0`,
-  `.skip(5)`) → named slot constants.
-- [ ] Stale comments: foundation "(later) its ECS", layouts "for ECS
+- [x] Map slots by bare index (`maps[0..4]`, `maps()[2]`, `map == 0`,
+  `.skip(5)`) → named slot constants. — BASE_COLOR_MAP … CORE_MAPS, exported
+- [x] Stale comments: foundation "(later) its ECS", layouts "for ECS
   components"; material "v1", "their textures aren't read yet"; geometry
   locations up to 7 (8, 9 exist), "readers dequantize" (they don't);
   `attributes()` omits 512; the hand-written uniform list; misplaced
   comments in lib.rs `load`; draco `decode` returns an unused bool;
   pack.rs "(as before)".
-- [ ] bufferView slicing written 4 times; the meshopt extension names twice.
-- [ ] JS error → string three times (fetch, draco, ktx2).
-- [ ] The compress-kind merge rule twice (compress.rs, pack.rs).
-- [ ] Warnings only to the console, not `Model::warnings()` (primitive
+- [x] bufferView slicing written 4 times; the meshopt extension names twice. — one `view_bytes` / `json_view` (overflow-checked), `MESHOPT_EXTENSIONS`
+- [x] JS error → string three times (fetch, draco, ktx2).
+- [-] The compress-kind merge rule twice (compress.rs, pack.rs). — dropped: two different types (Use with a sticky Keep vs Option<CompressKind>); one fn wouldn't fit both
+- [x] Warnings only to the console, not `Model::warnings()` (primitive
   skipped, instancing fallback, packer unavailable); 29 hand-prefixed
-  console calls.
-- [ ] decoders.js externs live in ktx2.rs (draco imports them from there);
+  console calls. — a build-time `fetch::warn` reports into the model's warnings (geometry, instancing, sampler, packer, compressor); the image callbacks after the build stay console-only; test
+- [x] decoders.js externs live in ktx2.rs (draco imports them from there);
   `MAPS` / `material_maps` aliases; material-group building in lib.rs;
-  lib.rs mixes types, request parsing and the pipeline.
-- [ ] Duplicated cleanup (`Model::destroy` vs `load`'s failure path), skin-bit
-  masking ×2, `per_key` ×2, the buffer reader closure ×5.
-- [ ] `coat_anisotropy`, `subsurface_weight` lack `getter` (methods in JS).
-- [ ] Unused pub: `Fetcher`/`Loading` re-export, `LoadRequest::with_options`;
+  lib.rs mixes types, request parsing and the pipeline. — decoders.rs; `MAPS` / `material_maps` gone; the material-group building and request parsing stay in lib.rs (a move, no gain yet)
+- [x] Duplicated cleanup (`Model::destroy` vs `load`'s failure path), skin-bit
+  masking ×2, `per_key` ×2, the buffer reader closure ×5. — skin bits and per_key once; the cleanup lists differ (destroy frees groups, checks the generation) and the reader closure is one line — left
+- [x] `coat_anisotropy`, `subsurface_weight` lack `getter` (methods in JS).
+- [x] Unused pub: `Fetcher`/`Loading` re-export, `LoadRequest::with_options`;
   foundation `column` used only by its tests, its `Scalar` clashes with
-  `layout::Scalar`.
-- [ ] ECS `Mut`: two impl blocks, `stamp` re-implements `raise`.
-- [ ] Raw GL type numbers in draco.rs; `PROPERTIES.len()` mirrored by 40.
+  `layout::Scalar`. — `column` kept (the planned zero-copy views), its trait is `ColumnScalar`
+- [x] ECS `Mut`: two impl blocks, `stamp` re-implements `raise`.
+- [x] Raw GL type numbers in draco.rs; `PROPERTIES.len()` mirrored by 40. — and `PROPERTY_COUNT`
 
 ## Core: context, renderer, programs
 

@@ -19,7 +19,8 @@ pub enum AlphaMode {
     Blend = 2,
 }
 
-/// PBR metallic-roughness material data (the subset we translate in v1).
+/// A glTF material's data: metallic-roughness, the KHR_materials_*
+/// extensions read (`translate`), and OpenPBR's own parameters.
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
 pub struct Material {
@@ -44,7 +45,7 @@ pub struct Material {
     pub(crate) emissive_strength: f32,
     // KHR_materials_unlit.
     pub(crate) unlit: bool,
-    // Extension factors (their textures aren't read yet): KHR_materials_ior,
+    // Extension factors (their maps are in `maps`): KHR_materials_ior,
     // _specular, _transmission, _volume (attenuation distance 0 = none),
     // _clearcoat, _dispersion. Defaults are the spec's "extension absent".
     pub(crate) ior: f32,
@@ -134,45 +135,45 @@ impl Material {
     /// Index into `Model::texture(i)`, or `-1` if absent.
     #[wasm_bindgen(getter, js_name = baseColorTexture)]
     pub fn base_color_texture(&self) -> i32 {
-        self.maps[0].0
+        self.maps[BASE_COLOR_MAP].0
     }
     /// TEXCOORD set index used by the base-color texture (`TEXCOORD_n`).
     #[wasm_bindgen(getter, js_name = baseColorUv)]
     pub fn base_color_uv(&self) -> u32 {
-        self.maps[0].1
+        self.maps[BASE_COLOR_MAP].1
     }
     #[wasm_bindgen(getter, js_name = metallicRoughnessTexture)]
     pub fn metallic_roughness_texture(&self) -> i32 {
-        self.maps[1].0
+        self.maps[METALLIC_ROUGHNESS_MAP].0
     }
     #[wasm_bindgen(getter, js_name = normalTexture)]
     pub fn normal_texture(&self) -> i32 {
-        self.maps[2].0
+        self.maps[NORMAL_MAP].0
     }
     #[wasm_bindgen(getter, js_name = occlusionTexture)]
     pub fn occlusion_texture(&self) -> i32 {
-        self.maps[3].0
+        self.maps[OCCLUSION_MAP].0
     }
     #[wasm_bindgen(getter, js_name = emissiveTexture)]
     pub fn emissive_texture(&self) -> i32 {
-        self.maps[4].0
+        self.maps[EMISSIVE_MAP].0
     }
     /// TEXCOORD set of each map (`TEXCOORD_n`); 0 when the map is absent.
     #[wasm_bindgen(getter, js_name = metallicRoughnessUv)]
     pub fn metallic_roughness_uv(&self) -> u32 {
-        self.maps[1].1
+        self.maps[METALLIC_ROUGHNESS_MAP].1
     }
     #[wasm_bindgen(getter, js_name = normalUv)]
     pub fn normal_uv(&self) -> u32 {
-        self.maps[2].1
+        self.maps[NORMAL_MAP].1
     }
     #[wasm_bindgen(getter, js_name = occlusionUv)]
     pub fn occlusion_uv(&self) -> u32 {
-        self.maps[3].1
+        self.maps[OCCLUSION_MAP].1
     }
     #[wasm_bindgen(getter, js_name = emissiveUv)]
     pub fn emissive_uv(&self) -> u32 {
-        self.maps[4].1
+        self.maps[EMISSIVE_MAP].1
     }
     /// `normalTexture.scale` (1 without a normal map).
     #[wasm_bindgen(getter, js_name = normalScale)]
@@ -272,11 +273,13 @@ impl Material {
         self.anisotropy_strength
     }
     /// OpenPBR `coat_roughness_anisotropy`.
+    #[wasm_bindgen(getter, js_name = coatAnisotropy)]
     pub fn coat_anisotropy(&self) -> f32 {
         self.coat_anisotropy
     }
 
     /// OpenPBR `subsurface_weight` (0: none).
+    #[wasm_bindgen(getter, js_name = subsurfaceWeight)]
     pub fn subsurface_weight(&self) -> f32 {
         self.subsurface_weight
     }
@@ -307,8 +310,11 @@ const fn prop(name: &'static str, uniform: &'static str, len: usize) -> Property
     Property { name, uniform, len }
 }
 
+/// How many numeric properties a material has (`PROPERTIES`).
+pub const PROPERTY_COUNT: usize = 40;
+
 /// Every numeric property a material group carries, by glTF name.
-pub const PROPERTIES: [Property; 40] = [
+pub const PROPERTIES: [Property; PROPERTY_COUNT] = [
     prop("baseColorFactor", "u_base_color_factor", 4),
     prop("metallicFactor", "u_metallic_factor", 1),
     prop("roughnessFactor", "u_roughness_factor", 1),
@@ -364,7 +370,7 @@ pub const PROPERTIES: [Property; 40] = [
 
 impl Material {
     // The storage of each of `PROPERTIES`, in the same order.
-    fn values_mut(&mut self) -> [&mut [f32]; 40] {
+    fn values_mut(&mut self) -> [&mut [f32]; PROPERTY_COUNT] {
         [
             &mut self.base_color_factor,
             std::slice::from_mut(&mut self.metallic),
@@ -489,6 +495,15 @@ const fn slot(
 
 /// How many kinds of maps a material has.
 pub const MAP_COUNT: usize = 19;
+
+/// The core five maps' places in `MAP_SLOTS` (and a material's `maps`);
+/// the extensions' follow from `CORE_MAPS` on.
+pub const BASE_COLOR_MAP: usize = 0;
+pub const METALLIC_ROUGHNESS_MAP: usize = 1;
+pub const NORMAL_MAP: usize = 2;
+pub const OCCLUSION_MAP: usize = 3;
+pub const EMISSIVE_MAP: usize = 4;
+pub const CORE_MAPS: usize = 5;
 
 /// Every material map: the core five, then the extensions'
 /// (KHR_materials_clearcoat, _transmission, _volume, _specular, _sheen,
@@ -662,7 +677,7 @@ impl Material {
     /// the TEXCOORD sets in its two UV slots, and the slot its normal map
     /// reads (for tangents), if it has one.
     pub fn vertex_key(&self) -> crate::VertexKey {
-        let normal = self.maps[2];
+        let normal = self.maps[NORMAL_MAP];
         (self.uv_sets, (normal.0 >= 0).then_some(normal.1))
     }
 

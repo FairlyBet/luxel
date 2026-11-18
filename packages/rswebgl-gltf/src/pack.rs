@@ -59,8 +59,8 @@ pub fn build_texture_set(
         match TexturePacker::new(ctx) {
             Ok(p) => packer = Some(Rc::new(p)),
             Err(e) => {
-                console::error(&format!(
-                    "[rswebgl-gltf] ORM packer unavailable ({e}); textures left unpacked"
+                crate::fetch::warn(format!(
+                    "ORM packer unavailable ({e}); textures left unpacked"
                 ));
                 accepted.clear();
             }
@@ -140,7 +140,7 @@ pub fn build_texture_set(
             seen.insert(key, j);
             textures.push(tex);
         }
-        // Used in one space only: the other reads it too (as before).
+        // Used in one space only: the other reads that copy too.
         let r = &mut remap[i];
         if r[0] < 0 {
             r[0] = r[1];
@@ -212,7 +212,7 @@ fn plan_orm_pairs(doc: &gltf::Document, tex_count: usize) -> Vec<(usize, usize)>
         }
         for m in crate::material::doc_maps(&mat)
             .into_iter()
-            .skip(5)
+            .skip(crate::material::CORE_MAPS)
             .flatten()
         {
             if let Some(r) = roles.get_mut(m.texture) {
@@ -487,7 +487,7 @@ fn build_samplers(ctx: &Context, docs: &[gltf::Texture]) -> (Vec<SamplerId>, Vec
                     id
                 }
                 Err(e) => {
-                    console::error(&format!("[rswebgl-gltf] sampler: {e}"));
+                    crate::fetch::warn(format!("sampler: {e}"));
                     SamplerId::NULL
                 }
             }

@@ -15,7 +15,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use crate::ktx2::{draco_decode, has_decoder, set_decoder_path};
+use crate::decoders::{draco_decode, has_decoder, set_decoder_path};
 
 /// Where the Draco decoder is: a directory URL holding
 /// `draco_wasm_wrapper.js` and `draco_decoder.wasm`. Set before loading
@@ -26,6 +26,13 @@ use crate::ktx2::{draco_decode, has_decoder, set_decoder_path};
 pub fn set_draco_decoder_path(path: &str) {
     set_decoder_path("draco", path);
 }
+
+// glTF accessor component types (GL's).
+const BYTE: u64 = 5120;
+const UNSIGNED_BYTE: u64 = 5121;
+const SHORT: u64 = 5122;
+const UNSIGNED_SHORT: u64 = 5123;
+const FLOAT: u64 = 5126;
 
 fn components(ty: &str) -> usize {
     match ty {
@@ -41,17 +48,10 @@ fn components(ty: &str) -> usize {
 
 fn component_size(ct: u64) -> usize {
     match ct {
-        5120 | 5121 => 1,
-        5122 | 5123 => 2,
+        BYTE | UNSIGNED_BYTE => 1,
+        SHORT | UNSIGNED_SHORT => 2,
         _ => 4,
     }
-}
-
-fn err(e: JsValue) -> String {
-    e.dyn_ref::<js_sys::Error>()
-        .map(|e| String::from(e.message()))
-        .or_else(|| e.as_string())
-        .unwrap_or_else(|| format!("{e:?}"))
 }
 
 // Appends `data` to `out` at a 4-byte boundary; its offset.
@@ -63,9 +63,9 @@ fn append(out: &mut Vec<u8>, data: &[u8]) -> usize {
 }
 
 /// Decodes every Draco-compressed primitive into a new buffer (appended to
-/// `buffers` and to `json`'s), pointing its accessors there. Returns
-/// whether there were any (the document is then rebuilt from `json`).
-pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<bool, String> {
+/// `buffers` and to `json`'s), pointing its accessors there; the document
+/// is then rebuilt from `json`.
+pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<(), String> {
     // (bufferView, attributes: [(accessor, unique id)], indices accessor)
     let mut jobs = Vec::new();
     let meshes = json["meshes"].as_array().map_or(&[][..], Vec::as_slice);
@@ -95,7 +95,7 @@ pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<bool
         }
     }
     if jobs.is_empty() {
-        return Ok(false);
+        return Ok(());
     }
     if !has_decoder("draco") {
         return Err("Draco-compressed meshes need the decoder: setDracoDecoderPath".into());
@@ -103,19 +103,15 @@ pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<bool
     let accessor = |i: usize| -> (u64, usize) {
         let a = &json["accessors"][i];
         (
-            a["componentType"].as_u64().unwrap_or(5126),
+            a["componentType"].as_u64().unwrap_or(FLOAT),
             components(a["type"].as_str().unwrap_or("")),
         )
     };
     // All jobs go out at once: the pool spreads them over its workers.
     let mut pending = Vec::new();
     for (view, attributes, _) in &jobs {
-        let v = &json["bufferViews"][*view];
-        let start = v["byteOffset"].as_u64().unwrap_or(0) as usize;
-        let len = v["byteLength"].as_u64().unwrap_or(0) as usize;
-        let data = buffers
-            .get(v["buffer"].as_u64().unwrap_or(u64::MAX) as usize)
-            .and_then(|b| b.get(start..start + len))
+        let data = crate::buffers::json_view(&json["bufferViews"][*view])
+            .and_then(|(b, range)| buffers.get(b)?.get(range))
             .ok_or("Draco: bufferView out of range")?;
         let asks = Array::new();
         for &(acc, id) in attributes {
@@ -134,7 +130,7 @@ pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<bool
     let mut out = Vec::new();
     let mut views = Vec::new(); // (accessor, offset, length, stride)
     for ((_, attributes, indices), job) in jobs.iter().zip(pending) {
-        let r = job.await.map_err(|e| format!("Draco: {}", err(e)))?;
+        let r = job.await.map_err(|e| format!("Draco: {}", crate::fetch::message(&e)))?;
         let decoded: Array = Reflect::get(&r, &"attributes".into())
             .and_then(|a| a.dyn_into())
             .map_err(|_| "Draco: bad decoder result")?;
@@ -178,8 +174,8 @@ pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<bool
                 .map_err(|_| "Draco: bad index")?;
             let index = index.to_vec();
             let bytes: Vec<u8> = match accessor(*acc).0 {
-                5121 => index.iter().map(|&i| i as u8).collect(),
-                5123 => index
+                UNSIGNED_BYTE => index.iter().map(|&i| i as u8).collect(),
+                UNSIGNED_SHORT => index
                     .iter()
                     .flat_map(|&i| (i as u16).to_le_bytes())
                     .collect(),
@@ -223,5 +219,5 @@ pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<bool
             a.insert("byteOffset".into(), json!(0));
         }
     }
-    Ok(true)
+    Ok(())
 }

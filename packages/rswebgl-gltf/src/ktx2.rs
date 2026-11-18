@@ -17,17 +17,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-#[wasm_bindgen(module = "/src/decoders.js")]
-extern "C" {
-    #[wasm_bindgen(js_name = setDecoderPath)]
-    pub(crate) fn set_decoder_path(kind: &str, path: &str);
-    #[wasm_bindgen(js_name = hasDecoder)]
-    pub(crate) fn has_decoder(kind: &str) -> bool;
-    #[wasm_bindgen(js_name = ktx2Transcode)]
-    fn ktx2_transcode(bytes: &Uint8Array, srgb: bool, config: &JsValue) -> js_sys::Promise;
-    #[wasm_bindgen(js_name = dracoDecode)]
-    pub(crate) fn draco_decode(bytes: &Uint8Array, attributes: &JsValue) -> js_sys::Promise;
-}
+use crate::decoders::{has_decoder, ktx2_transcode, set_decoder_path};
 
 /// Where the Basis Universal transcoder is: a directory URL holding
 /// `basis_transcoder.js` and `basis_transcoder.wasm`. Set before loading
@@ -108,11 +98,7 @@ pub(crate) fn load(
             ctx.note_content_changed();
         }
         let (w, h) = result.unwrap_or_else(|e| {
-            let msg = e
-                .dyn_ref::<js_sys::Error>()
-                .map(|e| String::from(e.message()))
-                .or_else(|| e.as_string())
-                .unwrap_or_else(|| format!("{e:?}"));
+            let msg = crate::fetch::message(&e);
             console::error(&format!("[rswebgl-gltf] KTX2: {msg}"));
             (0, 0)
         });

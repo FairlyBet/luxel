@@ -4,7 +4,8 @@
 //! Attribute locations follow a fixed convention the shaders agree on:
 //!   0 = POSITION (vec3), 1 = NORMAL (vec3), 2 = TEXCOORD_0 (vec2),
 //!   3 = TANGENT (vec4), 4 = COLOR_0 (vec4), 5 = TEXCOORD_1 (vec2),
-//!   6 = JOINTS_0 (vec4 of joint indices, as floats), 7 = WEIGHTS_0 (vec4).
+//!   6 = JOINTS_0 (vec4 of joint indices, as floats), 7 = WEIGHTS_0 (vec4),
+//!   8 = JOINTS_1, 9 = WEIGHTS_1 (eight influences).
 //! Morph targets go into a texture per primitive (`MorphGpu`): the shader
 //! adds their weighted deltas before skinning.
 //! Which of them a primitive has is in `PrimitiveGpu::attributes` (`ATTR_*`).
@@ -15,8 +16,8 @@
 //! and a destroyed buffer still in use is freed with its last user). Each mesh
 //! is built once however many nodes instance it.
 //!
-//! Attributes are read as floats (the `gltf` readers dequantize every
-//! component type) and stored in the smallest GPU format that keeps them —
+//! Attributes are read as floats (`accessor.rs`, whatever the component
+//! type) and stored in the smallest GPU format that keeps them —
 //! a quantized file's own, 16-bit normals, tangents, texture coordinates
 //! and colors otherwise (`vertex_format.rs`); indices keep their source
 //! width (u8 / u16 / u32) — WebGL2 draws all three.
@@ -24,7 +25,6 @@
 use std::collections::HashMap;
 
 use rswebgl::buffer::BufferUsage;
-use rswebgl::console;
 use rswebgl::context::Context;
 use rswebgl::draw::{DrawCommand, DrawMode, IndexType};
 use rswebgl::ids::{BufferId, VertexArrayId};
@@ -187,13 +187,13 @@ impl GeometryCache {
         let key = self.key(material);
         let reader = primitive.reader(|b| buffers.get(b.index()).map(|v| v.as_slice()));
         let Some(pos_accessor) = primitive.get(&gltf::Semantic::Positions) else {
-            console::warn("[rswebgl-gltf] primitive has no POSITION; skipped");
+            crate::fetch::warn("primitive has no POSITION; skipped".into());
             return None;
         };
         // Types the spec forbids would trap the gltf crate's readers (its
         // unreachable!): skipped with a reason instead.
         if let Err(why) = spec_types(primitive) {
-            console::warn(&format!("[rswebgl-gltf] primitive skipped: {why}"));
+            crate::fetch::warn(format!("primitive skipped: {why}"));
             return None;
         }
         let vertex_count = pos_accessor.count() as i32;
@@ -250,7 +250,7 @@ impl GeometryCache {
         let vao = match ctx.create_vertex_array() {
             Ok(v) => v,
             Err(e) => {
-                console::error(&format!("[rswebgl-gltf] vertex array: {e}"));
+                crate::fetch::warn(format!("vertex array: {e}"));
                 return None;
             }
         };
@@ -444,7 +444,7 @@ impl GeometryCache {
                 BufferUsage::StaticDraw,
                 &vertex_format::pack(mesh.out.as_flattened(), 4, vertex_format::direction()).0,
             )
-            .inspect_err(|e| console::error(&format!("[rswebgl-gltf] tangents: {e}")))
+            .inspect_err(|e| crate::fetch::warn(format!("tangents: {e}")))
             .ok()?;
         self.tangents.insert(key, b);
         Some(b)
@@ -483,7 +483,7 @@ impl GeometryCache {
         }
         let upload = |v: &[[f32; 4]]| {
             ctx.create_buffer(BufferUsage::StaticDraw, bytes_of(v.as_flattened()))
-                .inspect_err(|e| console::error(&format!("[rswebgl-gltf] skin weights: {e}")))
+                .inspect_err(|e| crate::fetch::warn(format!("skin weights: {e}")))
                 .ok()
         };
         let first = upload(&a)?;
@@ -558,7 +558,7 @@ impl GeometryCache {
                 Some((b, attr))
             }
             Err(e) => {
-                console::error(&format!("[rswebgl-gltf] vertex buffer: {e}"));
+                crate::fetch::warn(format!("vertex buffer: {e}"));
                 None
             }
         }
@@ -595,7 +595,7 @@ impl GeometryCache {
                 Some((b, ty))
             }
             Err(e) => {
-                console::error(&format!("[rswebgl-gltf] index buffer: {e}"));
+                crate::fetch::warn(format!("index buffer: {e}"));
                 None
             }
         }
@@ -767,8 +767,8 @@ fn morph_texture(
     let width = MORPH_TEXTURE_WIDTH as usize;
     let rows = (vertices * targets.len() * per).div_ceil(width);
     if rows > rswebgl::limits::max_texture_size() as usize {
-        console::warn(&format!(
-            "[rswebgl-gltf] {} morph targets of {vertices} vertices don't fit a texture; \
+        crate::fetch::warn(format!(
+            "{} morph targets of {vertices} vertices don't fit a texture; \
              left out",
             targets.len()
         ));
@@ -801,7 +801,7 @@ fn morph_texture(
     ) {
         Ok(t) => t,
         Err(e) => {
-            console::error(&format!("[rswebgl-gltf] morph texture: {e}"));
+            crate::fetch::warn(format!("morph texture: {e}"));
             return None;
         }
     };

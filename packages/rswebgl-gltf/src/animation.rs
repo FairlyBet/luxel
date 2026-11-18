@@ -66,6 +66,18 @@ pub(crate) fn read_animations(doc: &gltf::Document, buffers: &[Vec<u8>]) -> Vec<
                 let Some(times) = reader.read_inputs().map(|i| i.collect::<Vec<f32>>()) else {
                     continue;
                 };
+                let interpolation = match channel.sampler().interpolation() {
+                    gltf::animation::Interpolation::Step => Interpolation::Step,
+                    gltf::animation::Interpolation::Linear => Interpolation::Linear,
+                    gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
+                };
+                // Values per keyframe: a cubic spline's in-tangent, value and
+                // out-tangent.
+                let per_key = if interpolation == Interpolation::CubicSpline {
+                    3
+                } else {
+                    1
+                };
                 let (path, values, components) = match reader.read_outputs() {
                     Some(ReadOutputs::Translations(v)) => {
                         (AnimationPath::Translation, v.flatten().collect(), 3)
@@ -78,13 +90,6 @@ pub(crate) fn read_animations(doc: &gltf::Document, buffers: &[Vec<u8>]) -> Vec<
                     }
                     Some(ReadOutputs::MorphTargetWeights(v)) => {
                         let values: Vec<f32> = v.into_f32().collect();
-                        let per_key = if channel.sampler().interpolation()
-                            == gltf::animation::Interpolation::CubicSpline
-                        {
-                            3
-                        } else {
-                            1
-                        };
                         let n = if times.is_empty() {
                             0
                         } else {
@@ -93,16 +98,6 @@ pub(crate) fn read_animations(doc: &gltf::Document, buffers: &[Vec<u8>]) -> Vec<
                         (AnimationPath::Weights, values, n)
                     }
                     None => continue,
-                };
-                let interpolation = match channel.sampler().interpolation() {
-                    gltf::animation::Interpolation::Step => Interpolation::Step,
-                    gltf::animation::Interpolation::Linear => Interpolation::Linear,
-                    gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
-                };
-                let per_key = if interpolation == Interpolation::CubicSpline {
-                    3
-                } else {
-                    1
                 };
                 if times.is_empty()
                     || components == 0

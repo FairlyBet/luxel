@@ -156,9 +156,7 @@ impl<T> Storage<T> {
     }
 
     fn raise(&self, tick: Tick) {
-        if tick > self.newest.get() {
-            self.newest.set(tick);
-        }
+        raise(&self.newest, tick);
     }
 
     /// The tick row `row` was last changed (or added) at.
@@ -228,16 +226,19 @@ pub struct Mut<'a, T> {
     tick: Tick,
 }
 
-impl<T> Mut<'_, T> {
-    fn stamp(&mut self) {
-        *self.changed = self.tick;
-        if self.tick > self.newest.get() {
-            self.newest.set(self.tick);
-        }
+// The storage's newest change, raised to `tick` if that is later.
+fn raise(newest: &Cell<Tick>, tick: Tick) {
+    if tick > newest.get() {
+        newest.set(tick);
     }
 }
 
 impl<T> Mut<'_, T> {
+    fn stamp(&mut self) {
+        *self.changed = self.tick;
+        raise(self.newest, self.tick);
+    }
+
     /// Writes only if the value differs, so an unchanged write doesn't mark
     /// the component changed.
     pub fn set_if_neq(&mut self, value: T)

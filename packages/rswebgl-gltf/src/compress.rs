@@ -13,7 +13,6 @@ use std::rc::Rc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-use rswebgl::console;
 use rswebgl::context::Context;
 use rswebgl::ids::TextureId;
 use rswebgl::texture_compressor::{CompressKind, TextureCompressor};
@@ -52,9 +51,7 @@ fn compressor(ctx: &Context) -> Option<Rc<TextureCompressor>> {
     match TextureCompressor::shared(ctx) {
         Ok(comp) => Some(comp),
         Err(e) => {
-            console::error(&format!(
-                "[rswebgl-gltf] texture compression unavailable: {e}"
-            ));
+            crate::fetch::warn(format!("texture compression unavailable: {e}"));
             None
         }
     }
@@ -114,7 +111,7 @@ pub(crate) fn kinds(doc: &gltf::Document) -> Vec<Option<CompressKind>> {
         for (slot, m) in crate::material::doc_maps(&mat).into_iter().enumerate() {
             let Some(m) = m else { continue };
             let u = match SLOT_USES[slot] {
-                Use::Rgb if slot == 0 && blends => Use::Rgba,
+                Use::Rgb if slot == crate::material::BASE_COLOR_MAP && blends => Use::Rgba,
                 u => u,
             };
             merge(m.texture, u);

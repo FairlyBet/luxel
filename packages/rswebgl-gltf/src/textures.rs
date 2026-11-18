@@ -146,10 +146,7 @@ pub(crate) fn build_texture(
             }
         }
         gltf::image::Source::View { view, mime_type } => {
-            let buf = view.buffer().index();
-            let start = view.offset();
-            let end = start + view.length();
-            match buffers.get(buf).and_then(|b| b.get(start..end)) {
+            match crate::accessor::view_bytes(&view, buffers) {
                 Some(data) => ctx.texture_load_bytes(
                     out,
                     data,
@@ -206,10 +203,7 @@ fn load_ktx2(
     }
     let bytes = match image.source() {
         gltf::image::Source::View { view, .. } => {
-            let start = view.offset();
-            buffers
-                .get(view.buffer().index())
-                .and_then(|b| b.get(start..start + view.length()))
+            crate::accessor::view_bytes(&view, buffers)
                 .map(<[u8]>::to_vec)
                 .ok_or_else(|| "image bufferView out of range".to_string())
         }

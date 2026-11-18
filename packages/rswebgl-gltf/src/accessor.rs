@@ -56,11 +56,12 @@ fn read_index(data: &[u8], at: usize, ty: gltf::accessor::sparse::IndexType) -> 
     }
 }
 
-fn view_bytes<'b>(view: &gltf::buffer::View, buffers: &'b [Vec<u8>]) -> Option<&'b [u8]> {
+/// A bufferView's bytes in `buffers`; None out of range.
+pub(crate) fn view_bytes<'b>(view: &gltf::buffer::View, buffers: &'b [Vec<u8>]) -> Option<&'b [u8]> {
     let start = view.offset();
     buffers
         .get(view.buffer().index())?
-        .get(start..start + view.length())
+        .get(start..start.checked_add(view.length())?)
 }
 
 /// The accessor's elements as floats (`count × components`), or None when

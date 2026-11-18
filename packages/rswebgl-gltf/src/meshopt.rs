@@ -665,8 +665,8 @@ pub fn decode_views(json: &serde_json::Value, buffers: &mut [Vec<u8>]) -> Result
     for (index, view) in views.iter().enumerate() {
         let exts = &view["extensions"];
         let Some(ext) = exts
-            .get("EXT_meshopt_compression")
-            .or_else(|| exts.get("KHR_meshopt_compression"))
+            .get(crate::buffers::MESHOPT_EXTENSIONS[0])
+            .or_else(|| exts.get(crate::buffers::MESHOPT_EXTENSIONS[1]))
         else {
             continue;
         };
@@ -702,11 +702,8 @@ pub fn decode_views(json: &serde_json::Value, buffers: &mut [Vec<u8>]) -> Result
             .and_then(|b| b.get(offset..offset + length as usize))
             .ok_or_else(|| format!("meshopt: bufferView {} source out of range", index))?
             .to_vec();
-        let start = view["byteOffset"].as_u64().unwrap_or(0) as usize;
-        let len = view["byteLength"].as_u64().unwrap_or(0) as usize;
-        let target = buffers
-            .get_mut(view["buffer"].as_u64().unwrap_or(u64::MAX) as usize)
-            .and_then(|b| b.get_mut(start..start + len))
+        let target = crate::buffers::json_view(view)
+            .and_then(|(b, range)| buffers.get_mut(b)?.get_mut(range))
             .ok_or_else(|| format!("meshopt: bufferView {} out of range", index))?;
         decode(
             target,

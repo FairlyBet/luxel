@@ -86,10 +86,43 @@ pub(crate) fn message(e: &JsValue) -> String {
     if let Some(s) = e.as_string() {
         return s;
     }
+    if let Some(e) = e.dyn_ref::<js_sys::Error>() {
+        return e.message().into();
+    }
     js_sys::Reflect::get(e, &"message".into())
         .ok()
         .and_then(|m| m.as_string())
         .unwrap_or_else(|| format!("{e:?}"))
+}
+
+thread_local! {
+    // The load whose model is being built (synchronously), for `warn`.
+    static BUILDING: RefCell<Option<Rc<Loading>>> = const { RefCell::new(None) };
+}
+
+/// While it lives, `warn` reports into `loading` (the model being built).
+pub(crate) struct Building(Option<Rc<Loading>>);
+
+impl Building {
+    pub(crate) fn set(loading: &Rc<Loading>) -> Self {
+        Self(BUILDING.with(|b| b.replace(Some(loading.clone()))))
+    }
+}
+
+impl Drop for Building {
+    fn drop(&mut self) {
+        BUILDING.with(|b| *b.borrow_mut() = self.0.take());
+    }
+}
+
+/// Something left out or worked around while building a model, the load
+/// going on: in its `warnings()` and the console (the console alone outside
+/// a build).
+pub(crate) fn warn(message: String) {
+    match BUILDING.with(|b| b.borrow().clone()) {
+        Some(loading) => loading.warn(message),
+        None => console::warn(&format!("[rswebgl-gltf] {message}")),
+    }
 }
 
 /// What a load still waits for, and what went wrong: shared by the model and

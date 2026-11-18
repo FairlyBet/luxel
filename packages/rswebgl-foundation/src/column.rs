@@ -23,7 +23,7 @@ mod sealed {
 }
 
 /// A scalar a column can hold: the numeric types JS typed arrays exist for.
-pub trait Scalar: Copy + Default + PartialEq + std::fmt::Debug + 'static + sealed::Sealed {
+pub trait ColumnScalar: Copy + Default + PartialEq + std::fmt::Debug + 'static + sealed::Sealed {
     /// The JS typed array viewing a slice of this type.
     type JsArray;
 
@@ -36,7 +36,7 @@ pub trait Scalar: Copy + Default + PartialEq + std::fmt::Debug + 'static + seale
 macro_rules! scalar {
     ($t:ty, $arr:ty) => {
         impl sealed::Sealed for $t {}
-        impl Scalar for $t {
+        impl ColumnScalar for $t {
             type JsArray = $arr;
             unsafe fn js_view(data: &[Self]) -> $arr {
                 unsafe { <$arr>::view(data) }
@@ -69,7 +69,7 @@ pub fn memory_version() -> u32 {
 }
 
 #[derive(Clone, Debug)]
-pub struct Column<T: Scalar> {
+pub struct Column<T: ColumnScalar> {
     data: Vec<T>,
     stride: u32,
     // Element granularity.
@@ -77,7 +77,7 @@ pub struct Column<T: Scalar> {
     layout_version: u32,
 }
 
-impl<T: Scalar> Column<T> {
+impl<T: ColumnScalar> Column<T> {
     /// An empty column of `stride` scalars per element, tracking changes in
     /// chunks of `chunk` elements.
     pub fn new(stride: u32, chunk: u32) -> Self {
@@ -159,7 +159,7 @@ impl<T: Scalar> Column<T> {
     /// The raw bytes, for uploading to a GPU buffer.
     pub fn bytes(&self) -> &[u8] {
         let len = std::mem::size_of_val(self.data.as_slice());
-        // SAFETY: `Scalar` is sealed to plain numeric types with no padding or
+        // SAFETY: `ColumnScalar` is sealed to plain numeric types with no padding or
         // invalid bit patterns, so their memory is readable as bytes.
         unsafe { std::slice::from_raw_parts(self.data.as_ptr().cast::<u8>(), len) }
     }

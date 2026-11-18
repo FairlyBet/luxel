@@ -1,4 +1,4 @@
-//! The data layer shared by the rswebgl renderer and (later) its ECS.
+//! The data layer shared by the rswebgl crates: handles, pools, layouts.
 //!
 //! - [`handle`] / [`pool`]: generational `u32` handles and the slot pools behind
 //!   them. A stale handle never resolves to a newer object.

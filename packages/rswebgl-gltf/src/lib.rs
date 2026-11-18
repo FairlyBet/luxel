@@ -28,6 +28,7 @@ mod accessor;
 mod animation;
 mod buffers;
 mod compress;
+mod decoders;
 mod draco;
 mod fetch;
 mod geometry;
@@ -42,11 +43,11 @@ mod vertex_format;
 
 pub use animation::{Animation, AnimationChannel, AnimationPath, Interpolation};
 pub use draco::set_draco_decoder_path;
-pub use fetch::{Fetcher, Loading};
 pub use geometry::VertexKey;
 pub use ktx2::set_ktx2_transcoder_path;
 pub use material::{
-    AlphaMode, EXTERNAL_TEXTURE, MAP_COUNT, MAP_NAMES, MAP_SLOTS, MapSlot, Material, PROPERTIES,
+    AlphaMode, BASE_COLOR_MAP, CORE_MAPS, EMISSIVE_MAP, EXTERNAL_TEXTURE, MAP_COUNT, MAP_NAMES,
+    MAP_SLOTS, METALLIC_ROUGHNESS_MAP, MapSlot, Material, NORMAL_MAP, OCCLUSION_MAP, PROPERTIES,
     Property, UV_IDENTITY, default_material, render_state_for, uv_matrix,
 };
 
@@ -190,7 +191,8 @@ impl DrawItem {
     }
     /// Optional vertex attributes present: bits 1 NORMAL, 2 TEXCOORD_0,
     /// 4 TANGENT, 8 COLOR_0, 16 TEXCOORD_1, 32 skin (JOINTS_0 + WEIGHTS_0),
-    /// 64 / 128 / 256 morph position / normal / tangent deltas (`ATTR_*`).
+    /// 64 / 128 / 256 morph position / normal / tangent deltas, 512 a second
+    /// set of four joints and weights (`ATTR_*`).
     pub fn attributes(&self) -> u32 {
         self.attributes
     }
@@ -325,15 +327,11 @@ pub enum NodeLightKind {
 /// A translated glTF asset: a flat draw list plus the GPU resources behind it.
 ///
 /// Each material is a parameter group (layout `material_layout()`) with, by
-/// convention: `u_base_color_factor` (vec4), `u_metallic_factor`,
-/// `u_roughness_factor`, `u_emissive_factor` (vec3), `u_emissive_strength`,
-/// `u_normal_scale`, `u_occlusion_strength`, `u_alpha_cutoff` (floats),
-/// `u_alpha_mode` (int: 0=OPAQUE 1=MASK 2=BLEND), `u_has_base_color_tex`
-/// (bool), the extension factors `u_ior`, `u_specular_factor`,
-/// `u_specular_color` (vec3), `u_transmission`, `u_thickness`,
-/// `u_attenuation_color` (vec3), `u_attenuation_distance`, `u_clearcoat`,
-/// `u_clearcoat_roughness`, `u_dispersion`, and the maps `MAP_UNIFORMS` (samplers, each with the glTF
-/// sampler's state). Which maps exist and their TEXCOORD sets are on
+/// convention: every `PROPERTIES` entry (its uniform and type: factors,
+/// strengths, the extensions' and OpenPBR's parameters), `u_alpha_mode` (int:
+/// 0=OPAQUE 1=MASK 2=BLEND), `u_has_base_color_tex` (bool), and per map of
+/// `MAP_SLOTS` its sampler (`MAP_UNIFORMS`, with the glTF sampler's state)
+/// and UV transform (`MapSlot::transform`, mat3). Which maps exist and their TEXCOORD sets are on
 /// `Material`; which attributes a primitive has, on `DrawItem::attributes`.
 /// The transform is the caller's job (it depends on the camera) — use
 /// `DrawItem::model_cols()`.
@@ -771,12 +769,6 @@ impl LoadRequest {
         })
     }
 
-    /// With these settings.
-    pub fn with_options(mut self, options: LoadOptions) -> Self {
-        self.options = options;
-        self
-    }
-
     // The same again, for a reload: no signal, no progress.
     fn for_reload(&self) -> Self {
         Self {
@@ -881,8 +873,6 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
     let mut buffers = buffers::resolve_buffers(&json, blob, &load)
         .await
         .map_err(js_err)?;
-    // Compressed geometry, decoded in place (meshopt) or into a buffer of
-    // its own the accessors are pointed at (Draco).
     // KHR_materials_variants: the variants' names.
     let variants: Vec<String> = json
         .pointer("/extensions/KHR_materials_variants/variants")
@@ -898,7 +888,9 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
                 .collect()
         })
         .unwrap_or_default();
-    // (On the JSON: such a file is only a valid document once decoded.)
+    // Compressed geometry, decoded in place (meshopt) or into a buffer of
+    // its own the accessors are pointed at (Draco) — on the JSON: such a
+    // file is only a valid document once decoded.
     {
         let _s = tracing::info_span!("gltf.meshopt").entered();
         meshopt::decode_views(&json, &mut buffers)?;
@@ -913,10 +905,6 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
         return Err("loadModel: aborted".into());
     }
 
-    // Assemble textures, packing separate occlusion + metallic-roughness maps
-    // into one ORM texture where safe; `remap` rewrites material texture indices
-    // to match (a packed pair, or two textures with the same image and sampler,
-    // collapse into one).
     // The context may have been lost while the files downloaded.
     if ctx.is_lost() {
         return Err(Error::context_lost(
@@ -927,7 +915,12 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
     // the settings the load started with.
     let generation = ctx.generation();
     let _options = WithOptions::set(options);
+    let _building = fetch::Building::set(&load.loading);
     let _build = tracing::info_span!("gltf.build").entered();
+    // Assemble textures, packing separate occlusion + metallic-roughness maps
+    // into one ORM texture where safe; `remap` rewrites material texture
+    // indices to match (a packed pair, or two textures with the same image
+    // and sampler, collapse into one).
     let set = pack::build_texture_set(ctx, &document, &buffers, &load)?;
     let mut materials: Vec<Material> = document
         .materials()
@@ -945,9 +938,9 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
             .and_then(|i| set.doc_samplers.get(i).copied())
             .unwrap_or(SamplerId::NULL)
     };
-    let map_samplers: Vec<[SamplerId; MAPS]> = materials
+    let map_samplers: Vec<[SamplerId; MAP_COUNT]> = materials
         .iter()
-        .map(|m| material_maps(m).map(|(tex, _)| sampler_of(tex)))
+        .map(|m| m.maps().map(|(tex, _)| sampler_of(tex)))
         .collect();
     for m in &mut materials {
         material::remap_textures(m, &set.remap);
@@ -957,11 +950,14 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
     let mut nodes = Vec::new();
     let mut geometry = geometry::GeometryCache::default();
     geometry.set_uv_sets(uv_sets);
-    // Normal-mapped materials (map 2, after their UV slots are set).
+    // Normal-mapped materials (after their UV slots are set).
     geometry.set_normal_slots(
         materials
             .iter()
-            .map(|m| (m.maps()[2].0 >= 0).then_some(m.maps()[2].1))
+            .map(|m| {
+                let (tex, uv) = m.maps()[material::NORMAL_MAP];
+                (tex >= 0).then_some(uv)
+            })
             .collect(),
     );
     let (center, radius) = scene::build_draw_list(
@@ -1164,18 +1160,12 @@ fn js_err(e: JsValue) -> Error {
     message(&e).into()
 }
 
-// The material maps in `MAP_SLOTS` order: (texture index or -1, TEXCOORD set).
-const MAPS: usize = MAP_COUNT;
-fn material_maps(m: &Material) -> [(i32, u32); MAPS] {
-    m.maps()
-}
-
 /// Sampler uniforms of the material maps, as named in a material group
 /// (`MAP_SLOTS` order).
-pub const MAP_UNIFORMS: [&str; MAPS] = {
-    let mut out = [""; MAPS];
+pub const MAP_UNIFORMS: [&str; MAP_COUNT] = {
+    let mut out = [""; MAP_COUNT];
     let mut i = 0;
-    while i < MAPS {
+    while i < MAP_COUNT {
         out[i] = MAP_SLOTS[i].uniform;
         i += 1;
     }
@@ -1186,7 +1176,7 @@ pub const MAP_UNIFORMS: [&str; MAPS] = {
 fn build_material_groups(
     ctx: &Context,
     materials: &[Material],
-    map_samplers: &[[SamplerId; MAPS]],
+    map_samplers: &[[SamplerId; MAP_COUNT]],
     textures: &[TextureId],
 ) -> Result<(ParamLayoutId, Vec<ParamGroupId>), Error> {
     let mut builder = ParamLayoutBuilder::new()
@@ -1224,7 +1214,7 @@ fn fill_material_groups(
     ctx: &Context,
     layout: ParamLayoutId,
     materials: &[Material],
-    map_samplers: &[[SamplerId; MAPS]],
+    map_samplers: &[[SamplerId; MAP_COUNT]],
     textures: &[TextureId],
     groups: &mut Vec<ParamGroupId>,
 ) -> Result<(), Error> {
@@ -1247,13 +1237,13 @@ fn fill_material_groups(
         m.write_uv_transforms(ctx, g);
         ctx.param_set_i32(g, f_mode, m.alpha_mode as i32);
         let samplers = map_samplers.get(i).copied().unwrap_or_default();
-        for (map, ((tex, _), f)) in material_maps(m).into_iter().zip(&f_maps).enumerate() {
+        for (map, ((tex, _), f)) in m.maps().into_iter().zip(&f_maps).enumerate() {
             let Some(tex) = usize::try_from(tex).ok().and_then(|t| textures.get(t)) else {
                 continue;
             };
             ctx.param_set_texture(g, *f, *tex);
             ctx.param_set_sampler(g, *f, samplers[map]);
-            if map == 0 {
+            if map == material::BASE_COLOR_MAP {
                 ctx.param_set_bool(g, f_has_tex, true);
             }
         }

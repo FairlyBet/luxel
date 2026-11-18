@@ -153,6 +153,28 @@ async fn a_missing_file_is_a_warning() {
     model.destroy(&ctx);
 }
 
+// What the build leaves out is a warning too: a primitive of bad types
+// (COLOR_0 as SCALAR u16, which the spec forbids) is skipped, the rest of
+// the model loads.
+#[wasm_bindgen_test]
+async fn a_skipped_primitive_is_a_warning() {
+    let ctx = context();
+    let bin_uri = format!("data:application/octet-stream;base64,{}", b64(&bin()));
+    let png_uri = format!("data:image/png;base64,{PNG}");
+    let main = gltf(&bin_uri, &png_uri, true).replace(
+        r#""primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }]"#,
+        r#""primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }, { "attributes": { "POSITION": 0, "COLOR_0": 1 } }]"#,
+    );
+    assert!(main.contains(r#"{ "attributes": { "POSITION": 0, "COLOR_0": 1 } }"#));
+    let model = load(&ctx, bytes(main.as_bytes()), JsValue::UNDEFINED).await;
+    loaded(&model).await;
+    assert_eq!(model.draw_item_count(), 1);
+    let warnings = model.warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("primitive skipped"), "{warnings:?}");
+    model.destroy(&ctx);
+}
+
 // Bytes with a base URL whose requests a URL modifier rewrites (here to
 // data: URIs, as a signed-URL or proxy function would to other URLs).
 #[wasm_bindgen_test]

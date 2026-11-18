@@ -12,7 +12,6 @@
 
 use glam::{Mat4, Quat, Vec3};
 
-use rswebgl::console;
 use rswebgl::context::Context;
 
 use crate::geometry::GeometryCache;
@@ -118,6 +117,16 @@ fn walk(
 
     if let Some(mesh) = node.mesh() {
         let default = material::default_material();
+        // Joints and weights without a skin on the node (valid glTF, a
+        // validator warning): drawn unskinned.
+        let skinned = node.skin().is_some();
+        let skin_bits = |bits: u32| {
+            if skinned {
+                bits
+            } else {
+                bits & !(crate::ATTR_SKIN | crate::ATTR_SKIN8)
+            }
+        };
         // EXT_mesh_gpu_instancing: the node stands for N copies, each with its
         // own TRS on top of the node's transform. Without it, one copy.
         let instances = gpu_instances(doc, node, buffers).unwrap_or_else(|| vec![Mat4::IDENTITY]);
@@ -142,13 +151,7 @@ fn walk(
                     instance: instance as u32,
                     model: world.to_cols_array(),
                     instance_matrix: local_instance.to_cols_array(),
-                    // Joints and weights without a skin on the node (valid
-                    // glTF, a validator warning): drawn unskinned.
-                    attributes: if node.skin().is_some() {
-                        geo.attributes
-                    } else {
-                        geo.attributes & !(crate::ATTR_SKIN | crate::ATTR_SKIN8)
-                    },
+                    attributes: skin_bits(geo.attributes),
                     aabb_min: geo.aabb_min,
                     aabb_max: geo.aabb_max,
                     skin: node.skin().map_or(-1, |s| s.index() as i32),
@@ -160,14 +163,7 @@ fn walk(
                     alternates: geo
                         .alternates
                         .iter()
-                        .map(|&(k, vao, bits)| {
-                            let bits = if node.skin().is_some() {
-                                bits
-                            } else {
-                                bits & !(crate::ATTR_SKIN | crate::ATTR_SKIN8)
-                            };
-                            (k, vao, bits)
-                        })
+                        .map(|&(k, vao, bits)| (k, vao, skin_bits(bits)))
                         .collect(),
                 });
             }
@@ -229,8 +225,8 @@ fn gpu_instances(
         .max()?;
     for a in [&t, &r, &s].into_iter().flatten() {
         if a.data_type() != gltf::accessor::DataType::F32 || a.count() != count {
-            console::warn(&format!(
-                "[rswebgl-gltf] node {}: EXT_mesh_gpu_instancing with non-float or \
+            crate::fetch::warn(format!(
+                "node {}: EXT_mesh_gpu_instancing with non-float or \
                  mismatched attributes isn't supported; drawn once",
                 node.index()
             ));
@@ -248,8 +244,8 @@ fn gpu_instances(
         .and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get))
         .map_or_else(|| vec![[0.0, 0.0, 0.0, 1.0]; count], Iterator::collect);
     if translations.len() != count || scales.len() != count || rotations.len() != count {
-        console::warn(&format!(
-            "[rswebgl-gltf] node {}: EXT_mesh_gpu_instancing data out of range; drawn once",
+        crate::fetch::warn(format!(
+            "node {}: EXT_mesh_gpu_instancing data out of range; drawn once",
             node.index()
         ));
         return None;

@@ -54,11 +54,23 @@ pub async fn resolve_buffers(
     Ok(out)
 }
 
+/// The meshopt extension under both its names (EXT first, KHR ratified).
+pub(crate) const MESHOPT_EXTENSIONS: [&str; 2] = ["EXT_meshopt_compression", "KHR_meshopt_compression"];
+
+/// A bufferView's buffer index and byte range, read from its JSON (before a
+/// document exists); None when they overflow.
+pub(crate) fn json_view(view: &serde_json::Value) -> Option<(usize, std::ops::Range<usize>)> {
+    let buffer = usize::try_from(view["buffer"].as_u64()?).ok()?;
+    let start = usize::try_from(view["byteOffset"].as_u64().unwrap_or(0)).ok()?;
+    let len = usize::try_from(view["byteLength"].as_u64()?).ok()?;
+    Some((buffer, start..start.checked_add(len)?))
+}
+
 // A meshopt fallback buffer is what the compressed bufferViews decode into:
 // zeroed, never fetched (its URI, if any, is for loaders without the
 // extension).
 fn is_fallback(buffer: &serde_json::Value) -> bool {
-    ["EXT_meshopt_compression", "KHR_meshopt_compression"]
+    MESHOPT_EXTENSIONS
         .iter()
         .filter_map(|e| buffer.get("extensions")?.get(e))
         .any(|v| v.get("fallback").and_then(serde_json::Value::as_bool) == Some(true))

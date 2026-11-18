@@ -1,7 +1,7 @@
 //! Named fields laid out in a byte buffer.
 //!
-//! One description serves uniform blocks (std140), vertex/instance data and ECS
-//! components (packed). Fields are addressed by path — `"u_view"`,
+//! One description serves uniform blocks (std140) and vertex/instance data
+//! (packed). Fields are addressed by path — `"u_view"`,
 //! `"lights[2].color"` — which resolves once to a [`FieldId`]; writes go by id.
 
 use std::ops::Range;
@@ -40,8 +40,7 @@ pub enum LayoutRule {
     /// GLSL `std140`: vec3/vec4/matrix columns aligned to 16, arrays and structs
     /// to 16, block size a multiple of 16. For uniform blocks.
     Std140,
-    /// Tightly packed 4-byte components, no padding. For vertex/instance data and
-    /// ECS components.
+    /// Tightly packed 4-byte components, no padding. For vertex/instance data.
     Packed,
 }
 
