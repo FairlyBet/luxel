@@ -10,7 +10,7 @@
 // per-draw data should live in one shared UBO (bindBufferRange per draw)
 // instead of plain uniforms.
 
-import init, { Trace } from "./pkg/rswebgl_scene.js";
+import init, { Trace } from "./pkg/luxel.js";
 
 await init();
 
@@ -375,7 +375,7 @@ $("run").onclick = async () => {
   Trace.metadata("results", JSON.stringify(results()));
   Trace.stop();
   report = Trace.report();
-  reportName = `rswebgl-ubo-bench-${draws}-${meta.date.replace(/[:.]/g, "-")}.json`;
+  reportName = `luxel-ubo-bench-${draws}-${meta.date.replace(/[:.]/g, "-")}.json`;
   showResults();
   $("status").textContent = `Done: ${draws} draws, align ${ALIGN} (stride ${STRIDE} bytes), ${meta.gpu}. Times in ms.`;
   for (const id of ["run", "download", "send", "draws", "seconds"]) $(id).disabled = false;

@@ -6,16 +6,16 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{HtmlCanvasElement, KeyboardEvent};
 
-use rswebgl::buffer::BufferUsage;
-use rswebgl::context::{Context, ContextOptions};
-use rswebgl::draw::{DrawCommand, DrawMode, IndexType};
-use rswebgl::framebuffer::ClearMask;
-use rswebgl::ids::UniformBufferId;
-use rswebgl::param::ParamLayoutBuilder;
-use rswebgl::pass::{Batch, Pass};
-use rswebgl::render_state::{DepthFunc, RenderState};
-use rswebgl::uniform_buffer::{UboLayout, UniformType};
-use rswebgl::vao_builder::{AttrKind, VaoBuilder};
+use luxel_gl::buffer::BufferUsage;
+use luxel_gl::context::{Context, ContextOptions};
+use luxel_gl::draw::{DrawCommand, DrawMode, IndexType};
+use luxel_gl::framebuffer::ClearMask;
+use luxel_gl::ids::UniformBufferId;
+use luxel_gl::param::ParamLayoutBuilder;
+use luxel_gl::pass::{Batch, Pass};
+use luxel_gl::render_state::{DepthFunc, RenderState};
+use luxel_gl::uniform_buffer::{UboLayout, UniformType};
+use luxel_gl::vao_builder::{AttrKind, VaoBuilder};
 
 // The MVP comes from a uniform block (UBO) instead of a plain uniform. The block
 // name "Matrices" is what binds it on the Rust side; the member is std140-packed.

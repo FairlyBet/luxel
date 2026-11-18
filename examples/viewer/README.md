@@ -1,6 +1,6 @@
-# rswebgl viewer
+# luxel viewer
 
-A glTF viewer built on `rswebgl-scene`:
+A glTF viewer built on `luxel`:
 
 - **Models.** Pick a model from Khronos' sample assets, enter a URL, open a `.glb` file, or drop one on the page. `?model=<url>` loads a model at start.
 - **Shading.** Switch between OpenPBR and the glTF reference model. You can also set tone mapping (PBR Neutral, ACES, AgX, none), exposure, auto exposure (for scenes lit in real units, e.g. the Playset; the exposure slider then compensates), HDR output, MSAA, render resolution, dither and reverse-Z.
@@ -16,7 +16,7 @@ A glTF viewer built on `rswebgl-scene`:
 ## Run
 
 ```bash
-wasm-pack build packages/rswebgl-scene --target web --weak-refs --out-dir ../../examples/viewer/pkg
+wasm-pack build packages/luxel --target web --weak-refs --out-dir ../../examples/viewer/pkg
 node examples/viewer/serve.mjs          # http://127.0.0.1:8091/
 node examples/viewer/serve.mjs --lan    # also on this machine's LAN addresses, for a phone
 ```

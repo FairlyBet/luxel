@@ -6,15 +6,15 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-use rswebgl::buffer::BufferUsage;
-use rswebgl::console;
-use rswebgl::context::{Context, ContextOptions};
-use rswebgl::framebuffer::ClearMask;
-use rswebgl::ids::ParamGroupId;
-use rswebgl::param::ParamLayoutBuilder;
-use rswebgl::pass::{KEY_LAST, Pass, default_key};
-use rswebgl::uniform_buffer::{UboLayout, UniformType};
-use rswebgl_gltf::Model;
+use luxel_gl::buffer::BufferUsage;
+use luxel_gl::console;
+use luxel_gl::context::{Context, ContextOptions};
+use luxel_gl::framebuffer::ClearMask;
+use luxel_gl::ids::ParamGroupId;
+use luxel_gl::param::ParamLayoutBuilder;
+use luxel_gl::pass::{KEY_LAST, Pass, default_key};
+use luxel_gl::uniform_buffer::{UboLayout, UniformType};
+use luxel_gltf::Model;
 
 // A small, self-contained Khronos sample (GLB: geometry + textures embedded).
 // Served with permissive CORS, so it loads cross-origin without a local copy.
@@ -91,7 +91,7 @@ fn main() {
     // the Context can drop once the loop is wired.
     wasm_bindgen_futures::spawn_local(async move {
         let url = model_url();
-        match rswebgl_gltf::load_model(&ctx, &url).await {
+        match luxel_gltf::load_model(&ctx, &url).await {
             Ok(model) => {
                 console::log(&format!(
                     "[example-gltf] {url}: {} draw items, {} meshes, {} vertex arrays, \
@@ -111,7 +111,7 @@ fn main() {
 
 /// One renderable item: its spinning UBO and static world matrix.
 struct Item {
-    ubo: rswebgl::ids::UniformBufferId,
+    ubo: luxel_gl::ids::UniformBufferId,
     world: Mat4,
 }
 

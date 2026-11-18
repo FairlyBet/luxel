@@ -1,4 +1,4 @@
-import type { Entity, Scene } from "./rswebgl.js";
+import type { Entity, Scene } from "./luxel.js";
 
 export interface OrbitOptions {
   /** Radians per canvas height dragged (default 4). */

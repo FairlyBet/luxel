@@ -5,7 +5,7 @@
 // sends it to the computer serving the page (serve.mjs saves it under
 // traces/). Open a report in https://ui.perfetto.dev.
 
-import { Trace } from "./pkg/rswebgl_scene.js";
+import { Trace } from "./pkg/luxel.js";
 
 const TRACK_BROWSER = 3;
 
@@ -91,7 +91,7 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     $("trace-record").disabled = true;
     $("cost-measure").disabled = true;
     $("trace-summary").textContent = `Recording ${seconds} s…`;
-    reportName = `rswebgl-${(meta.model ?? "trace").replace(/[^\w.-]+/g, "_")}-${meta.date.replace(/[:.]/g, "-")}.json`;
+    reportName = `luxel-${(meta.model ?? "trace").replace(/[^\w.-]+/g, "_")}-${meta.date.replace(/[:.]/g, "-")}.json`;
     Trace.start();
     until = performance.now() + seconds * 1000;
   }
@@ -222,7 +222,7 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     for (const [k, v] of Object.entries(deviceMeta())) Trace.metadata(k, v);
     Trace.stop();
     report = Trace.report();
-    reportName = `rswebgl-view-cost-${(describe().model ?? "model").replace(/[^\w.-]+/g, "_")}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    reportName = `luxel-view-cost-${(describe().model ?? "model").replace(/[^\w.-]+/g, "_")}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
     out.textContent = `${canvas.width}x${canvas.height}\n${text}`;
     for (const id of ["cost-measure", "trace-record", "trace-download", "trace-send"]) $(id).disabled = false;
   }

@@ -67,7 +67,7 @@ item as reviewed.
 ## 3. A viewer's building blocks in the library — H, M — done (but adaptive resolution)
 
 `needsRender` / `invalidate` (render on demand); `worldToScreen`,
-`screenToRay`, `raycastBounds`; `frameBounds` and `rswebgl/orbit`
+`screenToRay`, `raycastBounds`; `frameBounds` and `luxel/orbit`
 (`OrbitControls`); `setResolutionScale` / `setMaxPixelRatio` on the default
 framebuffer and `setQuality`; `capture`. Left: adaptive resolution from GPU
 timings (needs tuning on real devices), and an exact synchronous raycast

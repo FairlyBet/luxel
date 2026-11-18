@@ -1,0 +1,61 @@
+[package]
+name = "luxel-gl"
+version = "0.1.0"
+edition = "2024"
+autotests = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen-futures = "0.4"
+luxel-core = { path = "../luxel-core" }
+smallvec = { workspace = true }
+tracing = { workspace = true }
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+    "Blob",
+    "BlobPropertyBag",
+    "console",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlCanvasElement",
+    "HtmlImageElement",
+    "HtmlVideoElement",
+    "ImageBitmap",
+    "ImageData",
+    "MediaQueryList",
+    "ResizeObserver",
+    "ResizeObserverBoxOptions",
+    "ResizeObserverEntry",
+    "ResizeObserverOptions",
+    "ResizeObserverSize",
+    "Url",
+    "Window",
+    "WebGl2RenderingContext",
+    "WebGlActiveInfo",
+    "WebGlBuffer",
+    "WebGlFramebuffer",
+    "WebGlProgram",
+    "WebGlRenderbuffer",
+    "WebGlShader",
+    "WebGlSampler",
+    "WebGlSync",
+    "WebGlQuery",
+    "WebGlTransformFeedback",
+    "WebGlTexture",
+    "WebGlUniformLocation",
+    "WebGlVertexArrayObject",
+    "WebglLoseContext",
+] }
+
+# Browser tests: `wasm-pack test --headless --chrome packages/luxel-gl`.
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+web-sys = { workspace = true, features = ["Document"] }
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

@@ -98,7 +98,7 @@ pay off for shadow cascades, or to merge draws of different materials into
 one instanced draw (a layer index per instance); look at `frameStats`'
 texture binds on real scenes first.
 
-## Core (`packages/rswebgl`)
+## Core (`packages/luxel-gl`)
 
 ### Errors and GL limits
 
@@ -173,7 +173,7 @@ its owner.
 - Texture packer: outputs are always `RGBA8` / `SRGB8_ALPHA8`, no `RG8` /
   `R8`.
 
-## glTF loader (`packages/rswebgl-gltf`)
+## glTF loader (`packages/luxel-gltf`)
 
 - Compression: `EXT_meshopt_compression` / `KHR_meshopt_compression`
   decoded in Rust (`meshopt.rs`) on the main thread (a memcpy-class codec);
@@ -192,7 +192,7 @@ its owner.
 - `EXT_mesh_gpu_instancing` with quantized instance attributes isn't read
   (drawn once, with a warning).
 
-## Scene (`packages/rswebgl-scene`)
+## Scene (`packages/luxel`)
 
 ### TAA
 

@@ -22,7 +22,7 @@ import init, {
   RenderbufferFormat,
   UniformType,
   VaoBuilder,
-} from "./pkg/rswebgl.js";
+} from "./pkg/luxel_gl.js";
 
 const VERT = `#version 300 es
 precision highp float;

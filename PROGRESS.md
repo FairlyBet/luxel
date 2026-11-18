@@ -156,10 +156,10 @@
 
 | Entity                      | Status | File                       |
 |-----------------------------|--------|----------------------------|
-| glTF 2.0 / GLB → primitives | ✅     | `packages/rswebgl-gltf`    |
+| glTF 2.0 / GLB → primitives | ✅     | `packages/luxel-gltf`    |
 
 Separate crate translating glTF/GLB (geometry → VAOs, materials → uniforms +
-render state, textures, node transforms → draw list) using only rswebgl's public
+render state, textures, node transforms → draw list) using only luxel-gl's public
 API. Async load (fetches external buffers/images; textures fill in via the DOM
 image decoder). Meshes, skins, morph targets, animation, KTX2 / Draco /
 meshopt and the KHR_materials_* extensions are read; what is left is in
@@ -167,9 +167,9 @@ meshopt and the KHR_materials_* extensions are read; what is left is in
 Separate occlusion + metallic-roughness maps are GPU-packed into one ORM texture
 (`src/pack.rs` + `texture_packer`). Materials come out as parameter groups with
 every factor and all 19 maps; the PBR shader that reads them is in
-`packages/rswebgl-scene/shaders/`.
+`packages/luxel/shaders/`.
 
-## Foundation (`packages/rswebgl-foundation`)
+## Foundation (`packages/luxel-core`)
 
 Stage 1 of `docs/design/architecture.md`: the data layer shared by the renderer
 and the future ECS. Nothing in it touches WebGL.
@@ -185,22 +185,22 @@ and the future ECS. Nothing in it touches WebGL.
 The renderer's `UniformBuffer` already runs on `Layout` + `DirtyBits`; pools and
 handles get adopted in stage 2.
 
-## ECS and scene (`packages/rswebgl-ecs`, `packages/rswebgl-scene`)
+## ECS and scene (`packages/luxel-ecs`, `packages/luxel`)
 
 Design: `docs/design/ecs.md`. ECS and hierarchy: host tests; `SceneRenderer`: browser tests. Example: `examples/scene`.
 
 | Entity                                   | Status | File                         |
 |------------------------------------------|--------|------------------------------|
-| World, generational entities             | ✅     | `rswebgl-ecs/src/world.rs`   |
-| Sparse-set storage, change ticks, removal log | ✅ | `rswebgl-ecs/src/storage.rs` |
-| Transform, Parent, WorldMatrix           | ✅     | `rswebgl-scene/src/transform.rs` |
-| Hierarchy: cached order, dirty subtrees, `set_parent`, `despawn_recursive` | ✅ | `rswebgl-scene/src/hierarchy.rs` |
-| Camera, Bounds, frustum culling          | ✅     | `rswebgl-scene/src/{camera,culling}.rs` |
-| SceneRenderer: frame UBO, object groups, Pass assembly (E3) | ✅ | `rswebgl-scene/src/render.rs` |
-| glTF nodes → entities, `Name`, `find_by_name` (E4) | ✅ | `rswebgl-scene/src/model.rs` |
-| JS facade `Scene` (cdylib bundle; example `examples/js-scene`) | ✅ | `rswebgl-scene/src/js/` |
-| PBR shader variants, full glTF materials, lights, transparency (E5a) | ✅ | `rswebgl-scene/src/{pbr.rs,lighting/}`, `shaders/` |
-| IBL: HDR decode, GPU bake, BRDF LUT, background (E5b) | ✅ | `rswebgl-scene/src/{environment,hdr,brdf_lut}.rs` |
-| Material extensions: ior, specular, transmission, volume, clearcoat, dispersion (E5c, factors) | ✅ | `rswebgl-gltf/src/material.rs`, `rswebgl-scene/shaders/pbr.frag` |
-| Scene API v2: materials by name/property, clones, options objects, renderFrame, picking, shader preludes | ✅ | `rswebgl-scene/src/{js,pick,shader}*` |
-| Screen-space transmission, extension textures; viewer (E5d) | ✅ | `rswebgl-scene/src/output.rs`, `examples/viewer` |
+| World, generational entities             | ✅     | `luxel-ecs/src/world.rs`   |
+| Sparse-set storage, change ticks, removal log | ✅ | `luxel-ecs/src/storage.rs` |
+| Transform, Parent, WorldMatrix           | ✅     | `luxel/src/transform.rs` |
+| Hierarchy: cached order, dirty subtrees, `set_parent`, `despawn_recursive` | ✅ | `luxel/src/hierarchy.rs` |
+| Camera, Bounds, frustum culling          | ✅     | `luxel/src/{camera,culling}.rs` |
+| SceneRenderer: frame UBO, object groups, Pass assembly (E3) | ✅ | `luxel/src/render.rs` |
+| glTF nodes → entities, `Name`, `find_by_name` (E4) | ✅ | `luxel/src/model.rs` |
+| JS facade `Scene` (cdylib bundle; example `examples/js-scene`) | ✅ | `luxel/src/js/` |
+| PBR shader variants, full glTF materials, lights, transparency (E5a) | ✅ | `luxel/src/{pbr.rs,lighting/}`, `shaders/` |
+| IBL: HDR decode, GPU bake, BRDF LUT, background (E5b) | ✅ | `luxel/src/{environment,hdr,brdf_lut}.rs` |
+| Material extensions: ior, specular, transmission, volume, clearcoat, dispersion (E5c, factors) | ✅ | `luxel-gltf/src/material.rs`, `luxel/shaders/pbr.frag` |
+| Scene API v2: materials by name/property, clones, options objects, renderFrame, picking, shader preludes | ✅ | `luxel/src/{js,pick,shader}*` |
+| Screen-space transmission, extension textures; viewer (E5d) | ✅ | `luxel/src/output.rs`, `examples/viewer` |

@@ -2,7 +2,7 @@
 // to zoom, right-drag / shift-drag / two fingers to pan, a tap reported for
 // picking. Moves ease out (damping). Ships beside the package:
 //
-//   import { OrbitControls } from "rswebgl/orbit";
+//   import { OrbitControls } from "@fairlybet/luxel/orbit";
 //   const orbit = new OrbitControls(scene, camera, canvas);
 //   orbit.frame(root);                     // look at a model
 //   orbit.onTap = (x, y) => scene.pick(camera, x, y).then(...);
@@ -16,7 +16,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export class OrbitControls {
   /**
-   * @param {import("./rswebgl.js").Scene} scene
+   * @param {import("./luxel.js").Scene} scene
    * @param {number} camera the camera entity it moves
    * @param {HTMLElement} element where pointer and wheel input comes from
    * @param {Partial<OrbitOptions>} [options]

@@ -1,4 +1,4 @@
-# rswebgl
+# luxel
 
 A WebGL2 renderer written in Rust, compiled to WebAssembly. It has two levels:
 
@@ -11,9 +11,9 @@ A WebGL2 renderer written in Rust, compiled to WebAssembly. It has two levels:
   textures, render states, queries) for drawing your own way.
 
 ```js
-import init, { Context, ContextOptions, Scene, loadModel } from "rswebgl";
+import init, { Context, ContextOptions, Scene, loadModel } from "@fairlybet/luxel";
 
-await init(); // fetches rswebgl_bg.wasm next to the module
+await init(); // fetches luxel_bg.wasm next to the module
 
 const canvas = document.querySelector("canvas");
 const ctx = Context.fromCanvas(canvas, new ContextOptions());
@@ -75,13 +75,13 @@ loads, with a warning; other validation errors reject the load.
 
 ## Camera, render on demand, hotspots
 
-`rswebgl/orbit` ships an orbit camera (drag, wheel / pinch, right-drag to
+`@fairlybet/luxel/orbit` ships an orbit camera (drag, wheel / pinch, right-drag to
 pan, a tap for picking). `scene.frameBounds(camera, root)` points a camera
 at a model. `scene.needsRender()` says whether anything changed since the
 last frame, so a still scene costs nothing:
 
 ```js
-import { OrbitControls } from "rswebgl/orbit";
+import { OrbitControls } from "@fairlybet/luxel/orbit";
 
 const orbit = new OrbitControls(scene, camera, canvas);
 orbit.frame(root);
@@ -169,7 +169,7 @@ at, before loading such a model (three.js' conventions: a directory with
 `basis_transcoder.js` + `basis_transcoder.wasm`):
 
 ```js
-import { setDracoDecoderPath, setKtx2TranscoderPath } from "rswebgl";
+import { setDracoDecoderPath, setKtx2TranscoderPath } from "@fairlybet/luxel";
 
 setDracoDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
 setKtx2TranscoderPath("https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/basis/");
@@ -226,22 +226,22 @@ scene.setOnRestored(async () => {
 
 ## Bundlers
 
-The module finds its `.wasm` with `new URL("rswebgl_bg.wasm", import.meta.url)`,
+The module finds its `.wasm` with `new URL("luxel_bg.wasm", import.meta.url)`,
 which Vite, webpack 5 and Parcel follow. esbuild doesn't: import the file
 and pass its URL (`--loader:.wasm=file`, with `--public-path` set to where
 the bundle is served from):
 
 ```js
-import wasmUrl from "rswebgl/rswebgl_bg.wasm";
+import wasmUrl from "@fairlybet/luxel/luxel_bg.wasm";
 await init({ module_or_path: wasmUrl });
 ```
 
-Without a bundler, serve the package's files and import `rswebgl.js`; serve
+Without a bundler, serve the package's files and import `luxel.js`; serve
 `.wasm` as `application/wasm`.
 
 ## Types, handles and memory
 
-Types are in `rswebgl.d.ts`. Entities, materials, textures, programs and the
+Types are in `luxel.d.ts`. Entities, materials, textures, programs and the
 other GPU objects are **handles**: plain numbers at run time, typed by kind
 (`Entity`, `ParamGroupId`, `TextureId`, `ProgramId`, …), so TypeScript
 catches a texture passed where an entity goes. Handles are freed explicitly

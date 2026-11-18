@@ -1,0 +1,1081 @@
+// Pass execution: walks a pass's draw list and issues the GL calls, diffing
+// state between consecutive draws. Resources are resolved from the context's
+// pools by handle; a handle that went stale since the pass was built is
+// reported once and its pass / draw skipped.
+//
+// What the renderer leaves bound is remembered across calls (`GlState`, kept
+// in the context), so a frame that starts with the program, VAO, render state
+// and textures the previous one ended with re-issues none of them. Library
+// code that binds outside the renderer resets the part it touched; code that
+// changes GL state behind the library's back calls `Context::reset_gl_state`.
+
+use crate::error::{Error, err};
+use wasm_bindgen::prelude::*;
+use web_sys::WebGl2RenderingContext;
+
+use crate::context::{Context, Resources, report_stale};
+use crate::draw::Viewport;
+use crate::framebuffer::{
+    ClearMask, DefaultFramebuffer, FramebufferObj, InvalidateMask, framebuffer_status_str,
+};
+use crate::{console, copy};
+use luxel_core::pool::Pool;
+
+use crate::feedback::Recording;
+use crate::ids::{
+    FramebufferId, ProgramId, SamplerId, StateId, TextureId, UniformBufferId, VertexArrayId,
+};
+use crate::param::{GROUP_SLOTS, ParamGroupObj, ParamLayoutObj};
+use crate::pass::Pass;
+use crate::program::ProgramObj;
+use crate::query::{self, QueryUse};
+use crate::render_state::RenderState;
+use crate::sampler::SamplerObj;
+use crate::texture::TextureObj;
+use crate::uniform_buffer::UniformBufferObj;
+
+/// What rendering cost since the last `Context::reset_frame_stats`: draws
+/// issued and the GL state changes they needed. Call `reset_frame_stats` once
+/// per frame and read this after rendering to see how well draws are sorted.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameStats {
+    pub passes: u32,
+    /// Draw calls issued.
+    pub draws: u32,
+    /// Draws skipped: a stale handle or a program that failed to link.
+    pub skipped: u32,
+    /// useProgram calls.
+    pub programs: u32,
+    /// Render-state changes (each may be several GL calls).
+    pub states: u32,
+    /// bindVertexArray calls.
+    #[wasm_bindgen(js_name = vertexArrays)]
+    pub vertex_arrays: u32,
+    /// bindTexture calls.
+    pub textures: u32,
+    /// bindSampler calls.
+    pub samplers: u32,
+    /// bindBufferBase / bindBufferRange calls for uniform blocks.
+    pub blocks: u32,
+    /// uniform* calls (values that differed from what the program held).
+    pub uniforms: u32,
+}
+
+#[wasm_bindgen]
+impl Context {
+    /// Executes one render pass. Does nothing while the context is lost.
+    pub fn render(&self, pass: &Pass) {
+        self.render_passes(std::slice::from_ref(pass));
+    }
+
+    /// Checks framebuffer completeness. Binds `fb` to read its status.
+    #[wasm_bindgen(js_name = checkFramebuffer)]
+    pub fn check_framebuffer(&self, fb: FramebufferId) -> Result<(), Error> {
+        self.check_alive()?;
+        let gl = self.gl();
+        let res = self.res();
+        let Some(f) = res.framebuffers.get(fb.0) else {
+            return Err(err!("framebuffer {:?} is destroyed or invalid", fb.0));
+        };
+        self.gl_state().forget_target();
+        gl.bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, Some(&f.raw));
+        let status = gl.check_framebuffer_status(WebGl2RenderingContext::FRAMEBUFFER);
+        if status == WebGl2RenderingContext::FRAMEBUFFER_COMPLETE {
+            Ok(())
+        } else {
+            Err(framebuffer_status_str(status).into())
+        }
+    }
+
+    #[wasm_bindgen(js_name = framebufferIsComplete)]
+    pub fn framebuffer_is_complete(&self, fb: FramebufferId) -> bool {
+        self.check_framebuffer(fb).is_ok()
+    }
+
+    /// Forgets what the library believes is bound, so the next render binds
+    /// everything afresh. After GL calls of your own (or another library's
+    /// on the same context) call `resetGlState`, which does this and also
+    /// puts back the state the library expects at its default.
+    #[wasm_bindgen(js_name = invalidateState)]
+    pub fn invalidate_state(&self) {
+        self.core.invalidate_state();
+    }
+
+    /// Counters since the last `reset_frame_stats`.
+    #[wasm_bindgen(js_name = frameStats)]
+    pub fn frame_stats(&self) -> FrameStats {
+        self.gl_state().stats
+    }
+
+    #[wasm_bindgen(js_name = resetFrameStats)]
+    pub fn reset_frame_stats(&self) {
+        self.gl_state().stats = FrameStats::default();
+    }
+}
+
+impl Context {
+    /// Executes several passes in order. Rust-only: a `&[Pass]` doesn't cross
+    /// the wasm_bindgen boundary.
+    pub fn render_passes(&self, passes: &[Pass]) {
+        let _span = tracing::info_span!(
+            "gl.render",
+            passes = passes.len(),
+            draws = passes.iter().map(Pass::draw_count).sum::<usize>()
+        )
+        .entered();
+        let gl = self.gl();
+        // Every call would be a no-op anyway, but program/framebuffer status
+        // queries would report bogus failures (and mark programs invalid).
+        if gl.is_context_lost() {
+            return;
+        }
+        let filter_float32 = self.can_filter_float32();
+        let float_blend = self.is_extension_enabled(crate::extension::Extension::ExtFloatBlend);
+        let res = &mut *self.res();
+        let st = &mut *self.gl_state();
+        st.reverse_z = self.core.reverse_z.get();
+        st.filter_float32 = filter_float32;
+        st.float_blend = float_blend;
+        for pass in passes {
+            execute_pass(gl, &self.core.default_fb, res, pass, st);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pass execution
+// ---------------------------------------------------------------------------
+
+// A pass, inside its timer query if it has one.
+fn execute_pass(
+    gl: &WebGl2RenderingContext,
+    default_fb: &DefaultFramebuffer,
+    res: &mut Resources,
+    pass: &Pass,
+    st: &mut GlState,
+) {
+    let timer = if pass.timer.is_null() {
+        None
+    } else {
+        query::begin(gl, &mut res.queries, pass.timer, QueryUse::Pass)
+    };
+    run_pass(gl, default_fb, res, pass, st);
+    if let Some(target) = timer {
+        gl.end_query(target);
+    }
+}
+
+fn run_pass(
+    gl: &WebGl2RenderingContext,
+    default_fb: &DefaultFramebuffer,
+    res: &mut Resources,
+    pass: &Pass,
+    st: &mut GlState,
+) {
+    let Resources {
+        framebuffers,
+        renderbuffers,
+        programs,
+        vertex_arrays,
+        textures,
+        samplers,
+        uniform_buffers,
+        param_layouts,
+        param_groups,
+        render_states,
+        queries,
+        feedbacks,
+        ..
+    } = res;
+
+    // Render target — bind whatever this pass draws into.
+    let target = if pass.target.is_null() {
+        None
+    } else {
+        match framebuffers.get(pass.target.0) {
+            Some(f) => Some(f),
+            None => {
+                st.stats.skipped += pass.items.len() as u32;
+                return report_stale("framebuffer", "render (pass target)", pass.target);
+            }
+        }
+    };
+    st.stats.passes += 1;
+    st.bind_target(gl, pass.target, target.map(|f| &f.raw));
+    // Blending into a 32-bit float attachment without EXT_float_blend is an
+    // INVALID_OPERATION per draw: such draws are skipped, reported.
+    let float32_target =
+        !st.float_blend && target.is_some_and(|f| f.has_float32_color(textures, renderbuffers));
+
+    // Viewport — the pass's override, else the target's full size.
+    let vp = pass.viewport.unwrap_or_else(|| match target {
+        Some(f) => f.viewport,
+        None => default_fb.viewport(),
+    });
+    st.set_viewport(gl, vp);
+
+    // Load op — clear before drawing. Clearing obeys the write masks and
+    // scissor: open those the current render state keeps closed, clear, and
+    // put them back. If the state is unknown, open all and let the next draw
+    // apply its state in full.
+    if pass.clear != ClearMask::none() {
+        // A state with per-target overrides (blend, color masks) counts as
+        // unknown: the clear opens everything and the next draw re-applies it
+        // whole (a global colorMask would undo its per-target masks).
+        let cur = st
+            .render_state
+            .and_then(|id| render_states.get(id.0))
+            .filter(|rs| !rs.has_target_overrides());
+        let opened = open_for_clear(gl, pass.clear, cur);
+        // A clear rectangle: scissored to it, then the scissor left for the
+        // next draw's state to set in full.
+        if let Some(r) = pass.clear_rect {
+            gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
+            gl.scissor(r.x, r.y, r.width, r.height);
+        }
+        match target {
+            Some(f) => f.clear(gl, pass.clear, st.reverse_z, textures, renderbuffers),
+            None => clear_default(default_fb, gl, pass.clear, st.reverse_z),
+        }
+        match cur {
+            Some(rs) if pass.clear_rect.is_none() => opened.restore(gl, rs),
+            _ => st.forget_render_state(),
+        }
+    }
+
+    // Transform feedback — a pass that records needs its object.
+    let mut recording = match pass.feedback {
+        None => None,
+        Some(want) => match Recording::new(feedbacks, want) {
+            Some(r) => Some(r),
+            None => {
+                st.stats.skipped += pass.items.len() as u32;
+                return;
+            }
+        },
+    };
+
+    for d in &pass.items {
+        let Some(program) = programs.get_mut(d.program.0) else {
+            report_stale("program", "render (draw)", d.program);
+            st.stats.skipped += 1;
+            continue;
+        };
+        // A program whose link failed is skipped (its error is reported once).
+        // One still linking in the background is waited on, not skipped, so a
+        // one-shot pass (a bake, a pack) can't silently draw nothing; callers who
+        // want to avoid the stall poll `program_is_ready` before submitting.
+        if !program.ensure_linked(gl) {
+            st.stats.skipped += 1;
+            continue;
+        }
+        // Checked before its program is bound (switching programs while
+        // recording is an error); counted only once issued (`start`).
+        if let Some(r) = &mut recording
+            && !r.admit(d, program)
+        {
+            st.stats.skipped += 1;
+            continue;
+        }
+        if !st.apply_render_state(gl, d.state, render_states) {
+            report_stale("render state", "render (draw)", d.state);
+            st.stats.skipped += 1;
+            continue;
+        }
+        if float32_target
+            && render_states
+                .get(d.state.0)
+                .is_some_and(RenderState::blends)
+        {
+            console::warn_once(
+                "[luxel] render: blending into a 32-bit float target needs \
+                 EXT_float_blend, which this device doesn't have; draws skipped",
+            );
+            st.stats.skipped += 1;
+            continue;
+        }
+        let vao = if d.vao.is_null() {
+            None
+        } else {
+            match vertex_arrays.get(d.vao.0) {
+                Some(v) => Some(&v.raw),
+                None => {
+                    report_stale("vertex array", "render (draw)", d.vao);
+                    st.stats.skipped += 1;
+                    continue;
+                }
+            }
+        };
+        st.use_program(gl, d.program, &program.raw);
+        program.activate(gl);
+        st.bind_vao(gl, d.vao, vao);
+
+        // Values are compared against what the program holds, so unchanged ones
+        // cost a compare, not a GL call.
+        // A group, texture or uniform buffer destroyed meanwhile skips the draw
+        // (reported): drawing would show whatever an earlier draw left bound.
+        let mut used = [0usize; GROUP_SLOTS];
+        let mut n_used = 0;
+        let mut complete = true;
+        for &gid in &d.groups {
+            if gid.is_null() {
+                continue;
+            }
+            let Some(group) = param_groups.get(gid.0) else {
+                report_stale("param group", "render (draw)", gid);
+                complete = false;
+                break;
+            };
+            let layout = param_layouts
+                .get_in_use(group.layout.0)
+                .expect("a group keeps its layout alive");
+            let m = program.mapping(group.layout, layout);
+            complete &= apply_group(
+                gl,
+                program,
+                m,
+                group,
+                layout,
+                textures,
+                samplers,
+                uniform_buffers,
+                &mut st.bindings,
+                &mut st.stats,
+                st.filter_float32,
+            );
+            used[n_used] = m;
+            n_used += 1;
+            if !complete {
+                break;
+            }
+        }
+        if !complete {
+            st.stats.skipped += 1;
+            continue;
+        }
+        program.check_covered(&used[..n_used]);
+        // The admitted draw is counted toward the recording here, now that
+        // nothing can skip it.
+        if let Some(r) = &mut recording {
+            r.start(gl, queries);
+        }
+        let occlusion = if d.query.is_null() {
+            None
+        } else {
+            query::begin(gl, queries, d.query, QueryUse::Draw)
+        };
+        d.command.execute(gl);
+        if let Some(target) = occlusion {
+            gl.end_query(target);
+        }
+        st.stats.draws += 1;
+    }
+    if let Some(r) = recording {
+        r.finish(gl);
+    }
+
+    // Resolve — copy color 0 into the resolve target (the MSAA resolve). It
+    // binds DRAW to the resolve target; the store op below goes through READ,
+    // which still holds this pass's target.
+    let mut fb_binding = WebGl2RenderingContext::FRAMEBUFFER;
+    let mut resolved_into = None;
+    if let Some(dst) = pass.resolve {
+        let size = |f: Option<&FramebufferObj>| match f {
+            Some(f) => f.size(),
+            None => (default_fb.width(), default_fb.height()),
+        };
+        let dst_obj = if dst.is_null() {
+            Ok(None)
+        } else {
+            framebuffers.get(dst.0).map(Some).ok_or(())
+        };
+        match dst_obj {
+            Err(()) => report_stale("framebuffer", "render (resolve target)", dst),
+            Ok(None) if copy::canvas_multisampled(gl) => console::error_once(
+                "[luxel] resolve into the canvas: it is multisampled itself \
+                 (ContextOptions.antialias = true), a blit can't write into it; \
+                 create the context with antialias off; skipped",
+            ),
+            Ok(d) if size(d) != size(target) => console::error_once(&format!(
+                "[luxel] resolve: target is {:?} but the resolve target is {:?}; \
+                 sizes must match, skipped",
+                size(target),
+                size(d)
+            )),
+            Ok(d) => {
+                let (w, h) = size(target);
+                let all = Viewport::new(0, 0, w, h);
+                // Whether a blit ran: only then is DRAW the resolve target.
+                let mut blitted = false;
+                if pass.resolve_color.is_empty() {
+                    blitted = true;
+                    copy::blit(
+                        gl,
+                        target.map(|f| &f.raw),
+                        d.map(|f| &f.raw),
+                        all,
+                        all,
+                        WebGl2RenderingContext::COLOR_BUFFER_BIT,
+                        WebGl2RenderingContext::NEAREST,
+                    );
+                } else {
+                    // Each listed attachment into the same one.
+                    let restore = d.map(|f| {
+                        move |gl: &WebGl2RenderingContext| {
+                            crate::framebuffer::sync_draw_buffers(f, gl)
+                        }
+                    });
+                    for &i in &pass.resolve_color {
+                        // The canvas has attachment 0 only, as a source too.
+                        let present = target.map_or(i == 0, |f| f.has_color(i))
+                            && d.map_or(i == 0, |f| f.has_color(i));
+                        if !present {
+                            console::error_once(&format!(
+                                "[luxel] resolve: color attachment {i} is missing on the \
+                                 target or the resolve target; skipped"
+                            ));
+                            continue;
+                        }
+                        // A multisampled source resolves into the same format
+                        // only (GL ES 3.0 blitFramebuffer).
+                        let formats = (
+                            target.and_then(|f| f.color_format_in(textures, renderbuffers, i)),
+                            d.and_then(|f| f.color_format_in(textures, renderbuffers, i)),
+                        );
+                        if let (Some((a, n)), Some((b, _))) = formats
+                            && n > 0
+                            && a != b
+                        {
+                            console::error_once(&format!(
+                                "[luxel] resolve: color attachment {i} is 0x{a:X} \
+                                 multisampled, the resolve target's 0x{b:X}; formats must \
+                                 match, skipped"
+                            ));
+                            continue;
+                        }
+                        blitted = true;
+                        copy::blit_attachment(
+                            gl,
+                            target.map(|f| &f.raw),
+                            i,
+                            d.map(|f| &f.raw),
+                            i,
+                            all,
+                            all,
+                            WebGl2RenderingContext::NEAREST,
+                            restore
+                                .as_ref()
+                                .map(|r| r as &dyn Fn(&WebGl2RenderingContext)),
+                        );
+                    }
+                }
+                // Depth: both sides need one, of the same format (the
+                // canvas's is the browser's: not resolvable into).
+                let depth_ok = pass.resolve_depth && {
+                    let formats = (
+                        target.and_then(|f| f.depth_format(textures, renderbuffers)),
+                        d.and_then(|f| f.depth_format(textures, renderbuffers)),
+                    );
+                    match formats {
+                        (Some((a, _)), Some((b, _))) if a == b => true,
+                        _ => {
+                            console::error_once(
+                                "[luxel] resolve: depth needs a depth attachment of the \
+                                 same format on the target and the resolve target (not the \
+                                 canvas); skipped",
+                            );
+                            false
+                        }
+                    }
+                };
+                if depth_ok {
+                    blitted = true;
+                    copy::blit(
+                        gl,
+                        target.map(|f| &f.raw),
+                        d.map(|f| &f.raw),
+                        all,
+                        all,
+                        WebGl2RenderingContext::DEPTH_BUFFER_BIT
+                            | WebGl2RenderingContext::STENCIL_BUFFER_BIT,
+                        WebGl2RenderingContext::NEAREST,
+                    );
+                }
+                if blitted {
+                    fb_binding = WebGl2RenderingContext::READ_FRAMEBUFFER;
+                    resolved_into = Some((dst, d.map(|f| &f.raw)));
+                }
+            }
+        }
+    }
+
+    // Store op — discard attachments we won't read again.
+    if pass.invalidate != InvalidateMask::none() {
+        let arr = js_sys::Array::new();
+        match target {
+            Some(f) => f.collect_invalidate_attachments(&arr, pass.invalidate),
+            None => {
+                if pass.invalidate.color {
+                    arr.push(&JsValue::from(WebGl2RenderingContext::COLOR));
+                }
+                if pass.invalidate.depth {
+                    arr.push(&JsValue::from(WebGl2RenderingContext::DEPTH));
+                }
+                if pass.invalidate.stencil {
+                    arr.push(&JsValue::from(WebGl2RenderingContext::STENCIL));
+                }
+            }
+        }
+        let _ = gl.invalidate_framebuffer(fb_binding, arr.as_ref());
+    }
+
+    // After a resolve, point READ at the resolve target too, so both bindings
+    // (and the cache) agree on one framebuffer — a raw readPixels afterwards
+    // reads what was resolved rather than failing on a multisampled source.
+    if let Some((dst, raw)) = resolved_into {
+        gl.bind_framebuffer(WebGl2RenderingContext::READ_FRAMEBUFFER, raw);
+        st.target = Some(dst);
+    }
+}
+
+fn clear_default(
+    default_fb: &DefaultFramebuffer,
+    gl: &WebGl2RenderingContext,
+    mask: ClearMask,
+    reverse_z: bool,
+) {
+    if mask.color {
+        let c = default_fb.clear_color_rgba();
+        gl.clear_color(c[0], c[1], c[2], c[3]);
+    }
+    if mask.depth {
+        gl.clear_depth(depth_clear_value(default_fb.clear_depth_value(), reverse_z));
+    }
+    if mask.stencil {
+        gl.clear_stencil(default_fb.clear_stencil_value());
+    }
+    gl.clear(mask.as_gl());
+}
+
+// What `open_for_clear` changed, to put back after the clear.
+struct Opened {
+    color: bool,
+    depth: bool,
+    stencil: bool,
+    scissor: bool,
+}
+
+impl Opened {
+    fn restore(&self, gl: &WebGl2RenderingContext, rs: &RenderState) {
+        if self.color {
+            gl.color_mask(
+                rs.color_mask_r,
+                rs.color_mask_g,
+                rs.color_mask_b,
+                rs.color_mask_a,
+            );
+        }
+        if self.depth {
+            gl.depth_mask(rs.depth_mask);
+        }
+        if self.stencil {
+            gl.stencil_mask(rs.stencil_write_mask);
+        }
+        if self.scissor {
+            gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
+        }
+    }
+}
+
+// Opens the write masks and scissor the given clear touches (all of them if
+// the current render state `cur` is unknown), so the clear isn't silently
+// masked off or scissored down.
+fn open_for_clear(
+    gl: &WebGl2RenderingContext,
+    mask: ClearMask,
+    cur: Option<&RenderState>,
+) -> Opened {
+    let closed = |f: fn(&RenderState) -> bool| cur.is_none_or(f);
+    let opened = Opened {
+        color: mask.color
+            && closed(|rs| {
+                !(rs.color_mask_r && rs.color_mask_g && rs.color_mask_b && rs.color_mask_a)
+            }),
+        depth: mask.depth && closed(|rs| !rs.depth_mask),
+        stencil: mask.stencil
+            && closed(|rs| rs.stencil_write_mask != crate::render_state::STENCIL_ALL),
+        scissor: closed(|rs| rs.scissor_test),
+    };
+    if opened.color {
+        gl.color_mask(true, true, true, true);
+    }
+    if opened.depth {
+        gl.depth_mask(true);
+    }
+    if opened.stencil {
+        gl.stencil_mask(crate::render_state::STENCIL_ALL);
+    }
+    if opened.scissor {
+        gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
+    }
+    opened
+}
+
+// ---------------------------------------------------------------------------
+// GlState — what the renderer last left bound, kept in the context across
+// render calls. Each slot starts as `None` ("unknown"), so the first use
+// applies in full; thereafter only differences reach GL.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+pub(crate) struct GlState {
+    // FramebufferId::NULL = the default framebuffer.
+    target: Option<FramebufferId>,
+    viewport: Option<Viewport>,
+    render_state: Option<StateId>,
+    program: Option<ProgramId>,
+    // VertexArrayId::NULL = explicitly no VAO.
+    vao: Option<VertexArrayId>,
+    // What's bound to each texture unit / uniform-buffer point. Global state, so
+    // it's kept across program switches.
+    bindings: GlBindings,
+    stats: FrameStats,
+    // Copied from the context at each `render`: depth funcs and depth clears
+    // are flipped under reverse-Z.
+    pub(crate) reverse_z: bool,
+    // Copied likewise: OES_texture_float_linear and EXT_float_blend, for the
+    // draw-time checks of 32-bit float sampling and blending.
+    pub(crate) filter_float32: bool,
+    pub(crate) float_blend: bool,
+}
+
+impl GlState {
+    /// Forgets everything bound (keeps the counters).
+    pub(crate) fn reset(&mut self) {
+        *self = Self {
+            stats: self.stats,
+            ..Self::default()
+        };
+        // Unknown, not empty: GL's units still hold what was bound (after
+        // raw GL or set_reverse_z), so a unit left unset must be unbound.
+        self.bindings.beyond = UnitBinding::Unknown;
+    }
+
+    /// Something bound a framebuffer.
+    pub(crate) fn forget_target(&mut self) {
+        self.target = None;
+    }
+
+    /// Something bound a vertex array.
+    pub(crate) fn forget_vao(&mut self) {
+        self.vao = None;
+    }
+
+    /// Something bound a texture on the active unit.
+    pub(crate) fn forget_texture_unit(&mut self) {
+        self.bindings.forget_active_unit();
+    }
+
+    /// `tex` now names another GL texture: the units the cache thinks hold
+    /// it hold nothing (deleting the old one unbound it).
+    pub(crate) fn forget_texture(&mut self, tex: TextureId) {
+        for u in self.bindings.units.iter_mut() {
+            if matches!(u, UnitBinding::Bound(t, _) if *t == tex) {
+                *u = UnitBinding::Empty;
+            }
+        }
+    }
+
+    fn forget_render_state(&mut self) {
+        self.render_state = None;
+    }
+
+    fn bind_target(
+        &mut self,
+        gl: &WebGl2RenderingContext,
+        id: FramebufferId,
+        raw: Option<&web_sys::WebGlFramebuffer>,
+    ) {
+        if self.target != Some(id) {
+            gl.bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, raw);
+            self.target = Some(id);
+        }
+    }
+
+    fn set_viewport(&mut self, gl: &WebGl2RenderingContext, vp: Viewport) {
+        if self.viewport != Some(vp) {
+            gl.viewport(vp.x, vp.y, vp.width, vp.height);
+            self.viewport = Some(vp);
+        }
+    }
+
+    // Applies interned state `id`, diffing against the one applied last.
+    // False if `id` doesn't name a state.
+    fn apply_render_state(
+        &mut self,
+        gl: &WebGl2RenderingContext,
+        id: StateId,
+        states: &Pool<RenderState>,
+    ) -> bool {
+        if self.render_state == Some(id) {
+            return true;
+        }
+        let Some(rs) = states.get(id.0) else {
+            return false;
+        };
+        match self.render_state.and_then(|prev| states.get(prev.0)) {
+            Some(prev) => rs.apply_diff(prev, gl, self.reverse_z),
+            None => rs.apply(gl, self.reverse_z),
+        }
+        self.render_state = Some(id);
+        self.stats.states += 1;
+        true
+    }
+
+    fn use_program(
+        &mut self,
+        gl: &WebGl2RenderingContext,
+        id: ProgramId,
+        raw: &web_sys::WebGlProgram,
+    ) {
+        if self.program != Some(id) {
+            gl.use_program(Some(raw));
+            self.program = Some(id);
+            self.stats.programs += 1;
+        }
+    }
+
+    fn bind_vao(
+        &mut self,
+        gl: &WebGl2RenderingContext,
+        id: VertexArrayId,
+        raw: Option<&web_sys::WebGlVertexArrayObject>,
+    ) {
+        if self.vao != Some(id) {
+            gl.bind_vertex_array(raw);
+            self.vao = Some(id);
+            self.stats.vertex_arrays += 1;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Parameter groups
+// ---------------------------------------------------------------------------
+
+// Applies one group to the program in use through mapping `m`: changed plain
+// values, its textures (on the units the program assigned), its uniform
+// buffers (flushed, on the program's binding points). False if one of the
+// textures or buffers the program reads was destroyed (reported).
+#[allow(clippy::too_many_arguments)]
+fn apply_group(
+    gl: &WebGl2RenderingContext,
+    program: &mut ProgramObj,
+    m: usize,
+    group: &ParamGroupObj,
+    layout: &ParamLayoutObj,
+    textures: &Pool<TextureObj>,
+    samplers: &Pool<SamplerObj>,
+    uniform_buffers: &mut Pool<UniformBufferObj>,
+    bindings: &mut GlBindings,
+    stats: &mut FrameStats,
+    filter_float32: bool,
+) -> bool {
+    let mut complete = true;
+    for (i, f) in layout.plain.iter().enumerate() {
+        if program.upload_field(gl, m, i, f, group) {
+            stats.uniforms += 1;
+        }
+    }
+
+    for i in 0..layout.textures.len() {
+        let Some(unit) = program.mapping_at(m).textures[i] else {
+            continue;
+        };
+        let tex = group.textures[i];
+        if tex.is_null() {
+            // Unset: sample nothing rather than whatever an earlier draw left
+            // on this unit (perhaps a texture the target is drawing into).
+            if bindings.unbind_unit(gl, unit) {
+                stats.textures += 1;
+            }
+            continue;
+        }
+        match textures.get(tex.0) {
+            Some(obj) => {
+                if bindings.bind_texture(gl, unit, tex, obj) {
+                    stats.textures += 1;
+                }
+            }
+            None => {
+                report_stale(
+                    "texture",
+                    &format!("texture \"{}\"", layout.textures[i]),
+                    tex,
+                );
+                complete = false;
+                continue;
+            }
+        }
+        // The sampler goes with the texture: a NULL one unbinds whatever an
+        // earlier draw left on this unit, so the texture's own parameters apply.
+        let mut sid = group.samplers[i];
+        let raw = if sid.is_null() {
+            None
+        } else {
+            match samplers.get(sid.0) {
+                Some(s) => {
+                    // A 32F texture filtered linearly without
+                    // OES_texture_float_linear samples as black.
+                    if !filter_float32
+                        && s.desc.filters_linearly()
+                        && textures
+                            .get(tex.0)
+                            .is_some_and(|t| crate::float_targets::is_float32(t.internal.get()))
+                    {
+                        console::warn_once(&format!(
+                            "[luxel] texture \"{}\": a 32-bit float texture with a linear \
+                             sampler needs OES_texture_float_linear, which this device \
+                             doesn't have; it samples as black (use a nearest sampler)",
+                            layout.textures[i]
+                        ));
+                    }
+                    Some(&s.raw)
+                }
+                None => {
+                    report_stale(
+                        "sampler",
+                        &format!("texture \"{}\"", layout.textures[i]),
+                        sid,
+                    );
+                    sid = SamplerId::NULL;
+                    None
+                }
+            }
+        };
+        if bindings.bind_sampler(gl, unit, sid, raw) {
+            stats.samplers += 1;
+        }
+    }
+
+    for i in 0..layout.blocks.len() {
+        let Some(bi) = program.mapping_at(m).blocks[i] else {
+            continue;
+        };
+        let (ubo, range) = group.blocks[i];
+        if ubo.is_null() {
+            continue;
+        }
+        let Some(obj) = uniform_buffers.get_mut(ubo.0) else {
+            report_stale(
+                "uniform buffer",
+                &format!("block \"{}\"", layout.blocks[i]),
+                ubo,
+            );
+            complete = false;
+            continue;
+        };
+        // The UBO's bytes can be dirty while the binding is unchanged, so flush
+        // unconditionally (a no-op when clean).
+        obj.flush(gl);
+        let size = range.map_or(obj.byte_size(), |(_, s)| s as u32);
+        let point = program.block_point(bi, size);
+        if bindings.bind_block(gl, point, ubo, range, obj) {
+            stats.blocks += 1;
+        }
+    }
+    complete
+}
+
+// What's actually bound to each texture unit / uniform-buffer binding point.
+// These are *global* GL state, not program state: different programs (and
+// draws) put different textures on the same unit, so this is keyed by
+// unit/point. It survives program switches, so an unchanged binding isn't
+// re-issued after `useProgram`.
+//
+// Handles carry a generation, so a destroyed object (which GL unbinds) never
+// compares equal to whatever reuses its slot.
+//
+// Each unit's state is known exactly, or known to be unknown: an upload
+// binds its texture on the active unit behind the cache's back, and that
+// unit is then `Unknown` — not taken for empty, which left the uploaded
+// texture bound for a draw whose texture field is unset (sampled, or a
+// feedback loop if it was the draw's target). A unit holds at most one
+// texture, on one target: binding one of another target first unbinds the
+// old one, so nothing stale lingers on the other targets either.
+#[derive(Default)]
+struct GlBindings {
+    active_unit: Option<u32>,
+    units: Vec<UnitBinding>,
+    // What the units past `units` hold (Unknown once all were forgotten).
+    beyond: UnitBinding,
+    // None = unknown. Texture uploads don't touch these, so they survive
+    // `forget_active_unit`.
+    samplers: Vec<Option<SamplerId>>,
+    blocks: Vec<Option<BoundBlock>>,
+}
+
+// A buffer bound to a uniform-buffer point, with its sub-range (None = whole).
+type BoundBlock = (UniformBufferId, Option<(i32, i32)>);
+
+// What a texture unit holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum UnitBinding {
+    /// Nothing, on any target.
+    #[default]
+    Empty,
+    /// This texture on this target (GL enum), nothing on the others.
+    Bound(TextureId, u32),
+    /// Something bound behind the cache's back (an upload): any target.
+    Unknown,
+}
+
+const TEXTURE_TARGETS: [u32; 4] = [
+    WebGl2RenderingContext::TEXTURE_2D,
+    WebGl2RenderingContext::TEXTURE_CUBE_MAP,
+    WebGl2RenderingContext::TEXTURE_2D_ARRAY,
+    WebGl2RenderingContext::TEXTURE_3D,
+];
+
+impl GlBindings {
+    // True if it issued a bind.
+    fn bind_sampler(
+        &mut self,
+        gl: &WebGl2RenderingContext,
+        unit: u32,
+        id: SamplerId,
+        raw: Option<&web_sys::WebGlSampler>,
+    ) -> bool {
+        let idx = unit as usize;
+        if self.samplers.get(idx) == Some(&Some(id)) {
+            return false;
+        }
+        gl.bind_sampler(unit, raw);
+        if idx >= self.samplers.len() {
+            self.samplers.resize(idx + 1, None);
+        }
+        self.samplers[idx] = Some(id);
+        true
+    }
+
+    fn forget_active_unit(&mut self) {
+        match self.active_unit {
+            Some(u) => self.set_unit(u as usize, UnitBinding::Unknown),
+            None => {
+                self.units.fill(UnitBinding::Unknown);
+                self.beyond = UnitBinding::Unknown;
+            }
+        }
+    }
+
+    fn unit(&self, idx: usize) -> UnitBinding {
+        self.units.get(idx).copied().unwrap_or(self.beyond)
+    }
+
+    fn set_unit(&mut self, idx: usize, b: UnitBinding) {
+        if idx >= self.units.len() {
+            self.units.resize(idx + 1, self.beyond);
+        }
+        self.units[idx] = b;
+    }
+
+    fn activate(&mut self, gl: &WebGl2RenderingContext, unit: u32) {
+        if self.active_unit != Some(unit) {
+            gl.active_texture(WebGl2RenderingContext::TEXTURE0 + unit);
+            self.active_unit = Some(unit);
+        }
+    }
+
+    // True if it issued a bind.
+    fn bind_texture(
+        &mut self,
+        gl: &WebGl2RenderingContext,
+        unit: u32,
+        id: TextureId,
+        obj: &TextureObj,
+    ) -> bool {
+        let idx = unit as usize;
+        let target = obj.target_gl();
+        let held = self.unit(idx);
+        if held == UnitBinding::Bound(id, target) {
+            return false;
+        }
+        self.activate(gl, unit);
+        // One texture a unit: off the other targets first.
+        match held {
+            UnitBinding::Bound(_, old) if old != target => gl.bind_texture(old, None),
+            UnitBinding::Unknown => {
+                for t in TEXTURE_TARGETS {
+                    if t != target {
+                        gl.bind_texture(t, None);
+                    }
+                }
+            }
+            _ => {}
+        }
+        gl.bind_texture(target, Some(&obj.raw));
+        self.set_unit(idx, UnitBinding::Bound(id, target));
+        true
+    }
+
+    // Binds nothing to every target of `unit`; true if it did anything.
+    fn unbind_unit(&mut self, gl: &WebGl2RenderingContext, unit: u32) -> bool {
+        let idx = unit as usize;
+        match self.unit(idx) {
+            UnitBinding::Empty => return false,
+            UnitBinding::Bound(_, target) => {
+                self.activate(gl, unit);
+                gl.bind_texture(target, None);
+            }
+            UnitBinding::Unknown => {
+                self.activate(gl, unit);
+                for target in TEXTURE_TARGETS {
+                    gl.bind_texture(target, None);
+                }
+            }
+        }
+        self.set_unit(idx, UnitBinding::Empty);
+        true
+    }
+
+    // True if it issued a bind.
+    fn bind_block(
+        &mut self,
+        gl: &WebGl2RenderingContext,
+        point: u32,
+        id: UniformBufferId,
+        range: Option<(i32, i32)>,
+        obj: &UniformBufferObj,
+    ) -> bool {
+        let idx = point as usize;
+        if self.blocks.get(idx) == Some(&Some((id, range))) {
+            return false;
+        }
+        match range {
+            Some((offset, size)) => gl.bind_buffer_range_with_i32_and_i32(
+                WebGl2RenderingContext::UNIFORM_BUFFER,
+                point,
+                Some(&obj.raw),
+                offset,
+                size,
+            ),
+            None => gl.bind_buffer_base(
+                WebGl2RenderingContext::UNIFORM_BUFFER,
+                point,
+                Some(&obj.raw),
+            ),
+        }
+        if idx >= self.blocks.len() {
+            self.blocks.resize(idx + 1, None);
+        }
+        self.blocks[idx] = Some((id, range));
+        true
+    }
+}
+
+// A depth clear value as the app means it ("1 = far"), as GL needs it: under
+// reverse-Z far is 0.
+pub(crate) fn depth_clear_value(d: f32, reverse_z: bool) -> f32 {
+    if reverse_z { 1.0 - d } else { d }
+}

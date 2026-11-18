@@ -1,7 +1,7 @@
 # Review plan
 
-Every crate is covered: `rswebgl-foundation`, `rswebgl-ecs`, `rswebgl` (the core),
-`rswebgl-gltf`, `rswebgl-scene`, and the viewer example.
+Every crate is covered: `luxel-core`, `luxel-ecs`, `luxel-gl` (the core),
+`luxel-gltf`, `luxel`, and the viewer example.
 
 Two phases. **Phase 1** finds and fixes bugs; **phase 2**, after it, looks for
 what is missing or weak (API ergonomics, gaps against three.js / Bevy /
@@ -43,7 +43,7 @@ chunk.
 
 | # | Chunk | Files | ~lines |
 |---|-------|-------|--------|
-| 1 | Foundation and ECS | `rswebgl-foundation/src/*`, `rswebgl-ecs/src/*` | 2.2k |
+| 1 | Foundation and ECS | `luxel-core/src/*`, `luxel-ecs/src/*` | 2.2k |
 | 2 | Core: textures and targets | `texture.rs`, `sampler.rs`, `framebuffer.rs`, `renderbuffer.rs`, `pixel_unpack.rs`, `float_targets.rs`, `compressed_format.rs`, `limits.rs`, `extension.rs` | 4.3k |
 | 3 | Core: the draw path | `renderer.rs`, `pass.rs`, `render_state.rs`, `draw.rs`, `depth_range.rs`, `buffer.rs` | 2.8k |
 | 4 | Core: programs and parameters | `program.rs`, `shader_source.rs`, `param.rs`, `uniform_buffer.rs`, `vao.rs`, `vao_builder.rs`, `context.rs`, `context_loss.rs`, `ids.rs`, `undo.rs`, `error.rs` | 3.8k |

@@ -3,7 +3,7 @@
 //
 //   node scripts/build-npm.mjs && deno check scripts/typings-check.ts
 /// <reference lib="dom" />
-// @ts-types="../dist/npm/rswebgl.d.ts"
+// @ts-types="../dist/npm/luxel.d.ts"
 import init, {
   Context,
   type CameraOptions,
@@ -18,7 +18,7 @@ import init, {
   type ProgramId,
   Scene,
   type TextureId,
-} from "../dist/npm/rswebgl.js";
+} from "../dist/npm/luxel.js";
 
 export async function check(canvas: HTMLCanvasElement, ctx: Context, scene: Scene) {
   await init();

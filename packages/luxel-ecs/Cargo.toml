@@ -1,0 +1,8 @@
+[package]
+name = "luxel-ecs"
+version = "0.1.0"
+edition = "2024"
+description = "A small ECS for luxel scenes: generational entities, sparse-set component storage, change ticks"
+
+[dependencies]
+luxel-core = { path = "../luxel-core" }

@@ -1,10 +1,10 @@
-// The npm package through a bundler: `import … from "rswebgl"`. esbuild
-// doesn't follow the module's `new URL("rswebgl_bg.wasm", import.meta.url)`,
+// The npm package through a bundler: `import … from "@fairlybet/luxel"`. esbuild
+// doesn't follow the module's `new URL("luxel_bg.wasm", import.meta.url)`,
 // so the .wasm is imported here (its file loader copies it and gives its
 // URL) and handed to init. Vite and webpack 5 need neither.
-import init, { Context, ContextOptions, Scene, loadModel } from "rswebgl";
-import { OrbitControls } from "rswebgl/orbit";
-import wasmUrl from "rswebgl/rswebgl_bg.wasm";
+import init, { Context, ContextOptions, Scene, loadModel } from "@fairlybet/luxel";
+import { OrbitControls } from "@fairlybet/luxel/orbit";
+import wasmUrl from "@fairlybet/luxel/luxel_bg.wasm";
 
 const status = /** @type {HTMLElement} */ (document.getElementById("status"));
 await init({ module_or_path: wasmUrl });

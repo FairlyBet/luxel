@@ -1,0 +1,14 @@
+[package]
+name = "luxel-core"
+version = "0.1.0"
+edition = "2024"
+description = "Shared data layer for luxel and its ECS: generational handles, layouts, columns, change tracking"
+
+[dependencies]
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+
+# Browser tests: `wasm-pack test --headless --chrome packages/luxel-core`.
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+wasm-bindgen = { workspace = true }

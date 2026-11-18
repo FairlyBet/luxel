@@ -44,7 +44,7 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 - [x] viewer: redundant `invalidate()` after setters; `coarse` ×4;
   profiling.js hand-rolls gpuInfo, leaves `setSamples(0)`, extra
   whenReady; stale MSAA comment; HDR checkbox not synced; orbit hand-rolled
-  beside `rswebgl/orbit`. — invalidate() calls and helper gone, one `coarse`, gpuInfo / resetGlState in profiling.js, samples restored, HDR box synced, comment fixed; the hand-rolled orbit stays (the viewer's pkg has no orbit.js)
+  beside `luxel/orbit`. — invalidate() calls and helper gone, one `coarse`, gpuInfo / resetGlState in profiling.js, samples restored, HDR box synced, comment fixed; the hand-rolled orbit stays (the viewer's pkg has no orbit.js)
 
 ## Foundation, ECS, glTF
 

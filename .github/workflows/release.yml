@@ -1,0 +1,40 @@
+# On a version tag (v0.1.0, …): builds the npm package (scripts/build-npm.mjs)
+# and attaches its tarball to a GitHub release. A JS project installs it with
+#   npm install https://github.com/<owner>/<repo>/releases/download/v0.1.0/fairlybet-luxel-0.1.0.tgz
+# Rust projects need no artifact: they depend on the tag with `git = …, tag = …`.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tag matches the crate version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have=$(grep -m1 '^version' packages/luxel/Cargo.toml | cut -d'"' -f2)
+          test "$want" = "$have" || { echo "tag $want, crate $have"; exit 1; }
+      - name: Build the npm package
+        run: node scripts/build-npm.mjs
+      - name: Pack
+        run: npm pack ./dist/npm
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.tgz"
+          generate_release_notes: true

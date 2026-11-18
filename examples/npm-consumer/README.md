@@ -1,6 +1,6 @@
 # npm-consumer
 
-The `rswebgl` npm package used the way an app would: installed as a
+The `@fairlybet/luxel` npm package used the way an app would: installed as a
 dependency and bundled (esbuild here — the strictest about `.wasm`; Vite and
 webpack 5 need no extra setup).
 

@@ -1,7 +1,7 @@
 # js-scene
 
 A glTF model in a scene, driven from plain JS through the `Scene` facade of
-`rswebgl-scene`: entities are plain numbers, one `scene.renderFrame(camera)`
+`luxel`: entities are plain numbers, one `scene.renderFrame(camera)`
 per frame does transforms, frustum culling and the draw list. The model's
 glTF nodes become entities you can find by name, move and hide.
 
@@ -17,7 +17,7 @@ context loss (restored a second later: the scene rebuilds itself), **M** switche
 the shading model (OpenPBR ↔ the glTF reference), **T** the tone mapper.
 
 ```bash
-wasm-pack build packages/rswebgl-scene --target web --weak-refs --out-dir ../../examples/js-scene/pkg
+wasm-pack build packages/luxel --target web --weak-refs --out-dir ../../examples/js-scene/pkg
 node examples/js-scene/serve.mjs
 ```
 

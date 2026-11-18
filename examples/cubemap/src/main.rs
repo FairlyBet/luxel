@@ -15,15 +15,15 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-use rswebgl::context::{Context, ContextOptions};
-use rswebgl::draw::{DrawCommand, DrawMode};
-use rswebgl::param::ParamLayoutBuilder;
-use rswebgl::pass::{Batch, Pass};
-use rswebgl::render_state::RenderState;
-use rswebgl::texture::{
+use luxel_gl::context::{Context, ContextOptions};
+use luxel_gl::draw::{DrawCommand, DrawMode};
+use luxel_gl::param::ParamLayoutBuilder;
+use luxel_gl::pass::{Batch, Pass};
+use luxel_gl::render_state::RenderState;
+use luxel_gl::texture::{
     CubeMapFace, TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget,
 };
-use rswebgl::uniform_buffer::UniformType;
+use luxel_gl::uniform_buffer::UniformType;
 
 const CUBE_SIZE: i32 = 512;
 const FOV_DEG: f32 = 60.0;

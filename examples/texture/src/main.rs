@@ -5,14 +5,14 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-use rswebgl::context::{Context, ContextOptions};
-use rswebgl::draw::{DrawCommand, DrawMode, IndexType};
-use rswebgl::framebuffer::ClearMask;
-use rswebgl::param::ParamLayoutBuilder;
-use rswebgl::pass::{Batch, Pass};
-use rswebgl::render_state::RenderState;
-use rswebgl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget};
-use rswebgl::vao_builder::{AttrKind, VaoBuilder};
+use luxel_gl::context::{Context, ContextOptions};
+use luxel_gl::draw::{DrawCommand, DrawMode, IndexType};
+use luxel_gl::framebuffer::ClearMask;
+use luxel_gl::param::ParamLayoutBuilder;
+use luxel_gl::pass::{Batch, Pass};
+use luxel_gl::render_state::RenderState;
+use luxel_gl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget};
+use luxel_gl::vao_builder::{AttrKind, VaoBuilder};
 
 const VERT: &str = r#"#version 300 es
 precision highp float;

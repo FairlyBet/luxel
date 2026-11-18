@@ -1,0 +1,56 @@
+[package]
+name = "luxel-gltf"
+version = "0.1.0"
+edition = "2024"
+autotests = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+luxel-gl = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = "0.4"
+js-sys = { workspace = true }
+glam = { workspace = true }
+tracing = { workspace = true }
+base64 = "0.22"
+# The JSON is patched before the gltf crate validates it (KHR_texture_basisu
+# sources, KHR_draco_mesh_compression accessors); extension values are read.
+serde_json = "1"
+
+# No `import`/`image` default features: those pull `std::fs` and the heavy
+# `image` crate. We resolve buffers/images ourselves (async fetch + the browser
+# decoder) and only need the parser + the `utils` accessor readers.
+gltf = { version = "1.4", default-features = false, features = [
+    "utils",
+    "names",
+    "extras",
+    "extensions",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_unlit",
+    "KHR_materials_ior",
+    "KHR_materials_specular",
+    "KHR_materials_transmission",
+    "KHR_materials_volume",
+    "KHR_lights_punctual",
+] }
+bevy_mikktspace = "1"
+
+[dependencies.web-sys]
+workspace = true
+features = [
+    "HtmlImageElement",
+    "Location",
+    "Response",
+    "Url",
+    "Window",
+]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+web-sys = { workspace = true, features = ["Document", "HtmlCanvasElement"] }
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

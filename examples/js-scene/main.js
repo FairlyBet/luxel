@@ -7,7 +7,7 @@
 //
 // Build the bundle first (see README.md), then serve this folder.
 
-import init, { Context, ContextOptions, Scene, loadModel } from "./pkg/rswebgl_scene.js";
+import init, { Context, ContextOptions, Scene, loadModel } from "./pkg/luxel.js";
 
 const MODEL_URL =
   "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/main/2.0/DamagedHelmet/glTF-Binary/DamagedHelmet.glb";

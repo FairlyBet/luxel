@@ -12,18 +12,16 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-use rswebgl::context::{Context, ContextOptions};
-use rswebgl::draw::{DrawCommand, DrawMode, IndexType};
-use rswebgl::framebuffer::ClearMask;
-use rswebgl::param::ParamLayoutBuilder;
-use rswebgl::pass::Pass;
-use rswebgl::render_state::{CullFace, RenderState};
-use rswebgl::uniform_buffer::UniformType;
-use rswebgl::vao_builder::{AttrKind, VaoBuilder};
-use rswebgl_ecs::{Entity, World};
-use rswebgl_scene::{
-    Bounds, Camera, MeshRenderer, SceneRenderer, Transform, TransformSystem, set_parent,
-};
+use luxel::{Bounds, Camera, MeshRenderer, SceneRenderer, Transform, TransformSystem, set_parent};
+use luxel_ecs::{Entity, World};
+use luxel_gl::context::{Context, ContextOptions};
+use luxel_gl::draw::{DrawCommand, DrawMode, IndexType};
+use luxel_gl::framebuffer::ClearMask;
+use luxel_gl::param::ParamLayoutBuilder;
+use luxel_gl::pass::Pass;
+use luxel_gl::render_state::{CullFace, RenderState};
+use luxel_gl::uniform_buffer::UniformType;
+use luxel_gl::vao_builder::{AttrKind, VaoBuilder};
 
 // Matrices come from the scene: the frame block (camera) and u_model (object).
 const VERT: &str = r#"#version 300 es

@@ -1,0 +1,909 @@
+//! Materials for JS: find them in a model, read and change their properties
+//! by glTF name, give one part a variant of its own (`cloneMaterial`). A
+//! material is a number — its parameter group.
+//!
+//! ```js
+//! const gold = scene.findMaterial(ring, "Gold");
+//! scene.setMaterialProperty(gold, "baseColorFactor", [1, 0.78, 0.34, 1]);
+//! scene.setMaterialProperty(gold, "roughnessFactor", 0.2);
+//!
+//! // One stone in ruby, the others unchanged:
+//! const stone = scene.findByName(ring, "Stone_3");
+//! const ruby = scene.cloneMaterial(scene.meshMaterial(stone));
+//! scene.setMaterialProperty(ruby, "attenuationColor", [0.9, 0.05, 0.1]);
+//! scene.setMaterial(stone, ruby);
+//! ```
+
+use luxel_ecs::Entity;
+use luxel_gl::console;
+use luxel_gl::error::Error;
+use luxel_gl::ids::{ParamGroupId, SamplerId, TextureId, VertexArrayId};
+use luxel_gl::render_state::FrontFace;
+use luxel_gl::texture::{
+    TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget, TextureWrap,
+};
+use luxel_gltf::{
+    EXTERNAL_TEXTURE, MAP_COUNT, MAP_NAMES, MAP_UNIFORMS, Material, Model, default_material,
+    render_state_for,
+};
+use wasm_bindgen::prelude::*;
+
+use super::{Scene, openpbr, options};
+use crate::hierarchy::descendants;
+use crate::lighting::ShadowCaster;
+use crate::model::Primitive;
+use crate::pbr::PbrKey;
+use crate::render::MeshRenderer;
+
+/// What the scene knows about one material: its data (mirrored in the
+/// group's uniforms) and whether the scene made it (`cloneMaterial`) and so
+/// destroys it.
+pub(crate) struct MaterialRecord {
+    pub(crate) material: Material,
+    pub(crate) cloned: bool,
+    // The texture of each map (`MAP_NAMES` order), NULL for none.
+    pub(crate) maps: [TextureId; MAP_COUNT],
+    // OpenPBR fuzz_color as last set: with no fuzz (weight 0) the stored
+    // sheen color can't carry it.
+    pub(crate) fuzz_color: [f32; 3],
+}
+
+#[wasm_bindgen]
+impl Scene {
+    /// The distinct materials drawn at or under `root`, in mesh order.
+    #[wasm_bindgen(unchecked_return_type = "Handles<ParamGroupId>")]
+    pub fn materials(&self, root: Entity) -> Vec<u32> {
+        let mut out: Vec<u32> = Vec::new();
+        for e in descendants(&self.world, root) {
+            if let Some(m) = self.world.get::<MeshRenderer>(e) {
+                let id = m.material.to_raw();
+                if !m.material.is_null() && !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
+    /// The glTF name of a material, if it has one.
+    #[wasm_bindgen(js_name = materialName)]
+    pub fn material_name(&self, material: ParamGroupId) -> Option<String> {
+        self.materials.get(&material)?.material.name()
+    }
+
+    /// The first material named `name` drawn at or under `root`, or `0`.
+    #[wasm_bindgen(js_name = findMaterial)]
+    pub fn find_material(&self, root: Entity, name: &str) -> ParamGroupId {
+        self.materials(root)
+            .into_iter()
+            .map(ParamGroupId::from_raw)
+            .find(|g| self.material_name(*g).as_deref() == Some(name))
+            .unwrap_or(ParamGroupId::NULL)
+    }
+
+    /// The material `e` draws with — or, for an entity that doesn't draw (a
+    /// glTF node), the first one under it. `0` if none.
+    #[wasm_bindgen(js_name = meshMaterial)]
+    pub fn mesh_material(&self, e: Entity) -> ParamGroupId {
+        descendants(&self.world, e)
+            .into_iter()
+            .find_map(|d| self.world.get::<MeshRenderer>(d).map(|m| m.material))
+            .unwrap_or(ParamGroupId::NULL)
+    }
+
+    /// Draws `e` and every mesh under it with `material` (a material of the
+    /// scene's, or a group of your own for meshes with your own shader).
+    #[wasm_bindgen(js_name = setMaterial)]
+    pub fn set_material(&mut self, e: Entity, material: ParamGroupId) {
+        self.invalidate();
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
+        if !self.world.is_alive(e) {
+            super::dead("setMaterial");
+            return;
+        }
+        for d in descendants(&self.world, e) {
+            if let Some(mut m) = self.world.get_mut::<MeshRenderer>(d) {
+                m.material = material;
+            }
+            self.apply_material(d);
+        }
+    }
+
+    /// KHR_materials_variants: the material variants of the model at `root`
+    /// (what `addModel` returned), by name; empty without the extension.
+    #[wasm_bindgen(js_name = materialVariants)]
+    pub fn material_variants(&self, root: Entity) -> Vec<String> {
+        self.model(root)
+            .map_or_else(Vec::new, |m| m.material_variants().to_vec())
+    }
+
+    /// Switches the model at `root` to material variant `name`
+    /// (`materialVariants`), or back to its own materials (undefined): each
+    /// mesh takes the material the file maps for that variant, its own where
+    /// none. Meshes given another material with `setMaterial` switch too.
+    /// Throws for an unknown root or name.
+    #[wasm_bindgen(js_name = setMaterialVariant)]
+    pub fn set_material_variant(
+        &mut self,
+        root: Entity,
+        name: Option<String>,
+    ) -> Result<(), Error> {
+        self.invalidate();
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
+        let model = self
+            .model(root)
+            .ok_or("setMaterialVariant: not the root of a model")?;
+        let variant = match &name {
+            None => None,
+            Some(n) => Some(
+                model
+                    .material_variants()
+                    .iter()
+                    .position(|v| v == n)
+                    .ok_or_else(|| Error::from(format!("setMaterialVariant: no variant \"{n}\"")))?
+                    as u32,
+            ),
+        };
+        match &name {
+            Some(n) => {
+                self.active_variants.insert(root, n.clone());
+            }
+            None => {
+                self.active_variants.remove(&root);
+            }
+        }
+        let model = self.model(root).expect("checked above");
+        let default = default_material();
+        let groups = model.material_groups();
+        let mut changes = Vec::new();
+        // Its own meshes: a model hung under it has its own items.
+        for e in self.own_entities(root) {
+            let Some(prim) = self.world.get::<Primitive>(e) else {
+                continue;
+            };
+            let Some(item) = model.items().get(prim.item as usize) else {
+                continue;
+            };
+            let index = variant.map_or(item.material_index(), |v| item.variant_material_index(v));
+            let (group, material) = match usize::try_from(index)
+                .ok()
+                .filter(|&i| i < model.materials().len())
+            {
+                Some(i) => (groups[i], &model.materials()[i]),
+                None => (groups[groups.len() - 1], &default),
+            };
+            // Blending and culling follow the material; mirroring the node.
+            let mirrored = item.render_state().front_face == FrontFace::Cw;
+            let state = render_state_for(material, mirrored);
+            changes.push((e, group, self.ctx.render_state(&state), state.blend));
+        }
+        for (e, group, state, blend) in changes {
+            if let Some(mut m) = self.world.get_mut::<MeshRenderer>(e) {
+                m.material = group;
+                m.state = state;
+                m.transparent = blend;
+            }
+            self.update_variant(e);
+        }
+        Ok(())
+    }
+
+    /// A material property by its glTF name (`baseColorFactor`,
+    /// `metallicFactor`, `roughnessFactor`, `emissiveFactor`,
+    /// `emissiveStrength`, `normalScale`, `occlusionStrength`, `alphaCutoff`,
+    /// `ior`, `specularFactor`, `specularColorFactor`, `transmissionFactor`,
+    /// `thicknessFactor`, `attenuationColor`, `attenuationDistance`,
+    /// `clearcoatFactor`, `clearcoatRoughnessFactor`, `dispersion`), or
+    /// undefined for an unknown material or name.
+    #[wasm_bindgen(js_name = materialProperty)]
+    pub fn material_property(&self, material: ParamGroupId, name: &str) -> Option<Vec<f32>> {
+        let record = self.materials.get(&material)?;
+        openpbr::get(&record.material, name, record.fuzz_color)
+            .or_else(|| record.material.property(name))
+    }
+
+    /// Sets a material property (names as for `materialProperty`): a number,
+    /// or 3 / 4 numbers for colors. Every mesh drawn with the material sees
+    /// it; turning transmission, volume, clearcoat or dispersion on or off
+    /// switches their shader variant. Throws for an unknown material,
+    /// property, or wrong number of values.
+    #[wasm_bindgen(js_name = setMaterialProperty)]
+    pub fn set_material_property(
+        &mut self,
+        material: ParamGroupId,
+        name: &str,
+        #[wasm_bindgen(unchecked_param_type = "number | ArrayLike<number>")] value: JsValue,
+    ) -> Result<(), Error> {
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            // Frozen shadows don't see this change on their own.
+            self.renderer.invalidate_shadows();
+            let values = options::numbers(&value)
+                .ok_or_else(|| Error::from(format!("\"{name}\" takes a number or numbers")))?;
+            // An OpenPBR name: the glTF-side properties that carry it.
+            let record = self
+                .materials
+                .get_mut(&material)
+                .ok_or("setMaterialProperty: not a material of this scene")?;
+            if name == "fuzz_color" && values.len() == 3 {
+                record.fuzz_color = [values[0], values[1], values[2]];
+            }
+            if let Some(writes) = openpbr::set(&record.material, name, &values, record.fuzz_color) {
+                for (prop, v) in writes.map_err(Error::from)? {
+                    self.set_material_values(material, prop, &v)?;
+                }
+                return Ok(());
+            }
+            self.set_material_values(material, name, &values)
+        })()
+        .map_err(|e| e.in_op("setMaterialProperty"))
+    }
+
+    /// What a material's parameters mean to the OpenPBR model: "gltf" (as
+    /// loaded: glTF's meaning, converted to OpenPBR's where it converts and
+    /// kept where OpenPBR can't say it — shaders/lib/openpbr_gltf.glsl) or
+    /// "openpbr" (the OpenPBR names mean what the OpenPBR spec says:
+    /// specular_color tints the reflection and the metal's edge,
+    /// specular_weight scales the metal and the refraction, the base's IOR
+    /// is relative to the coat, the anisotropy is OpenPBR's, transmission
+    /// isn't tinted by the base color). Stored values stay as they are;
+    /// the glTF reference model reads every material as glTF. Throws for an
+    /// unknown material or name.
+    #[wasm_bindgen(js_name = setMaterialSemantics)]
+    pub fn set_material_semantics(
+        &mut self,
+        material: ParamGroupId,
+        semantics: &str,
+    ) -> Result<(), Error> {
+        self.invalidate();
+        let native = match semantics {
+            "openpbr" => true,
+            "gltf" => false,
+            other => {
+                return Err(
+                    format!("setMaterialSemantics: \"{other}\" isn't gltf or openpbr").into(),
+                );
+            }
+        };
+        let record = self
+            .materials
+            .get_mut(&material)
+            .ok_or("setMaterialSemantics: not a material of this scene")?;
+        if record.material.openpbr_native() != native {
+            record.material.set_openpbr_native(native);
+            self.update_variants_of(material);
+        }
+        Ok(())
+    }
+
+    /// "gltf" or "openpbr" (see `setMaterialSemantics`); undefined for an
+    /// unknown material.
+    #[wasm_bindgen(js_name = materialSemantics)]
+    pub fn material_semantics(&self, material: ParamGroupId) -> Option<String> {
+        let record = self.materials.get(&material)?;
+        Some(
+            if record.material.openpbr_native() {
+                "openpbr"
+            } else {
+                "gltf"
+            }
+            .to_string(),
+        )
+    }
+
+    /// A copy of `material` the scene owns: change it without touching the
+    /// meshes that share the original. Freed with `destroyMaterial` or the
+    /// scene. Its textures are the original model's: keep that model.
+    #[wasm_bindgen(js_name = cloneMaterial)]
+    pub fn clone_material(&mut self, material: ParamGroupId) -> Result<ParamGroupId, Error> {
+        self.invalidate();
+        let data = self
+            .materials
+            .get(&material)
+            .ok_or("cloneMaterial: not a material of this scene")?
+            .material
+            .clone();
+        let maps = self.materials[&material].maps;
+        let fuzz_color = self.materials[&material].fuzz_color;
+        let copy = self.ctx.copy_param_group(material)?;
+        self.materials.insert(
+            copy,
+            MaterialRecord {
+                material: data,
+                cloned: true,
+                maps,
+                fuzz_color,
+            },
+        );
+        Ok(copy)
+    }
+
+    /// Frees a material made by `cloneMaterial`; meshes still drawn with it
+    /// stop drawing (stale material), so `setMaterial` them first.
+    #[wasm_bindgen(js_name = destroyMaterial)]
+    pub fn destroy_material(&mut self, material: ParamGroupId) {
+        self.invalidate();
+        match self.materials.get(&material) {
+            Some(r) if r.cloned => {
+                self.materials.remove(&material);
+                self.ctx.destroy_param_group(material);
+            }
+            Some(_) => console::error_once(
+                "[luxel] destroyMaterial: a model's own material goes with the model; \
+                 ignored",
+            ),
+            None => console::error_once(
+                "[luxel] destroyMaterial: not a material of this scene; ignored",
+            ),
+        }
+    }
+
+    /// Loads an image (PNG, JPEG, WebP, … — whatever the browser decodes)
+    /// into a texture the scene owns, for `setMaterialTexture`. Resolves with
+    /// the texture once it's decoded; rejects if the image can't be loaded
+    /// (the texture is freed then). See `TextureOptions` for color space,
+    /// wrapping and mipmaps; throws on bad options. After a context loss the
+    /// scene loads it again (a new handle, in the same materials).
+    #[wasm_bindgen(js_name = loadTexture)]
+    #[wasm_bindgen(unchecked_return_type = "Promise<TextureId>")]
+    pub fn load_texture(
+        &mut self,
+        url: &str,
+        #[wasm_bindgen(unchecked_param_type = "TextureOptions | undefined")] opts: Option<JsValue>,
+    ) -> Result<js_sys::Promise, Error> {
+        (|| -> Result<js_sys::Promise, Error> {
+            self.invalidate();
+            let opts = opts.unwrap_or(JsValue::UNDEFINED);
+            self.sync_context();
+            let spec = TextureSpec::parse(url, &opts)?;
+            let mut result = Ok(TextureId::NULL);
+            let promise = js_sys::Promise::new(&mut |resolve, reject| {
+                let (ctx, url) = (self.ctx.clone(), spec.url.clone());
+                let on_load = move |tex: TextureId| -> js_sys::Function {
+                    Closure::once_into_js(move |w: f64, _h: f64| {
+                        if w > 0.0 {
+                            let _ = resolve.call1(&JsValue::NULL, &tex.to_raw().into());
+                        } else {
+                            if ctx.texture_is_valid(tex) {
+                                ctx.destroy_texture(tex);
+                            }
+                            let err = js_sys::Error::new(&format!("loadTexture: can't load {url}"));
+                            let _ = reject.call1(&JsValue::NULL, &err);
+                        }
+                    })
+                    .unchecked_into()
+                };
+                result = spec.start(&self.ctx, on_load);
+            });
+            let tex = result?;
+            self.textures.push(LoadedTexture { id: tex, spec });
+            Ok(promise)
+        })()
+        .map_err(|e| e.in_op("loadTexture"))
+    }
+
+    /// Frees a texture made by `loadTexture`. Materials still using it stop
+    /// drawing (reported): set another texture, or none, first.
+    #[wasm_bindgen(js_name = destroyTexture)]
+    pub fn destroy_texture(&mut self, texture: TextureId) {
+        self.invalidate();
+        let texture = self.current_texture(texture);
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
+        match self.textures.iter().position(|t| t.id == texture) {
+            Some(i) => {
+                self.textures.swap_remove(i);
+                if self.ctx.texture_is_valid(texture) {
+                    self.ctx.destroy_texture(texture);
+                }
+            }
+            None => console::error_once(
+                "[luxel] destroyTexture: not a texture loaded by this scene; ignored",
+            ),
+        }
+    }
+
+    /// Sets one of a material's maps, by glTF name — the core
+    /// `baseColorTexture`, `metallicRoughnessTexture`, `normalTexture`,
+    /// `occlusionTexture`, `emissiveTexture`, and the extensions'
+    /// `clearcoatTexture` (R), `clearcoatRoughnessTexture` (G),
+    /// `clearcoatNormalTexture`, `transmissionTexture` (R), `thicknessTexture`
+    /// (G), `specularTexture` (A), `specularColorTexture`, `sheenColorTexture`,
+    /// `sheenRoughnessTexture` (A), `iridescenceTexture` (R),
+    /// `iridescenceThicknessTexture` (G), `anisotropyTexture` (RG direction, B
+    /// strength) — to `texture` (any texture of this context: `loadTexture`'s,
+    /// or your own), or removes it with `0`. A map multiplies its factor, and an
+    /// extension's map counts only while its factor is on. Every mesh drawn
+    /// with the material sees it; adding or removing a map switches their
+    /// shader variant. Colors (base, emissive, specular, sheen) want an sRGB
+    /// texture, the rest linear. Throws for an unknown material or map.
+    #[wasm_bindgen(js_name = setMaterialTexture)]
+    pub fn set_material_texture(
+        &mut self,
+        material: ParamGroupId,
+        map: &str,
+        texture: TextureId,
+        #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: Option<
+            JsValue,
+        >,
+    ) -> Result<(), Error> {
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            let opts = opts.unwrap_or(JsValue::UNDEFINED);
+            self.sync_context();
+            let texture = self.current_texture(texture);
+            // Frozen shadows don't see this change on their own.
+            self.renderer.invalidate_shadows();
+            let slot = MAP_NAMES
+                .iter()
+                .position(|&n| n == map)
+                .ok_or_else(|| Error::from(format!("setMaterialTexture: no map \"{map}\"")))?;
+            let uv = options::u32_or(&opts, "texCoord", 0)?;
+            if uv > 1 {
+                return Err("setMaterialTexture: texCoord must be 0 or 1".into());
+            }
+            let [ox, oy] = options::vec2_or(&opts, "offset", [0.0, 0.0])?;
+            let [sx, sy] = options::vec2_or(&opts, "scale", [1.0, 1.0])?;
+            let transform = [ox, oy, options::f32_or(&opts, "rotation", 0.0)?, sx, sy];
+            let record = self
+                .materials
+                .get_mut(&material)
+                .ok_or("setMaterialTexture: not a material of this scene")?;
+            let index = if texture.is_null() {
+                -1
+            } else {
+                EXTERNAL_TEXTURE
+            };
+            record.material.set_map(slot, index, uv);
+            record.material.set_uv_transform(slot, transform);
+            self.ctx.param_set_floats_by_name(
+                material,
+                luxel_gltf::MAP_SLOTS[slot].transform,
+                &luxel_gltf::uv_matrix(transform),
+            );
+            record.maps[slot] = texture;
+            let uniform = MAP_UNIFORMS[slot];
+            self.ctx
+                .param_set_texture_by_name(material, uniform, texture);
+            // The texture's own sampling parameters (`loadTexture`'s wrap / filter).
+            self.ctx
+                .param_set_sampler_by_name(material, uniform, SamplerId::NULL);
+            if slot == 0 {
+                self.ctx.param_set_ints_by_name(
+                    material,
+                    "u_has_base_color_tex",
+                    &[!texture.is_null() as i32],
+                );
+            }
+            self.update_variants_of(material);
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setMaterialTexture"))
+    }
+
+    /// The texture of one of a material's maps (names as for
+    /// `setMaterialTexture`), or `0` for none.
+    #[wasm_bindgen(js_name = materialTexture)]
+    pub fn material_texture(&self, material: ParamGroupId, map: &str) -> TextureId {
+        let slot = MAP_NAMES.iter().position(|&n| n == map);
+        match (slot, self.materials.get(&material)) {
+            (Some(slot), Some(r)) => r.maps[slot],
+            _ => TextureId::NULL,
+        }
+    }
+
+    /// Built-in PBR shader variants compiled so far.
+    #[wasm_bindgen(js_name = shaderVariantCount)]
+    pub fn shader_variant_count(&self) -> usize {
+        self.pbr.len()
+    }
+}
+
+impl Scene {
+    /// `setMaterialProperty` from Rust.
+    pub fn set_material_values(
+        &mut self,
+        material: ParamGroupId,
+        name: &str,
+        values: &[f32],
+    ) -> Result<(), Error> {
+        self.invalidate();
+        let record = self
+            .materials
+            .get_mut(&material)
+            .ok_or("setMaterialProperty: not a material of this scene")?;
+        record.material.set_property(name, values)?;
+        record.material.write_property(&self.ctx, material, name);
+        // A factor crossing zero can change the shader variant.
+        self.update_variants_of(material);
+        Ok(())
+    }
+
+    // Every mesh drawn with `material` follows its variant.
+    fn update_variants_of(&mut self, material: ParamGroupId) {
+        let users: Vec<Entity> = self
+            .world
+            .storage::<MeshRenderer>()
+            .map(|meshes| {
+                meshes
+                    .iter()
+                    .filter(|(_, m)| m.material == material)
+                    .map(|(e, _)| e)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for e in users {
+            self.update_variant(e);
+        }
+    }
+
+    pub(super) fn register_materials(&mut self, model: &Model) {
+        let default = default_material();
+        let data = model.materials().iter().chain(std::iter::once(&default));
+        for (&group, material) in model.material_groups().iter().zip(data) {
+            let maps = std::array::from_fn(|slot| {
+                material
+                    .map(slot)
+                    .and_then(|(t, _)| usize::try_from(t).ok())
+                    .map_or(TextureId::NULL, |t| model.texture(t))
+            });
+            self.materials.insert(
+                group,
+                MaterialRecord {
+                    material: material.clone(),
+                    cloned: false,
+                    maps,
+                    fuzz_color: [1.0; 3],
+                },
+            );
+        }
+    }
+
+    // Whether and with what PBR mesh `e` casts shadows: opaque and
+    // alpha-masked materials do, with their depth-only variant; blended and
+    // transmissive ones don't (light goes through them). A mesh with a shader
+    // of the app's is left as the app set it.
+    pub(super) fn refresh_shadow_caster(&mut self, e: Entity) {
+        let Some(mesh) = self.world.get::<MeshRenderer>(e).copied() else {
+            return;
+        };
+        if !self.pbr.is_pbr(mesh.program) {
+            return;
+        }
+        let attributes = self.world.get::<Primitive>(e).map_or(0, |p| p.attributes);
+        let material = self
+            .materials
+            .get(&mesh.material)
+            .map_or_else(luxel_gltf::default_material, |r| r.material.clone());
+        let casts = !mesh.transparent
+            && material.transmission() <= 0.0
+            && material.alpha_mode() != luxel_gltf::AlphaMode::Blend;
+        if !casts {
+            self.world.remove::<ShadowCaster>(e);
+            return;
+        }
+        match self
+            .pbr
+            .shadow_program(&self.ctx, PbrKey::new(attributes, &material))
+        {
+            Ok(program) => {
+                self.world.insert(e, ShadowCaster { program });
+            }
+            Err(err) => console::error_once(&format!(
+                "[luxel] a shadow shader variant failed to build: {err}"
+            )),
+        }
+    }
+
+    /// The entities of the model at `root` (at or under it, not inside
+    /// another model hung under it).
+    pub(super) fn own_entities(&self, root: Entity) -> Vec<Entity> {
+        descendants(&self.world, root)
+            .into_iter()
+            .filter(|&e| self.model_root_of(e) == Some(root))
+            .collect()
+    }
+
+    // The model mesh `e` belongs to: the nearest ancestor (or itself) that
+    // is a model root.
+    pub(super) fn model_root_of(&self, mut e: Entity) -> Option<Entity> {
+        for _ in 0..=self.world.len() {
+            if self.model_roots.contains_key(&e) {
+                return Some(e);
+            }
+            e = self.world.get::<crate::transform::Parent>(e)?.0;
+        }
+        None
+    }
+
+    // Mesh `e` takes on the material it draws with now: its render state
+    // (blending, culling; mirroring from its node), the vertex array it
+    // needs and its shader variant. For a group without a record (the app's
+    // own) only what the shader variant follows.
+    pub(super) fn apply_material(&mut self, e: Entity) {
+        if let (Some(mesh), Some(prim)) = (
+            self.world.get::<MeshRenderer>(e).copied(),
+            self.world.get::<Primitive>(e).copied(),
+        ) && let Some(record) = self.materials.get(&mesh.material)
+        {
+            let mirrored = self
+                .model_root_of(e)
+                .and_then(|r| self.model(r))
+                .and_then(|m| m.items().get(prim.item as usize))
+                .is_some_and(|i| i.render_state().front_face == FrontFace::Cw);
+            let state = render_state_for(&record.material, mirrored);
+            let id = self.ctx.render_state(&state);
+            if (mesh.state, mesh.transparent) != (id, state.blend)
+                && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
+            {
+                m.state = id;
+                m.transparent = state.blend;
+            }
+        }
+        self.update_variant(e);
+    }
+
+    // The vertex array mesh `e` needs for its material (its TEXCOORD sets,
+    // tangents for its normal map) and its `ATTR_*` bits: a variant's, built
+    // at load, else the item's own. None for a mesh not from a model.
+    pub(super) fn wanted_vertex_array(&self, e: Entity) -> Option<(VertexArrayId, u32)> {
+        let mesh = self.world.get::<MeshRenderer>(e)?;
+        let prim = self.world.get::<Primitive>(e)?;
+        let model = self.model(self.model_root_of(e)?)?;
+        let item = model.items().get(prim.item as usize)?;
+        let own = (item.vao(), item.attributes());
+        let Some(record) = self.materials.get(&mesh.material) else {
+            return Some(own);
+        };
+        Some(
+            model
+                .vertex_array_for(prim.item as usize, record.material.vertex_key())
+                .unwrap_or(own),
+        )
+    }
+
+    // Draws `e` with `vao` / `attributes` (the shader variant then follows).
+    pub(super) fn set_vertex_array(
+        world: &mut luxel_ecs::World,
+        e: Entity,
+        vao: VertexArrayId,
+        attributes: u32,
+    ) {
+        if let Some(mut m) = world.get_mut::<MeshRenderer>(e)
+            && m.vao != vao
+        {
+            m.vao = vao;
+        }
+        if let Some(mut p) = world.get_mut::<Primitive>(e)
+            && p.attributes != attributes
+        {
+            p.attributes = attributes;
+        }
+    }
+
+    // A glTF mesh on the built-in PBR: its program follows its material's
+    // variant (and the vertex array that material needs: switched together
+    // with the program, so neither draws with the other's layout).
+    fn update_variant(&mut self, e: Entity) {
+        let Some(mesh) = self.world.get::<MeshRenderer>(e).copied() else {
+            return;
+        };
+        let Some(prim) = self.world.get::<Primitive>(e).copied() else {
+            return;
+        };
+        let (vao, attributes) = self
+            .wanted_vertex_array(e)
+            .unwrap_or((mesh.vao, prim.attributes));
+        let Some(record) = self.materials.get(&mesh.material) else {
+            Self::set_vertex_array(&mut self.world, e, vao, attributes);
+            return;
+        };
+        if !self.pbr.is_pbr(mesh.program) {
+            // The app's shader: the layout at once.
+            Self::set_vertex_array(&mut self.world, e, vao, attributes);
+            return;
+        }
+        let key = PbrKey::new(attributes, &record.material);
+        let transmissive = record.material.transmission() > 0.0;
+        if mesh.transmissive != transmissive
+            && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
+        {
+            m.transmissive = transmissive;
+        }
+        match self.pbr.program(&self.ctx, key) {
+            // A new variant still linking: keep drawing with the current one
+            // (if it is ready) and its layout; switch both when it is.
+            Ok(program)
+                if program != mesh.program
+                    && self.ctx.program_link_pending(program)
+                    && !self.ctx.program_link_pending(mesh.program) =>
+            {
+                self.pending_variants.retain(|p| p.0 != e);
+                self.pending_variants.push((e, program, vao, attributes));
+            }
+            Ok(program) => {
+                self.pending_variants.retain(|p| p.0 != e);
+                Self::set_vertex_array(&mut self.world, e, vao, attributes);
+                if program != mesh.program
+                    && let Some(mut m) = self.world.get_mut::<MeshRenderer>(e)
+                {
+                    m.program = program;
+                }
+            }
+            Err(err) => console::error_once(&format!(
+                "[luxel] a PBR shader variant failed to build: {err}"
+            )),
+        }
+        self.refresh_shadow_caster(e);
+    }
+
+    // Switches meshes whose new variant has finished linking (or failed:
+    // then the draw reports it, as any broken program), with the layout it
+    // was built for.
+    pub(super) fn apply_pending_variants(&mut self) {
+        if self.pending_variants.is_empty() {
+            return;
+        }
+        let ctx = &self.ctx;
+        let world = &mut self.world;
+        let mut switched = Vec::new();
+        self.pending_variants
+            .retain(|&(e, program, vao, attributes)| {
+                if ctx.program_link_pending(program) {
+                    return world.is_alive(e);
+                }
+                Self::set_vertex_array(world, e, vao, attributes);
+                if let Some(mut m) = world.get_mut::<MeshRenderer>(e) {
+                    m.program = program;
+                }
+                switched.push(e);
+                false
+            });
+        // Their depth-only variants follow the new layout.
+        for e in switched {
+            self.refresh_shadow_caster(e);
+        }
+    }
+}
+
+/// How a `loadTexture` texture was made, to make it again after a context
+/// loss.
+pub(crate) struct TextureSpec {
+    url: String,
+    srgb: bool,
+    wrap: TextureWrap,
+    mipmaps: bool,
+    flip_y: bool,
+}
+
+impl TextureSpec {
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+}
+
+/// A texture `loadTexture` made: freed with the scene, reloaded after a loss.
+pub(crate) struct LoadedTexture {
+    pub(crate) id: TextureId,
+    pub(crate) spec: TextureSpec,
+}
+
+impl TextureSpec {
+    fn parse(url: &str, opts: &JsValue) -> Result<Self, Error> {
+        let srgb = match options::string_or(opts, "colorSpace", "srgb")?.as_str() {
+            "srgb" => true,
+            "linear" => false,
+            other => {
+                return Err(
+                    format!("loadTexture: colorSpace \"{other}\" isn't srgb or linear").into(),
+                );
+            }
+        };
+        let wrap = match options::string_or(opts, "wrap", "repeat")?.as_str() {
+            "repeat" => TextureWrap::Repeat,
+            "clamp" => TextureWrap::ClampToEdge,
+            "mirror" => TextureWrap::MirroredRepeat,
+            other => {
+                return Err(
+                    format!("loadTexture: wrap \"{other}\" isn't repeat, clamp or mirror").into(),
+                );
+            }
+        };
+        Ok(Self {
+            url: url.to_string(),
+            srgb,
+            wrap,
+            mipmaps: options::bool_or(opts, "mipmaps", true)?,
+            flip_y: options::bool_or(opts, "flipY", false)?,
+        })
+    }
+
+    /// Creates the texture and starts loading into it; `on_load(w, h)` as
+    /// for `Context::texture_load_image`.
+    pub(crate) fn start(
+        &self,
+        ctx: &luxel_gl::context::Context,
+        on_load: impl FnOnce(TextureId) -> js_sys::Function,
+    ) -> Result<TextureId, Error> {
+        let min = if self.mipmaps {
+            TextureMinFilter::LinearMipmapLinear
+        } else {
+            TextureMinFilter::Linear
+        };
+        let tex = ctx.create_texture(TextureTarget::Texture2D, min, TextureMagFilter::Linear)?;
+        ctx.texture_set_wrap_s(tex, self.wrap);
+        ctx.texture_set_wrap_t(tex, self.wrap);
+        let format = if self.srgb {
+            TextureFormat::srgb8_alpha8()
+        } else {
+            TextureFormat::rgba8()
+        };
+        ctx.texture_load_image(
+            tex,
+            &self.url,
+            &format,
+            self.mipmaps,
+            self.flip_y,
+            on_load(tex),
+        );
+        Ok(tex)
+    }
+}
+
+#[wasm_bindgen]
+impl Scene {
+    /// The shading model of the built-in PBR: "openpbr" (OpenPBR Surface,
+    /// the default) or "gltf" (the glTF reference, as Khronos' sample
+    /// renderer shades it) — to compare them on the same materials. Meshes
+    /// switch as their new shaders finish compiling. Throws on another name.
+    #[wasm_bindgen(js_name = setShadingModel)]
+    pub fn set_shading_model(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "ShadingModelName")] name: &str,
+    ) -> Result<(), Error> {
+        self.invalidate();
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
+        let model = match name {
+            "openpbr" => crate::pbr::ShadingModel::OpenPbr,
+            "gltf" => crate::pbr::ShadingModel::Gltf,
+            other => {
+                return Err(format!("setShadingModel: \"{other}\" isn't openpbr or gltf").into());
+            }
+        };
+        if model == self.pbr.model() {
+            return Ok(());
+        }
+        self.pbr.set_model(model);
+        let meshes: Vec<Entity> = self
+            .world
+            .storage::<MeshRenderer>()
+            .map(|m| m.iter().map(|(e, _)| e).collect())
+            .unwrap_or_default();
+        for e in meshes {
+            self.update_variant(e);
+        }
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = shadingModel, unchecked_return_type = "ShadingModelName")]
+    pub fn shading_model(&self) -> String {
+        match self.pbr.model() {
+            crate::pbr::ShadingModel::OpenPbr => "openpbr",
+            crate::pbr::ShadingModel::Gltf => "gltf",
+        }
+        .to_string()
+    }
+}
+
+#[wasm_bindgen]
+impl Scene {
+    /// The OpenPBR parameter names `materialProperty` / `setMaterialProperty`
+    /// take besides glTF's (`base_color`, `coat_weight`, `fuzz_weight`, …).
+    #[wasm_bindgen(js_name = openPbrParameters)]
+    pub fn open_pbr_parameters() -> Vec<String> {
+        openpbr::NAMES.iter().map(|s| s.to_string()).collect()
+    }
+}

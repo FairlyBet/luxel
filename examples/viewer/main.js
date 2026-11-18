@@ -1,5 +1,5 @@
 // @ts-check
-// The rswebgl viewer: glTF models from Khronos' sample assets (or yours),
+// The luxel viewer: glTF models from Khronos' sample assets (or yours),
 // shaded by OpenPBR or the glTF reference, with HDR output, tone mapping,
 // image-based light, an orbit camera, frame timing, and a material inspector
 // that edits a part's material by OpenPBR parameter names.
@@ -18,7 +18,7 @@ import init, {
   setTextureCompression,
   textureCompression,
   textureCompressionStats,
-} from "./pkg/rswebgl_scene.js";
+} from "./pkg/luxel.js";
 import { createProfiling } from "./profiling.js";
 
 const SAMPLES = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models";

@@ -1,6 +1,6 @@
 # ECS и сцена
 
-Статус: E1 (`packages/rswebgl-ecs`) и E2–E5d (`packages/rswebgl-scene`) сделаны.
+Статус: E1 (`packages/luxel-ecs`) и E2–E5d (`packages/luxel`) сделаны.
 
 Продолжение §7 `architecture.md`: что там оставлено «для ECS-документа»,
 решается здесь.
@@ -24,16 +24,16 @@ JS-сайт. Отсюда масштаб и требования:
 ## 2. Крейты
 
 ```
-rswebgl-foundation   хэндлы, пулы, колонки, учёт изменений (есть)
-rswebgl-ecs          мир, сущности, хранилище компонентов, запросы
+luxel-core   хэндлы, пулы, колонки, учёт изменений (есть)
+luxel-ecs          мир, сущности, хранилище компонентов, запросы
                      (зависит только от foundation; рендерер не знает)
-rswebgl-scene        компоненты сцены и системы: трансформации, иерархия,
+luxel        компоненты сцены и системы: трансформации, иерархия,
                      камера, свет, MeshRenderer, отсечение, сборка Pass;
-                     glTF → сущности (зависит от ecs, rswebgl, rswebgl-gltf)
+                     glTF → сущности (зависит от ecs, luxel-gl, luxel-gltf)
 ```
 
 Как в §3: рендерер без ECS работает, ECS без рендерера тоже. Мост — только
-`rswebgl-scene`. Математика — `glam` (wasm-дружелюбная, без аллокаций).
+`luxel`. Математика — `glam` (wasm-дружелюбная, без аллокаций).
 
 ## 3. Сущности
 
@@ -116,10 +116,10 @@ ctx.render(pass);
 
 ## 9. Этапы
 
-- **E1 — ECS-ядро** (`rswebgl-ecs`): сущности, разреженные множества,
+- **E1 — ECS-ядро** (`luxel-ecs`): сущности, разреженные множества,
   типизированные компоненты, запросы по 1–2 компонентам, тики. Тесты на хосте
   (без браузера).
-- **E2 — трансформации и иерархия** (`rswebgl-scene`): `Transform`, `Parent`,
+- **E2 — трансформации и иерархия** (`luxel`): `Transform`, `Parent`,
   `WorldMatrix`, система, `despawn_recursive`.
 - **E3 — рендер сцены**: `MeshRenderer`, `Camera`, `Bounds`, отсечение,
   сборка `Pass`, UBO кадра. Пример: сетка кубов из `js-cube` через сцену.
@@ -162,9 +162,9 @@ ctx.render(pass);
   новее `t` — самого старого `last_run` читающих систем.
 - Запросы: `join::<A, B>()` для чтения (обход по `A`), для записи —
   `storages_mut::<A, B>()` и обычный цикл. Без RefCell.
-- Тесты на хосте (`cargo test -p rswebgl-ecs`), браузер не нужен.
+- Тесты на хосте (`cargo test -p luxel-ecs`), браузер не нужен.
 
-**E2 — сделан.** `rswebgl-scene` (пока зависит только от `rswebgl-ecs` и
+**E2 — сделан.** `luxel` (пока зависит только от `luxel-ecs` и
 `glam`; рендерер подключится в E3): `Transform` (позиция, кватернион,
 масштаб; `from_matrix` для узлов glTF), `Parent(Entity)`, `WorldMatrix`.
 
@@ -185,9 +185,9 @@ ctx.render(pass);
   (`skipped()`).
 - `despawn_recursive` удаляет поддерево (карта детей строится один раз),
   `children` — разовый запрос, не для покадровых циклов.
-- Тесты на хосте (`cargo test -p rswebgl-scene`).
+- Тесты на хосте (`cargo test -p luxel`).
 
-**E3 — сделан.** `rswebgl-scene` подключает рендерер.
+**E3 — сделан.** `luxel` подключает рендерер.
 
 - Компоненты: `Camera` (перспектива / орто, `aspect` задаёт приложение;
   вид — обратная `WorldMatrix` сущности камеры), `Bounds` (локальный AABB;
@@ -215,13 +215,13 @@ ctx.render(pass);
   контекста — новый `SceneRenderer`.
 - `render` возвращает `RenderStats { drawn, culled, objects_written }`.
 - Тесты: отсечение и камеры на хосте, сам рендер — в браузере
-  (`wasm-pack test --headless --chrome packages/rswebgl-scene`).
+  (`wasm-pack test --headless --chrome packages/luxel`).
   Пример `examples/scene` (`trunk serve`): сетка 24×24 кубов на
   вращающемся pivot, половина ещё крутится сама.
 
 **E4 — сделан.** glTF в сцену и JS-фасад.
 
-- `rswebgl-gltf` дополнительно отдаёт дерево узлов сцены (`Model::nodes()`:
+- `luxel-gltf` дополнительно отдаёт дерево узлов сцены (`Model::nodes()`:
   локальная матрица, родитель, имя; родители раньше детей), а у
   `DrawItem` — локальный AABB примитива и матрицу инстанса
   `EXT_mesh_gpu_instancing` относительно узла.
@@ -231,7 +231,7 @@ ctx.render(pass);
   `find_by_name(world, root, name)` — найти деталь (камень, оправу).
 - `Visible(false)` теперь наследуется: скрыть узел = скрыть его примитивы.
   Предки обходятся только пока в мире есть хоть один `Visible(false)`.
-- **JS: класс `Scene`** (`rswebgl-scene` собирается как cdylib — рендерер,
+- **JS: класс `Scene`** (`luxel` собирается как cdylib — рендерер,
   загрузчик glTF и сцена в одном модуле). Владеет `World`,
   `TransformSystem`, `SceneRenderer`. Сущности — числа, компоненты —
   методами по сущности (`setTranslation`, `setRotation[Euler]`, `setScale`,
@@ -250,13 +250,13 @@ ctx.render(pass);
 
 **E5a — сделан.** PBR-ядро.
 
-- `rswebgl-gltf`: у примитива — флаги атрибутов (`ATTR_*`: NORMAL, UV0,
+- `luxel-gltf`: у примитива — флаги атрибутов (`ATTR_*`: NORMAL, UV0,
   TANGENT, COLOR_0, UV1; TEXCOORD_1 теперь на location 5); у материала —
   все пять карт с их наборами UV и семплерами, `normalTexture.scale`,
   `occlusionTexture.strength`, `KHR_materials_emissive_strength`,
   `KHR_materials_unlit`. Группа материала несёт всё это (имена — в
   документации `Model`).
-- `rswebgl-scene/shaders/pbr.{vert,frag}` — BRDF из приложения B спецификации
+- `luxel/shaders/pbr.{vert,frag}` — BRDF из приложения B спецификации
   glTF (GGX, height-correlated Smith, Schlick, Lambert), пунктуальные
   источники в единицах `KHR_lights_punctual`, постоянный ambient с
   аналитическим env-BRDF (до IBL), эмиссия, альфа-режимы, экспозиция,
@@ -321,7 +321,7 @@ ctx.render(pass);
 
 **E5c — сделан (факторы; текстуры расширений и экранное пропускание — дальше).**
 
-- `rswebgl-gltf` читает `KHR_materials_ior`, `_specular`, `_transmission`,
+- `luxel-gltf` читает `KHR_materials_ior`, `_specular`, `_transmission`,
   `_volume` (через крейт `gltf`) и `_clearcoat`, `_dispersion` (из сырого
   JSON расширения). Значения по умолчанию — «расширения нет» по
   спецификации; бесконечная дистанция поглощения хранится как 0. В группе

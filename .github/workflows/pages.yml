@@ -1,0 +1,50 @@
+# Builds the viewer (examples/viewer) and publishes it on GitHub Pages.
+# One-time setup: Settings → Pages → Source: GitHub Actions.
+name: Viewer on Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - name: Build the viewer's wasm
+        working-directory: packages/luxel
+        run: wasm-pack build --release --target web --weak-refs --out-dir ../../examples/viewer/pkg
+      - name: Site files
+        run: |
+          mkdir -p _site
+          cp examples/viewer/*.html examples/viewer/*.js _site/
+          rm -f _site/serve.mjs
+          cp -r examples/viewer/pkg _site/pkg
+          rm -f _site/pkg/.gitignore _site/pkg/package.json
+      - uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,4 +1,4 @@
-# rswebgl
+# luxel
 
 A WebGL2 renderer in Rust, compiled to WebAssembly, usable from Rust and from
 JavaScript alike. It is a general-purpose engine in the spirit of three.js:
@@ -9,11 +9,11 @@ low-level WebGL2 layer that owns all GL state.
 
 | Package | What it is |
 |---|---|
-| [`rswebgl`](packages/rswebgl) | The core: `Context`, passes with sorted draw lists, programs, buffers, textures, samplers, framebuffers, render states, parameter groups, uniform buffers, queries, readback, transform feedback. The renderer keeps the GL state cache; GL objects are plain handles with explicit lifetimes. |
-| [`rswebgl-gltf`](packages/rswebgl-gltf) | glTF 2.0 / GLB loader into GPU resources and a flat draw list. |
-| [`rswebgl-ecs`](packages/rswebgl-ecs) | A small sparse-set ECS with change ticks. |
-| [`rswebgl-scene`](packages/rswebgl-scene) | The scene: `Scene` for JS, ECS systems and a PBR renderer for Rust. |
-| [`rswebgl-foundation`](packages/rswebgl-foundation) | Handle pools and other shared pieces. |
+| [`luxel-gl`](packages/luxel-gl) | The core: `Context`, passes with sorted draw lists, programs, buffers, textures, samplers, framebuffers, render states, parameter groups, uniform buffers, queries, readback, transform feedback. The renderer keeps the GL state cache; GL objects are plain handles with explicit lifetimes. |
+| [`luxel-gltf`](packages/luxel-gltf) | glTF 2.0 / GLB loader into GPU resources and a flat draw list. |
+| [`luxel-ecs`](packages/luxel-ecs) | A small sparse-set ECS with change ticks. |
+| [`luxel`](packages/luxel) | The scene: `Scene` for JS, ECS systems and a PBR renderer for Rust. |
+| [`luxel-core`](packages/luxel-core) | Handle pools and other shared pieces. |
 
 ## Scene features
 
@@ -51,7 +51,7 @@ low-level WebGL2 layer that owns all GL state.
 ## Using it from JavaScript
 
 ```js
-import init, { Context, ContextOptions, Scene, loadModel } from "rswebgl";
+import init, { Context, ContextOptions, Scene, loadModel } from "@fairlybet/luxel";
 
 await init();
 const ctx = Context.fromCanvas(canvas, new ContextOptions());
@@ -74,16 +74,16 @@ cargo clippy --workspace --target wasm32-unknown-unknown --all-targets -- -D war
 ```
 
 ```bash
-wasm-pack test --headless --chrome packages/rswebgl
+wasm-pack test --headless --chrome packages/luxel-gl
 ```
 
 ```bash
-wasm-pack test --headless --chrome packages/rswebgl-scene
+wasm-pack test --headless --chrome packages/luxel
 ```
 
 Browser tests run in headless Chrome; pass `--chromedriver <path>` when the
 installed Chrome and the ChromeDriver wasm-pack downloads disagree. Host
-tests (`cargo test -p rswebgl-ecs`, `-p rswebgl-gltf --lib`) run natively.
+tests (`cargo test -p luxel-ecs`, `-p luxel-gltf --lib`) run natively.
 
 The npm package (`dist/npm`) is built by `node scripts/build-npm.mjs`.
 

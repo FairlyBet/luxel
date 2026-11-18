@@ -6,7 +6,7 @@
     "serve": "node serve.mjs"
   },
   "dependencies": {
-    "rswebgl": "file:../../dist/npm"
+    "@fairlybet/luxel": "file:../../dist/npm"
   },
   "devDependencies": {
     "esbuild": "0.25.10"
