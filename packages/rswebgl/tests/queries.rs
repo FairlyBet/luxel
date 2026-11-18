@@ -73,7 +73,7 @@ async fn occlusion_queries_report_whether_a_draw_was_visible() {
         .ctx
         .create_query(QueryKind::AnySamplesPassedConservative)
         .unwrap();
-    assert!(!f.ctx.query_pending(hidden), "never run");
+    assert!(!f.ctx.query_is_pending(hidden), "never run");
 
     let mut pass = Pass::new(fb);
     pass.set_clear(&ClearMask::color_depth());
@@ -85,13 +85,13 @@ async fn occlusion_queries_report_whether_a_draw_was_visible() {
     pass.set_last_draw_query(visible);
     f.ctx.render(&pass);
 
-    assert!(f.ctx.query_pending(hidden));
+    assert!(f.ctx.query_is_pending(hidden));
     assert_eq!(f.ctx.query_result(hidden), None, "not in the same frame");
     assert_eq!(f.ctx.query_result_async(hidden).await.unwrap(), 0.0);
     assert_eq!(f.ctx.query_result_async(visible).await.unwrap(), 1.0);
     // The result stays until the query runs again.
     assert_eq!(f.ctx.query_result(visible), Some(1.0));
-    assert!(!f.ctx.query_pending(visible));
+    assert!(!f.ctx.query_is_pending(visible));
     assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
 }
 

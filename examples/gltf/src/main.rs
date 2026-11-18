@@ -199,8 +199,8 @@ fn run(ctx: Context, model: Model) {
         for item in &items {
             let model_mat = spin * item.world;
             let mvp = proj * view * model_mat;
-            ctx.ubo_set_mat(item.ubo, "u_mvp", &mvp.to_cols_array());
-            ctx.ubo_set_mat(item.ubo, "u_model", &model_mat.to_cols_array());
+            ctx.uniform_buffer_set_mat(item.ubo, "u_mvp", &mvp.to_cols_array());
+            ctx.uniform_buffer_set_mat(item.ubo, "u_model", &model_mat.to_cols_array());
         }
 
         ctx.render(&pass);

@@ -796,7 +796,7 @@ impl HdrOutput {
                     // incomplete pair isn't made again every frame.
                     ctx.framebuffer_attach_depth_renderbuffer(self.grab_fb, rb);
                     self.grab_depth = rb;
-                    self.grab_depth_complete = ctx.is_framebuffer_complete(self.grab_fb);
+                    self.grab_depth_complete = ctx.framebuffer_is_complete(self.grab_fb);
                 }
                 Err(e) => {
                     rswebgl::console::error_once(&format!(
@@ -1180,7 +1180,7 @@ impl HdrOutput {
             let depth_rb = ctx.create_renderbuffer_multisample(depth, self.samples, w, h)?;
             ctx.framebuffer_attach_color_renderbuffer(fb, 0, color_rb);
             ctx.framebuffer_attach_depth_renderbuffer(fb, depth_rb);
-            if ctx.is_framebuffer_complete(fb) {
+            if ctx.framebuffer_is_complete(fb) {
                 (self.fb, self.color_rb, self.depth_rb) = (fb, color_rb, depth_rb);
                 self.build_key_targets(ctx, w, h)?;
                 return Ok(());
@@ -1226,7 +1226,7 @@ impl HdrOutput {
             let v = tex(&TextureFormat::rg16f(), TextureMinFilter::Nearest)?;
             let fb = ctx.create_framebuffer(w, h)?;
             ctx.framebuffer_attach_color_texture_2d(fb, 0, v, 0);
-            if ctx.is_framebuffer_complete(fb) {
+            if ctx.framebuffer_is_complete(fb) {
                 taa.velocity = (v, fb);
             } else {
                 // Moving meshes then lean on the clip alone.
@@ -1240,7 +1240,7 @@ impl HdrOutput {
             self.depth_rb = depth_rb;
         }
         self.fb = resolve_fb;
-        if !ctx.is_framebuffer_complete(resolve_fb) {
+        if !ctx.framebuffer_is_complete(resolve_fb) {
             return Err("HDR output: the half-float target is incomplete on this device".into());
         }
         self.build_key_targets(ctx, w, h)?;
@@ -1278,9 +1278,9 @@ impl HdrOutput {
             }
         }
         self.opaque_fb = fb;
-        let complete = ctx.is_framebuffer_complete(fb)
+        let complete = ctx.framebuffer_is_complete(fb)
             && (self.opaque_resolve_fb.is_null()
-                || ctx.is_framebuffer_complete(self.opaque_resolve_fb));
+                || ctx.framebuffer_is_complete(self.opaque_resolve_fb));
         if !complete {
             // Contact shadows then dim the whole pixel, as without the share.
             self.free_key_targets(ctx);

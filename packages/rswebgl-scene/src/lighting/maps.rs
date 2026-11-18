@@ -295,10 +295,10 @@ impl ShadowMaps {
     /// aimed at its layer's tile and that cleared.
     pub fn prepare(&mut self, ctx: &Context, i: usize, view: &ShadowView) {
         let ubo = self.ubos[i];
-        ctx.ubo_set_mat(ubo, "u_view", &Mat4::IDENTITY.to_cols_array());
-        ctx.ubo_set_mat(ubo, "u_proj", &view.view_proj.to_cols_array());
-        ctx.ubo_set_mat(ubo, "u_view_proj", &view.view_proj.to_cols_array());
-        ctx.ubo_set_vec4(ubo, "u_camera_pos", 0.0, 0.0, 0.0, 1.0);
+        ctx.uniform_buffer_set_mat(ubo, "u_view", &Mat4::IDENTITY.to_cols_array());
+        ctx.uniform_buffer_set_mat(ubo, "u_proj", &view.view_proj.to_cols_array());
+        ctx.uniform_buffer_set_mat(ubo, "u_view_proj", &view.view_proj.to_cols_array());
+        ctx.uniform_buffer_set_vec4(ubo, "u_camera_pos", 0.0, 0.0, 0.0, 1.0);
         let pass = &mut self.passes[i];
         pass.set_target(self.fbs[view.layer]);
         let side = self.size as f32;

@@ -88,8 +88,8 @@ impl Context {
         }
     }
 
-    #[wasm_bindgen(js_name = isFramebufferComplete)]
-    pub fn is_framebuffer_complete(&self, fb: FramebufferId) -> bool {
+    #[wasm_bindgen(js_name = framebufferIsComplete)]
+    pub fn framebuffer_is_complete(&self, fb: FramebufferId) -> bool {
         self.check_framebuffer(fb).is_ok()
     }
 

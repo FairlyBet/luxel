@@ -307,7 +307,7 @@ impl EnvBaker {
         let ctx = &self.ctx;
         for (i, face) in FACES.into_iter().enumerate() {
             ctx.framebuffer_attach_color_cube_face(fb, 0, target, face, level);
-            if i == 0 && !ctx.is_framebuffer_complete(fb) {
+            if i == 0 && !ctx.framebuffer_is_complete(fb) {
                 return Err(HALF_FLOAT_TARGETS.into());
             }
             ctx.param_set_i32(self.group, self.f_face, i as i32);
@@ -470,7 +470,7 @@ impl BakeJob {
             // RGBE → linear half floats, then the mips the cube reads.
             0 => {
                 ctx.framebuffer_attach_color_texture_2d(self.fb, 0, self.equirect, 0);
-                if !ctx.is_framebuffer_complete(self.fb) {
+                if !ctx.framebuffer_is_complete(self.fb) {
                     return Err(HALF_FLOAT_TARGETS.into());
                 }
                 ctx.param_set_texture(baker.group, baker.f_rgbe, self.rgbe);

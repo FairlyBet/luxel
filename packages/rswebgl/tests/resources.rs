@@ -144,7 +144,7 @@ fn texture_attached_to_framebuffer_survives_until_detached() {
     f.ctx.destroy_texture(tex);
     assert!(f.ctx.texture_target(tex).is_none());
     // The framebuffer still has a complete attachment.
-    assert!(f.ctx.is_framebuffer_complete(fb));
+    assert!(f.ctx.framebuffer_is_complete(fb));
     f.ctx.destroy_framebuffer(fb);
     assert_eq!(f.gl.get_error(), WebGl2RenderingContext::NO_ERROR);
 }

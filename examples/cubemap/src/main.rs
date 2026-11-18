@@ -158,7 +158,7 @@ fn main() {
         // Point the FBO's color attachment at this face, then render into it. The
         // fullscreen triangle covers the whole face, so no clear is needed.
         ctx.framebuffer_attach_color_cube_face(fbo, 0, cube, *face, 0);
-        if i == 0 && !ctx.is_framebuffer_complete(fbo) {
+        if i == 0 && !ctx.framebuffer_is_complete(fbo) {
             web_sys::console::error_1(&"cubemap FBO incomplete".into());
         }
 

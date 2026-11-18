@@ -269,10 +269,10 @@ impl Ground {
         }
         self.dirty = self.drawn != Some(signature);
         self.drawn = Some(signature);
-        ctx.ubo_set_mat(self.ubo, "u_view", &Mat4::IDENTITY.to_cols_array());
-        ctx.ubo_set_mat(self.ubo, "u_proj", &v.view_proj.to_cols_array());
-        ctx.ubo_set_mat(self.ubo, "u_view_proj", &v.view_proj.to_cols_array());
-        ctx.ubo_set_vec4(self.ubo, "u_camera_pos", 0.0, 0.0, 0.0, 1.0);
+        ctx.uniform_buffer_set_mat(self.ubo, "u_view", &Mat4::IDENTITY.to_cols_array());
+        ctx.uniform_buffer_set_mat(self.ubo, "u_proj", &v.view_proj.to_cols_array());
+        ctx.uniform_buffer_set_mat(self.ubo, "u_view_proj", &v.view_proj.to_cols_array());
+        ctx.uniform_buffer_set_vec4(self.ubo, "u_camera_pos", 0.0, 0.0, 0.0, 1.0);
         let side = self.size as i32;
         self.pass.set_target(self.depth_fb);
         self.pass.set_viewport(&Viewport::new(0, 0, side, side));

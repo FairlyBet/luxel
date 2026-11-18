@@ -150,12 +150,12 @@ impl LightsBlock {
         for (i, light) in data[..count * 4].chunks(4).enumerate() {
             for (member, v) in MEMBERS.iter().zip(light) {
                 let path = format!("u_lights[{i}].{member}");
-                ctx.ubo_set_vec4(ubo, &path, v.x, v.y, v.z, v.w);
+                ctx.uniform_buffer_set_vec4(ubo, &path, v.x, v.y, v.z, v.w);
             }
         }
         let mut at = count * 4;
         let c = data[at];
-        ctx.ubo_set_vec4(ubo, "u_light_count", c.x, c.y, c.z, c.w);
+        ctx.uniform_buffer_set_vec4(ubo, "u_light_count", c.x, c.y, c.z, c.w);
         at += 1;
         for (name, n) in [
             ("u_light_shadows", MAX_LIGHTS),
@@ -165,14 +165,14 @@ impl LightsBlock {
         ] {
             for i in 0..n {
                 let v = data[at + i];
-                ctx.ubo_set_vec4(ubo, &format!("{name}[{i}]"), v.x, v.y, v.z, v.w);
+                ctx.uniform_buffer_set_vec4(ubo, &format!("{name}[{i}]"), v.x, v.y, v.z, v.w);
             }
             at += n;
         }
         for i in 0..MAX_SHADOW_VIEWS {
             let m = at + i * 4;
             let cols: Vec<f32> = data[m..m + 4].iter().flat_map(|c| c.to_array()).collect();
-            ctx.ubo_set_mat(ubo, &format!("u_shadow_matrices[{i}]"), &cols);
+            ctx.uniform_buffer_set_mat(ubo, &format!("u_shadow_matrices[{i}]"), &cols);
         }
         self.held = data;
     }

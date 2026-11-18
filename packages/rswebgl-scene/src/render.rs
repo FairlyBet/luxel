@@ -628,8 +628,8 @@ impl SceneRenderer {
         self.jitter = Vec2::ZERO;
         self.mip_bias = 0.0;
         let (view, proj) = (self.frame_view, self.frame_proj);
-        ctx.ubo_set_mat(self.frame_ubo, "u_proj", &proj.to_cols_array());
-        ctx.ubo_set_mat(
+        ctx.uniform_buffer_set_mat(self.frame_ubo, "u_proj", &proj.to_cols_array());
+        ctx.uniform_buffer_set_mat(
             self.frame_ubo,
             "u_view_proj",
             &(proj * view).to_cols_array(),
@@ -639,7 +639,7 @@ impl SceneRenderer {
             let env = &mut cached[LIGHTING_ENVIRONMENT];
             env.w = 0.0;
             let e = *env;
-            ctx.ubo_set_vec4(self.lighting_ubo, "u_environment", e.x, e.y, e.z, e.w);
+            ctx.uniform_buffer_set_vec4(self.lighting_ubo, "u_environment", e.x, e.y, e.z, e.w);
         }
     }
 
@@ -706,7 +706,7 @@ impl SceneRenderer {
         self.peel = mode;
         let reverse = if ctx.reverse_z() { 1.0 } else { 0.0 };
         let (v, t) = self.specular_aa;
-        ctx.ubo_set_vec4(self.lighting_ubo, "u_shading", v, t, mode as f32, reverse);
+        ctx.uniform_buffer_set_vec4(self.lighting_ubo, "u_shading", v, t, mode as f32, reverse);
         if let Some(cached) = &mut self.lighting {
             cached[LIGHTING_SHADING] = Vec4::new(v, t, mode as f32, reverse);
         }
@@ -1379,7 +1379,7 @@ impl SceneRenderer {
         }
         let ubo = self.lighting_ubo;
         for (name, v) in LIGHTING_FIELDS.iter().zip(data) {
-            ctx.ubo_set_vec4(ubo, name, v.x, v.y, v.z, v.w);
+            ctx.uniform_buffer_set_vec4(ubo, name, v.x, v.y, v.z, v.w);
         }
         self.lighting = Some(data);
     }
@@ -1416,14 +1416,14 @@ impl SceneRenderer {
         let drawn_proj = jitter * proj;
         (self.frame_view, self.frame_proj) = (view, proj);
         let eye = cam_world.0.w_axis;
-        ctx.ubo_set_mat(self.frame_ubo, "u_view", &view.to_cols_array());
-        ctx.ubo_set_mat(self.frame_ubo, "u_proj", &drawn_proj.to_cols_array());
-        ctx.ubo_set_mat(
+        ctx.uniform_buffer_set_mat(self.frame_ubo, "u_view", &view.to_cols_array());
+        ctx.uniform_buffer_set_mat(self.frame_ubo, "u_proj", &drawn_proj.to_cols_array());
+        ctx.uniform_buffer_set_mat(
             self.frame_ubo,
             "u_view_proj",
             &(drawn_proj * view).to_cols_array(),
         );
-        ctx.ubo_set_vec4(self.frame_ubo, "u_camera_pos", eye.x, eye.y, eye.z, 1.0);
+        ctx.uniform_buffer_set_vec4(self.frame_ubo, "u_camera_pos", eye.x, eye.y, eye.z, 1.0);
         Some((view, view_proj))
     }
 

@@ -260,7 +260,7 @@ async fn read_orm(ctx: &Context, model: &Model) -> Vec<u8> {
         sleep(20).await;
         let fb = ctx.create_framebuffer(1, 1).unwrap();
         ctx.framebuffer_attach_color_texture_2d(fb, 0, tex, 0);
-        let complete = ctx.is_framebuffer_complete(fb);
+        let complete = ctx.framebuffer_is_complete(fb);
         let px = complete.then(|| {
             ctx.read_pixels(fb, 0, 0, 0, 1, 1, rswebgl::readback::ReadFormat::Rgba8)
                 .unwrap()

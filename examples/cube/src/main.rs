@@ -182,7 +182,7 @@ fn main() {
         let scene = scene.borrow();
         // Write into the block's staging buffer; the renderer flushes it (one
         // bufferSubData) and binds the block when the pass draws.
-        ctx.ubo_set_mat(scene.ubo, "u_mvp", &mvp.to_cols_array());
+        ctx.uniform_buffer_set_mat(scene.ubo, "u_mvp", &mvp.to_cols_array());
         // A no-op while the context is lost.
         ctx.render(&scene.pass);
 

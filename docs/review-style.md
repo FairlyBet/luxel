@@ -94,8 +94,11 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
   return, `describe_log` method nothing calls. — describe_log's method exists (kept); depth_range done with the bugs
 - [x] profiler generation reset ×2; loss bookkeeping in context.rs;
   `epoch` vs `generation()`. — `resync`; the loss bookkeeping move and epoch rename left (internal names)
-- [-] JS predicate naming (`programIsReady` / `isFramebufferComplete` /
-  `queryPending`; `ubo*` vs `UniformBuffer`) — breaking, to decide. — to decide with the user (breaking)
+- [x] JS predicate naming (`programIsReady` / `isFramebufferComplete` /
+  `queryPending`; `ubo*` vs `UniformBuffer`) — breaking, to decide. — moved to
+  `<resource><Verb>`: `framebufferIsComplete`, `queryIsPending`,
+  `uniformBuffer*` (Rust `uniform_buffer_*`); the old names stay one release
+  as deprecated forwards in `deprecated_names.rs`
 - [x] program.rs six impl blocks; parked-sampler literal ×2; material
   slot `groups[1]` bare. — `MATERIAL_SLOT` named; impl blocks and the sampler literal left
 

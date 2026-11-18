@@ -221,10 +221,10 @@ impl Context {
     }
 
     /// Whether the query was run and its result hasn't arrived yet.
-    #[wasm_bindgen(js_name = queryPending)]
-    pub fn query_pending(&self, q: QueryId) -> bool {
+    #[wasm_bindgen(js_name = queryIsPending)]
+    pub fn query_is_pending(&self, q: QueryId) -> bool {
         matches!(
-            self.poll_query(q, "queryPending"),
+            self.poll_query(q, "queryIsPending"),
             Some((QueryState::Pending, _))
         )
     }

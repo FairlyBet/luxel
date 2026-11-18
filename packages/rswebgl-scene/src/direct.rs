@@ -185,8 +185,8 @@ impl DirectTarget {
                 self.resolve_fb = fb;
             }
             ctx.framebuffer_attach_depth_renderbuffer(fb, self.depth_rb);
-            if !ctx.is_framebuffer_complete(fb)
-                || (self.resolve_fb != fb && !ctx.is_framebuffer_complete(self.resolve_fb))
+            if !ctx.framebuffer_is_complete(fb)
+                || (self.resolve_fb != fb && !ctx.framebuffer_is_complete(self.resolve_fb))
             {
                 return Err(Error::from("the direct target is incomplete"));
             }

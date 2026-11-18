@@ -76,7 +76,7 @@ fn color_block(ctx: &Context, field: &str, c: [u8; 4]) -> UniformBufferId {
         .create_uniform_buffer(&layout, BufferUsage::StaticDraw)
         .expect("ubo");
     let f = |x: u8| x as f32 / 255.0;
-    ctx.ubo_set_vec4(ubo, field, f(c[0]), f(c[1]), f(c[2]), f(c[3]));
+    ctx.uniform_buffer_set_vec4(ubo, field, f(c[0]), f(c[1]), f(c[2]), f(c[3]));
     ubo
 }
 
@@ -171,8 +171,10 @@ void main() {
         .ctx
         .create_uniform_buffer(&layout, BufferUsage::DynamicDraw)
         .expect("ubo");
-    f.ctx.ubo_set_vec4(ubo, "head", 1.0, 0.0, 0.0, 0.5);
-    f.ctx.ubo_set_vec4(ubo, "tail", 0.0, 0.0, 1.0, 0.5);
+    f.ctx
+        .uniform_buffer_set_vec4(ubo, "head", 1.0, 0.0, 0.0, 0.5);
+    f.ctx
+        .uniform_buffer_set_vec4(ubo, "tail", 0.0, 0.0, 1.0, 0.5);
 
     let g = block_group(&f, "Big", ubo);
     render(&f, vec![quad_batch(&f, program, 1, g)]);
@@ -268,4 +270,38 @@ void main() {
         f.gl.get_parameter(web_sys::WebGl2RenderingContext::TEXTURE_BINDING_2D)
             .unwrap();
     assert!(bound_2d.is_null(), "unit 0 still holds the 2D texture");
+}
+
+// The pre-rename names forward to the new ones: same bytes, same answers.
+#[wasm_bindgen_test]
+#[allow(deprecated)]
+fn deprecated_names_forward_to_the_new_ones() {
+    use rswebgl::ids::FramebufferId;
+    use rswebgl::query::QueryKind;
+
+    let f = fixture();
+    let layout = UboLayout::new()
+        .field("v", UniformType::Vec4)
+        .field("m", UniformType::Mat2);
+    let a = f
+        .ctx
+        .create_uniform_buffer(&layout, BufferUsage::StaticDraw)
+        .unwrap();
+    let b = f
+        .ctx
+        .create_uniform_buffer(&layout, BufferUsage::StaticDraw)
+        .unwrap();
+    f.ctx.ubo_set_vec4(a, "v", 1.0, 2.0, 3.0, 4.0);
+    f.ctx.ubo_set_mat(a, "m", &[5.0, 6.0, 7.0, 8.0]);
+    f.ctx.uniform_buffer_set_vec4(b, "v", 1.0, 2.0, 3.0, 4.0);
+    f.ctx.uniform_buffer_set_mat(b, "m", &[5.0, 6.0, 7.0, 8.0]);
+    assert_eq!(f.ctx.ubo_data(a), f.ctx.uniform_buffer_data(b));
+    assert_eq!(f.ctx.ubo_byte_size(a), f.ctx.uniform_buffer_byte_size(b));
+
+    assert_eq!(
+        f.ctx.is_framebuffer_complete(FramebufferId::NULL),
+        f.ctx.framebuffer_is_complete(FramebufferId::NULL)
+    );
+    let q = f.ctx.create_query(QueryKind::AnySamplesPassed).unwrap();
+    assert!(!f.ctx.query_pending(q) && !f.ctx.query_is_pending(q));
 }
