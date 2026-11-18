@@ -262,3 +262,25 @@ fn a_skipped_resolve_leaves_the_bindings_right() {
     f.ctx.render(&canvas);
     assert_eq!(read_quads(&f.gl)[1], RED);
 }
+
+// A depth-only target (a shadow map) declares no color output: drawBuffers
+// [NONE], not GL's default [COLOR_ATTACHMENT0] with nothing attached there.
+#[wasm_bindgen_test]
+fn a_depth_only_target_draws_to_no_color_buffer() {
+    use web_sys::WebGl2RenderingContext as Gl;
+    let f = fixture();
+    let fb = f.ctx.create_framebuffer(W, H).unwrap();
+    let depth = f
+        .ctx
+        .create_renderbuffer(RenderbufferFormat::Depth24, W, H)
+        .unwrap();
+    f.ctx.framebuffer_attach_depth_renderbuffer(fb, depth);
+    assert!(f.ctx.framebuffer_is_complete(fb));
+
+    let raw = f.ctx.raw_framebuffer(fb).unwrap();
+    f.gl.bind_framebuffer(Gl::FRAMEBUFFER, Some(&raw));
+    let draw0 = f.gl.get_parameter(Gl::DRAW_BUFFER0).unwrap();
+    f.gl.bind_framebuffer(Gl::FRAMEBUFFER, None);
+    f.ctx.invalidate_state();
+    assert_eq!(draw0.as_f64(), Some(Gl::NONE as f64));
+}

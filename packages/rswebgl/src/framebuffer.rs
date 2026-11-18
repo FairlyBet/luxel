@@ -1173,6 +1173,9 @@ impl Context {
         if let Some(d) = &f.depth {
             apply_depth(gl, d, textures, renderbuffers);
         }
+        // A depth-only target (a shadow map) needs drawBuffers [NONE] too,
+        // not GL's default [COLOR_ATTACHMENT0] with nothing there.
+        sync_draw_buffers(f, gl);
 
         if let Some(p) = prev {
             release(p.source(), textures, renderbuffers, gl);
