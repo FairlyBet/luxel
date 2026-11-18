@@ -14,8 +14,6 @@ use rswebgl::context::{Context, ContextOptions};
 use rswebgl_gltf::load_model;
 use rswebgl_scene::Scene;
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 const SIZE: i32 = 32;
 
 // Nodes: "near" (red pane, z = 0.5), "far" (green pane, z = 0), "wall"

@@ -20,7 +20,7 @@ use wasm_bindgen::prelude::*;
 use web_sys::{Event, EventTarget, WebglLoseContext};
 
 use crate::console;
-use crate::context::{Context, Core, note_lost};
+use crate::context::{Context, Core};
 use crate::extension::Extension;
 
 type Callback = RefCell<Option<Box<dyn FnMut(&Context)>>>;
@@ -80,9 +80,7 @@ pub(crate) fn install(core: &Rc<Core>) {
         e.prevent_default();
         console::warn("[rswebgl] WebGL context lost");
         if let Some(core) = weak.upgrade() {
-            if !core.counted_lost.replace(true) {
-                note_lost(true);
-            }
+            core.lost_until_restored.set(true);
             core.epoch.set(core.epoch.get().wrapping_add(1));
             core.forget_all();
             let ctx = Context { core };
@@ -114,9 +112,7 @@ pub(crate) fn install(core: &Rc<Core>) {
             invoke(&ctx.core.loss.on_restored, &ctx);
             // Only now: rebuilding in `on_restored` (dropping old handles) stays
             // quiet.
-            if ctx.core.counted_lost.replace(false) {
-                note_lost(false);
-            }
+            ctx.core.lost_until_restored.set(false);
         }
     });
 

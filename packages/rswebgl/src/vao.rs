@@ -5,7 +5,7 @@ use web_sys::{WebGl2RenderingContext, WebGlVertexArrayObject};
 
 use crate::buffer::BufferKind;
 use crate::console;
-use crate::context::{Context, Resources, stale};
+use crate::context::{Context, Resources};
 use crate::ids::{BufferId, VertexArrayId};
 use crate::limits;
 
@@ -207,10 +207,10 @@ impl Context {
         let gl = self.gl();
         let res = &mut *self.res();
         let Some(v) = res.vertex_arrays.get(vao.0) else {
-            return stale("vertex array", "vertex_array_attr", vao);
+            return self.stale("vertex array", "vertex_array_attr", vao);
         };
         let Some(b) = res.buffers.get(buffer.0) else {
-            return stale("buffer", "vertex_array_attr", buffer);
+            return self.stale("buffer", "vertex_array_attr", buffer);
         };
         if b.kind != BufferKind::Generic {
             console::error("[rswebgl] vertex_array_attr: an index buffer can't hold vertex data");
@@ -296,7 +296,7 @@ impl Context {
         let gl = self.gl();
         let res = &mut *self.res();
         let Some(v) = res.vertex_arrays.get_mut(vao.0) else {
-            return stale("vertex array", "vertex_array_remove_attr", vao);
+            return self.stale("vertex array", "vertex_array_remove_attr", vao);
         };
         self.gl_state().forget_vao();
         gl.bind_vertex_array(Some(&v.raw));
@@ -313,10 +313,10 @@ impl Context {
         let gl = self.gl();
         let res = &mut *self.res();
         let Some(v) = res.vertex_arrays.get(vao.0) else {
-            return stale("vertex array", "vertex_array_set_index_buffer", vao);
+            return self.stale("vertex array", "vertex_array_set_index_buffer", vao);
         };
         let Some(b) = res.buffers.get(buffer.0) else {
-            return stale("buffer", "vertex_array_set_index_buffer", buffer);
+            return self.stale("buffer", "vertex_array_set_index_buffer", buffer);
         };
         if b.kind != BufferKind::Index {
             console::error(
@@ -342,7 +342,7 @@ impl Context {
         let gl = self.gl();
         let res = &mut *self.res();
         let Some(v) = res.vertex_arrays.get_mut(vao.0) else {
-            return stale("vertex array", "vertex_array_remove_index_buffer", vao);
+            return self.stale("vertex array", "vertex_array_remove_index_buffer", vao);
         };
         self.gl_state().forget_vao();
         gl.bind_vertex_array(Some(&v.raw));
@@ -362,7 +362,7 @@ impl Context {
         let obj = match res.vertex_arrays.destroy(vao.0) {
             Destroyed::Now(obj) => obj,
             Destroyed::Deferred => return,
-            Destroyed::Invalid => return stale("vertex array", "destroy_vertex_array", vao),
+            Destroyed::Invalid => return self.stale("vertex array", "destroy_vertex_array", vao),
         };
         gl.delete_vertex_array(Some(&obj.raw));
         for id in obj

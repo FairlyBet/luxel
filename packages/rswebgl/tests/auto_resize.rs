@@ -11,8 +11,6 @@ use web_sys::HtmlCanvasElement;
 
 use rswebgl::context::{Context, ContextOptions};
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 // Lets the browser lay out and deliver resize observations.
 async fn settle() {
     let p: js_sys::Promise = js_sys::eval("new Promise(r => setTimeout(r, 150))")

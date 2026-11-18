@@ -13,8 +13,6 @@ use wasm_bindgen_test::*;
 use rswebgl::context::{Context, ContextOptions};
 use rswebgl_gltf::{LoadRequest, Model, load_model_js, load_request};
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 // A 1×1 PNG.
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 

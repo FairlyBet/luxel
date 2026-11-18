@@ -4,7 +4,7 @@
 // device lacks. Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod compress_util;
+use crate::compress_util;
 
 use wasm_bindgen_test::*;
 use web_sys::WebGl2RenderingContext as Gl;
@@ -19,8 +19,6 @@ use rswebgl::texture_compressor::{CompressKind, TextureCompressor};
 use rswebgl::uniform_buffer::UniformType;
 
 use compress_util::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 fn show(e: &Env, tex: TextureId, level: i32, srgb: bool) -> Vec<u8> {
     let ctx = &e.ctx;

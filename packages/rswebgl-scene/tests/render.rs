@@ -23,8 +23,6 @@ use rswebgl_scene::{
     set_parent,
 };
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 const SIZE: i32 = 64;
 
 const VERT: &str = r#"#version 300 es

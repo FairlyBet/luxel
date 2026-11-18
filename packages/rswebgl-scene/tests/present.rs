@@ -15,8 +15,6 @@ use rswebgl::draw::Viewport;
 use rswebgl_gltf::load_model;
 use rswebgl_scene::Scene;
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 const SIZE: i32 = 16;
 
 // Two unlit quads facing +Z over the view's center: green at z = 1 (near),

@@ -18,7 +18,7 @@ use web_sys::{WebGl2RenderingContext as Gl, WebGlQuery};
 use rswebgl_foundation::pool::{Destroyed, Pool};
 
 use crate::console;
-use crate::context::{Context, stale};
+use crate::context::{Context, report_stale};
 use crate::error::Error;
 use crate::extension::Extension;
 use crate::ids::QueryId;
@@ -61,7 +61,7 @@ pub(crate) enum QueryState {
 }
 
 pub(crate) struct QueryObj {
-    raw: WebGlQuery,
+    pub(crate) raw: WebGlQuery,
     kind: QueryKind,
     state: QueryState,
     // Bumped by every run, so a wait can tell its run from a later one.
@@ -141,7 +141,7 @@ pub(crate) fn begin(
         check_disjoint(gl, queries);
     }
     let Some(obj) = queries.get_mut(q.0) else {
-        stale("query", "render", q);
+        report_stale("query", "render", q);
         return None;
     };
     let fits = match usage {
@@ -204,7 +204,7 @@ impl Context {
         match destroyed {
             Destroyed::Now(obj) => self.gl().delete_query(Some(&obj.raw)),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("query", "destroy_query", q),
+            Destroyed::Invalid => self.stale("query", "destroy_query", q),
         }
     }
 
@@ -255,7 +255,7 @@ impl Context {
     pub(crate) fn poll_query(&self, q: QueryId, op: &str) -> Option<(QueryState, u32)> {
         let mut res = self.res();
         if res.queries.get(q.0).is_none() {
-            stale("query", op, q);
+            self.stale("query", op, q);
             return None;
         }
         poll(self.gl(), &mut res.queries, q);

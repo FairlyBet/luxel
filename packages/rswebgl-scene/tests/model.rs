@@ -15,8 +15,6 @@ use rswebgl_ecs::Entity;
 use rswebgl_gltf::load_model;
 use rswebgl_scene::{Camera, Parent, Scene};
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 const SIZE: i32 = 64;
 
 // Model shaders: the scene's frame block and object matrix, the loader's

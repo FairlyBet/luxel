@@ -14,7 +14,7 @@ use web_sys::{WebGl2RenderingContext as Gl, WebGlSampler};
 use rswebgl_foundation::pool::Destroyed;
 
 use crate::console;
-use crate::context::{Context, stale};
+use crate::context::Context;
 use crate::error::Error;
 use crate::extension::Extension;
 use crate::ids::SamplerId;
@@ -183,7 +183,7 @@ impl Context {
         match destroyed {
             Destroyed::Now(obj) => self.gl().delete_sampler(Some(&obj.raw)),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("sampler", "destroy_sampler", sampler),
+            Destroyed::Invalid => self.stale("sampler", "destroy_sampler", sampler),
         }
     }
 

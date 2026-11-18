@@ -13,8 +13,6 @@ use rswebgl_ecs::Entity;
 use rswebgl_gltf::load_model;
 use rswebgl_scene::Scene;
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 const SIZE: i32 = 32;
 
 // A white rough quad at the origin facing +Z; a camera 3 m in front of it

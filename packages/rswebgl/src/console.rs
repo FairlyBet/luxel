@@ -51,6 +51,15 @@ fn first_time(msg: &str) -> bool {
     })
 }
 
+/// Forgets which messages `warn_once` / `error_once` have shown, so each
+/// shows again. For tests that capture the console: every test file shares
+/// one wasm instance, and a message another test already raised would stay
+/// silent otherwise.
+#[doc(hidden)]
+pub fn forget_reported() {
+    REPORTED.with(|r| r.borrow_mut().clear());
+}
+
 /// `warn`, but only the first time this exact message comes up: for problems a
 /// per-frame path (uniform setters, draws) would otherwise report every frame.
 pub fn warn_once(msg: &str) {

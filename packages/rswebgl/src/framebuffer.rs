@@ -8,7 +8,7 @@ use wasm_bindgen::prelude::*;
 use web_sys::{HtmlCanvasElement, ResizeObserver, WebGl2RenderingContext, WebGlFramebuffer};
 
 use crate::console;
-use crate::context::{ColorSpace, Context, Resources, stale};
+use crate::context::{ColorSpace, Context, Resources};
 use crate::draw::Viewport;
 use crate::ids::{FramebufferId, RenderbufferId, TextureId};
 use crate::limits;
@@ -725,6 +725,7 @@ fn source_format(
 
 // Starts using an attachment source; false if its handle is stale.
 fn retain(
+    ctx: &Context,
     src: Source,
     textures: &mut Pool<TextureObj>,
     renderbuffers: &mut Pool<RenderbufferObj>,
@@ -736,8 +737,8 @@ fn retain(
     };
     if !ok {
         match src {
-            Source::Texture(t) => stale("texture", op, t),
-            Source::Renderbuffer(r) => stale("renderbuffer", op, r),
+            Source::Texture(t) => ctx.stale("texture", op, t),
+            Source::Renderbuffer(r) => ctx.stale("renderbuffer", op, r),
         }
     }
     ok
@@ -1103,7 +1104,7 @@ impl Context {
             ..
         } = res;
         let Some(f) = framebuffers.get_mut(fb.0) else {
-            return stale("framebuffer", op, fb);
+            return self.stale("framebuffer", op, fb);
         };
         // A float texture the device can't render to would leave the
         // framebuffer silently incomplete: say why instead.
@@ -1115,7 +1116,7 @@ impl Context {
             return console::error(&format!("[rswebgl] {op}: {p}; ignored"));
         }
         if let Some(a) = &att
-            && !retain(a.source(), textures, renderbuffers, op)
+            && !retain(self, a.source(), textures, renderbuffers, op)
         {
             return;
         }
@@ -1157,10 +1158,10 @@ impl Context {
             ..
         } = res;
         let Some(f) = framebuffers.get_mut(fb.0) else {
-            return stale("framebuffer", op, fb);
+            return self.stale("framebuffer", op, fb);
         };
         if let Some(a) = &att
-            && !retain(a.source(), textures, renderbuffers, op)
+            && !retain(self, a.source(), textures, renderbuffers, op)
         {
             return;
         }
@@ -1231,7 +1232,7 @@ impl Context {
         match res.framebuffers.get_mut(fb.0) {
             Some(obj) => Some(f(obj)),
             None => {
-                stale("framebuffer", op, fb);
+                self.stale("framebuffer", op, fb);
                 None
             }
         }
@@ -1273,7 +1274,7 @@ impl Context {
         let obj = match res.framebuffers.destroy(fb.0) {
             Destroyed::Now(obj) => obj,
             Destroyed::Deferred => return,
-            Destroyed::Invalid => return stale("framebuffer", "destroy_framebuffer", fb),
+            Destroyed::Invalid => return self.stale("framebuffer", "destroy_framebuffer", fb),
         };
         gl.delete_framebuffer(Some(&obj.raw));
         let sources = obj

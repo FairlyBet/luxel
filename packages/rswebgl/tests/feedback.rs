@@ -4,7 +4,7 @@
 // Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 use web_sys::WebGl2RenderingContext as Gl;
@@ -19,8 +19,6 @@ use rswebgl::query::QueryKind;
 use rswebgl::render_state::RenderState;
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 const NULL: ParamGroupId = ParamGroupId::NULL;
 const FRAG: &str =

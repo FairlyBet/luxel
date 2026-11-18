@@ -4,7 +4,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{WebGl2RenderingContext, WebGlRenderbuffer};
 
-use crate::context::{Context, stale};
+use crate::context::Context;
 use crate::ids::RenderbufferId;
 use crate::limits;
 
@@ -221,7 +221,7 @@ impl Context {
         match destroyed {
             Destroyed::Now(obj) => obj.delete(self.gl()),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("renderbuffer", "destroy_renderbuffer", rb),
+            Destroyed::Invalid => self.stale("renderbuffer", "destroy_renderbuffer", rb),
         }
     }
 }

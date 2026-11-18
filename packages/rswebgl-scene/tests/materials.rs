@@ -16,8 +16,6 @@ use rswebgl::pass::Pass;
 use rswebgl_gltf::load_model;
 use rswebgl_scene::{Camera, Scene, encode_hdr};
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 // Quads in a row, one material each (x = −3 … 3), facing the camera.
 const MATERIALS: [&str; 7] = [
     // 0: white, rough: diffuse light from the red side.

@@ -29,3 +29,12 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 opt-level = "s"
 lto = true
 codegen-units = 1
+
+# Tests and dev builds: line tables are enough for panics and stack traces
+# with file:line; full debuginfo made each test wasm ~90 MB. Dependencies
+# get none.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 use web_sys::{WebGl2RenderingContext as Gl, WebGlProgram, WebGlShader, WebGlUniformLocation};
 
 use crate::console;
-use crate::context::{Context, stale};
+use crate::context::Context;
 use crate::extension::Extension;
 use crate::feedback::{FeedbackLayout, FeedbackMode, feedback_layout};
 use crate::ids::{ParamLayoutId, ProgramId};
@@ -721,7 +721,7 @@ impl Context {
         match destroyed {
             Destroyed::Now(obj) => obj.delete(self.gl()),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("program", "destroy_program", program),
+            Destroyed::Invalid => self.stale("program", "destroy_program", program),
         }
     }
 
@@ -779,7 +779,7 @@ impl Context {
         let gl = self.gl();
         let mut res = self.res();
         let Some(p) = res.programs.get_mut(program.0) else {
-            stale("program", "program_active_uniform_names", program);
+            self.stale("program", "program_active_uniform_names", program);
             return Vec::new();
         };
         p.ensure_linked(gl);

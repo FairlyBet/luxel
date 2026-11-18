@@ -13,7 +13,7 @@ use web_sys::{
 
 use crate::compressed_format::CompressedFormat;
 use crate::console;
-use crate::context::{Context, stale};
+use crate::context::Context;
 use crate::float_targets;
 use crate::ids::TextureId;
 use crate::limits;
@@ -477,7 +477,7 @@ impl Context {
     ) -> Option<T> {
         let res = self.res();
         let Some(obj) = res.textures.get(tex.0) else {
-            stale("texture", op, tex);
+            self.stale("texture", op, tex);
             return None;
         };
         let gl = self.gl();
@@ -591,7 +591,7 @@ impl Context {
         match destroyed {
             Destroyed::Now(obj) => obj.delete(self.gl()),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("texture", "destroy_texture", tex),
+            Destroyed::Invalid => self.stale("texture", "destroy_texture", tex),
         }
     }
 

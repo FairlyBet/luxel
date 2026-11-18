@@ -3,7 +3,7 @@
 // wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 
@@ -16,8 +16,6 @@ use rswebgl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, Textur
 use rswebgl::uniform_buffer::UniformType;
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 const COLOR_FRAG: &str = r#"#version 300 es
 precision highp float;

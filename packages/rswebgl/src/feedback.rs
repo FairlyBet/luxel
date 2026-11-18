@@ -23,7 +23,7 @@ use rswebgl_foundation::pool::{Destroyed, Pool};
 
 use crate::buffer::{BufferKind, BufferObj};
 use crate::console;
-use crate::context::{Context, Resources, stale};
+use crate::context::{Context, Resources, report_stale};
 use crate::draw::DrawMode;
 use crate::error::Error;
 use crate::ids::{BufferId, FeedbackId, ProgramId, QueryId};
@@ -92,7 +92,7 @@ struct Binding {
 }
 
 pub(crate) struct FeedbackObj {
-    raw: WebGlTransformFeedback,
+    pub(crate) raw: WebGlTransformFeedback,
     bindings: [Option<Binding>; MAX_FEEDBACK_BUFFERS as usize],
 }
 
@@ -139,7 +139,7 @@ impl<'a> Recording<'a> {
     /// None (reported) if the pass's feedback object is stale.
     pub(crate) fn new(feedbacks: &'a Pool<FeedbackObj>, want: PassFeedback) -> Option<Self> {
         let Some(obj) = feedbacks.get(want.feedback.0) else {
-            stale("transform feedback", "render (pass)", want.feedback);
+            report_stale("transform feedback", "render (pass)", want.feedback);
             return None;
         };
         Some(Self {
@@ -284,7 +284,9 @@ impl Context {
         match res.feedbacks.destroy(tf.0) {
             Destroyed::Now(obj) => obj.delete(self.gl(), &mut res.buffers),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("transform feedback", "destroy_transform_feedback", tf),
+            Destroyed::Invalid => {
+                self.stale("transform feedback", "destroy_transform_feedback", tf)
+            }
         }
     }
 
@@ -331,7 +333,7 @@ impl Context {
             feedbacks, buffers, ..
         } = res;
         let Some(obj) = feedbacks.get_mut(tf.0) else {
-            return stale("transform feedback", OP, tf);
+            return self.stale("transform feedback", OP, tf);
         };
         if index >= MAX_FEEDBACK_BUFFERS {
             return console::error(&format!(
@@ -342,7 +344,7 @@ impl Context {
             None
         } else {
             let Some(b) = buffers.get(buffer.0) else {
-                return stale("buffer", OP, buffer);
+                return self.stale("buffer", OP, buffer);
             };
             let (offset, size) = range.unwrap_or((0, b.size));
             let problem = if b.kind == BufferKind::Index {

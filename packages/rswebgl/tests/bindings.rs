@@ -2,7 +2,7 @@
 // Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 
@@ -16,8 +16,6 @@ use rswebgl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, Textur
 use rswebgl::uniform_buffer::{UboLayout, UniformType};
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 // Each program has a single sampler / block, so each puts it on unit 0 /
 // point 0: switching programs puts different objects in the same slot.

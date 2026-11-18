@@ -178,34 +178,66 @@ impl Resources {
         // Parameter layouts and groups are CPU-only and survive; the texture and
         // buffer handles inside groups go stale like every other GPU handle.
     }
+
+    // The context is going away: deletes every GL object now rather than
+    // leaving them to the canvas's garbage collection, which can come late
+    // (GPU memory doesn't press the JS heap). Nothing outlives this, so no
+    // use counts are minded. On a lost context the calls are no-ops.
+    fn delete_all(&mut self, gl: &WebGl2RenderingContext) {
+        for f in self.feedbacks.drain() {
+            gl.delete_transform_feedback(Some(&f.raw));
+        }
+        for v in self.vertex_arrays.drain() {
+            gl.delete_vertex_array(Some(&v.raw));
+        }
+        for f in self.framebuffers.drain() {
+            gl.delete_framebuffer(Some(&f.raw));
+        }
+        for p in self.programs.drain() {
+            p.delete(gl);
+        }
+        for b in self.buffers.drain() {
+            b.delete(gl);
+        }
+        for t in self.textures.drain() {
+            t.delete(gl);
+        }
+        for r in self.renderbuffers.drain() {
+            r.delete(gl);
+        }
+        for u in self.uniform_buffers.drain() {
+            u.delete(gl);
+        }
+        for s in self.samplers.drain() {
+            gl.delete_sampler(Some(&s.raw));
+        }
+        for q in self.queries.drain() {
+            gl.delete_query(Some(&q.raw));
+        }
+    }
 }
 
-/// Reports a handle that doesn't resolve (destroyed, from before a context loss,
-/// or never issued), once per message.
-pub(crate) fn stale(kind: &str, op: &str, h: impl Into<Handle>) {
-    // Between a context loss and the app rebuilding in `on_restored`, render
-    // loops keep touching old handles: expected, not worth reporting.
-    if LOST_CONTEXTS.get() > 0 {
-        return;
+impl Context {
+    /// Reports a handle that doesn't resolve (destroyed, from before a context
+    /// loss, or never issued), once per message. Quiet between this context's
+    /// loss and the end of its `on_restored`: render loops keep touching old
+    /// handles then, which is expected. Only this context's loss counts: one
+    /// lost elsewhere (an abandoned viewer the browser dropped) mustn't
+    /// silence the rest.
+    pub(crate) fn stale(&self, kind: &str, op: &str, h: impl Into<Handle>) {
+        if !self.core.lost_until_restored.get() {
+            report_stale(kind, op, h);
+        }
     }
+}
+
+/// `Context::stale` without the quiet spell, for the render path: `render`
+/// returns early on a lost context, so a stale handle there is always news.
+pub(crate) fn report_stale(kind: &str, op: &str, h: impl Into<Handle>) {
     console::error_once(&format!(
         "[rswebgl] {op}: {kind} {:?} is destroyed or invalid; ignored",
         h.into()
     ));
-}
-
-thread_local! {
-    // Contexts currently lost (set by the loss listeners).
-    static LOST_CONTEXTS: Cell<u32> = const { Cell::new(0) };
-}
-
-/// Tracks loss/restore so `stale` stays quiet while a context is lost.
-pub(crate) fn note_lost(lost: bool) {
-    LOST_CONTEXTS.set(if lost {
-        LOST_CONTEXTS.get() + 1
-    } else {
-        LOST_CONTEXTS.get().saturating_sub(1)
-    });
 }
 
 // ---------------------------------------------------------------------------
@@ -234,9 +266,8 @@ pub(crate) struct Core {
     // Bumped by every loss: an async read or query started before it must not
     // touch (or wait on) objects of the dead context, even once restored.
     pub(crate) epoch: Cell<u32>,
-    // Whether this context counts in `LOST_CONTEXTS` (lost, not yet past
-    // `on_restored`): taken back when the context is restored or dropped.
-    pub(crate) counted_lost: Cell<bool>,
+    // Lost and not yet past `on_restored`: stale handles go unreported.
+    pub(crate) lost_until_restored: Cell<bool>,
     // Reverse-Z (`Context::set_reverse_z`): kept here to re-apply after a
     // restore, copied into the renderer's state each `render`.
     pub(crate) reverse_z: Cell<bool>,
@@ -246,10 +277,7 @@ pub(crate) struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
-        // A context lost for good mustn't keep every other one quiet.
-        if self.counted_lost.get() {
-            note_lost(false);
-        }
+        self.res.get_mut().delete_all(&self.gl);
     }
 }
 
@@ -517,7 +545,7 @@ impl Context {
             state: RefCell::new(GlState::default()),
             state_stale: Cell::new(false),
             epoch: Cell::new(0),
-            counted_lost: Cell::new(false),
+            lost_until_restored: Cell::new(false),
             reverse_z: Cell::new(false),
             poller: Rc::default(),
         });

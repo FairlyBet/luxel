@@ -5,7 +5,7 @@
 // on ANGLE / D3D. Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod compress_util;
+use crate::compress_util;
 
 use wasm_bindgen_test::*;
 
@@ -19,8 +19,6 @@ use rswebgl::texture_compressor::{CompressKind, TextureCompressor};
 use rswebgl::uniform_buffer::UniformType;
 
 use compress_util::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 // --- ASTC 4×4, the subset the encoder writes (one partition, LDR RGB / RGBA
 // direct, 8-bit endpoints, a 4×4 grid of trit-coded weights), decoded per

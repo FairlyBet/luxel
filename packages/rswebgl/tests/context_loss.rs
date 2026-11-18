@@ -2,7 +2,7 @@
 // WEBGL_lose_context. Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,8 +17,6 @@ use rswebgl::render_state::RenderState;
 use rswebgl::vao_builder::{AttrKind, VaoBuilder};
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 const RED_FRAG: &str = r#"#version 300 es
 precision highp float;
@@ -120,4 +118,33 @@ async fn lose_and_restore_then_recreate() {
     assert!(wait_for(|| f.ctx.program_is_ready(program)).await);
     render(&f, vec![red_middle_quad(&f, program)]);
     assert_eq!(read_quads(&f.gl), [BLACK, RED, BLACK]);
+}
+
+// Stale handles go unreported only on the context that was lost: another
+// context lost (say, an abandoned viewer the browser dropped for too many
+// contexts) mustn't silence this one.
+#[wasm_bindgen_test]
+async fn a_loss_elsewhere_keeps_stale_reports() {
+    let lost = fixture();
+    let f = fixture();
+    let flag = Rc::new(Cell::new(false));
+    let l = Rc::clone(&flag);
+    lost.ctx.on_lost(move |_| l.set(true));
+    assert!(lost.ctx.simulate_context_loss());
+    assert!(wait_for(|| flag.get()).await, "on_lost not called");
+
+    // The lost one stays quiet about its old handles…
+    let old = lost.quad;
+    let quiet = capture_console("error", || lost.ctx.destroy_vertex_array(old));
+    assert!(quiet.is_empty(), "{quiet:?}");
+
+    // …the other still reports.
+    let program = f.ctx.create_program(VERT, RED_FRAG).unwrap();
+    f.ctx.destroy_program(program);
+    let errors = capture_console("error", || f.ctx.destroy_program(program));
+    assert!(
+        errors.iter().any(|e| e.contains("destroyed or invalid")),
+        "{errors:?}"
+    );
+    assert!(lost.ctx.simulate_context_restore());
 }

@@ -13,7 +13,7 @@ use crate::error::{Error, err};
 use wasm_bindgen::prelude::*;
 use web_sys::WebGl2RenderingContext;
 
-use crate::context::{Context, Resources, stale};
+use crate::context::{Context, Resources, report_stale};
 use crate::draw::Viewport;
 use crate::framebuffer::{
     ClearMask, DefaultFramebuffer, FramebufferObj, InvalidateMask, framebuffer_status_str,
@@ -197,7 +197,7 @@ fn run_pass(
             Some(f) => Some(f),
             None => {
                 st.stats.skipped += pass.items.len() as u32;
-                return stale("framebuffer", "render (pass target)", pass.target);
+                return report_stale("framebuffer", "render (pass target)", pass.target);
             }
         }
     };
@@ -258,7 +258,7 @@ fn run_pass(
 
     for d in &pass.items {
         let Some(program) = programs.get_mut(d.program.0) else {
-            stale("program", "render (draw)", d.program);
+            report_stale("program", "render (draw)", d.program);
             st.stats.skipped += 1;
             continue;
         };
@@ -279,7 +279,7 @@ fn run_pass(
             continue;
         }
         if !st.apply_render_state(gl, d.state, render_states) {
-            stale("render state", "render (draw)", d.state);
+            report_stale("render state", "render (draw)", d.state);
             st.stats.skipped += 1;
             continue;
         }
@@ -301,7 +301,7 @@ fn run_pass(
             match vertex_arrays.get(d.vao.0) {
                 Some(v) => Some(&v.raw),
                 None => {
-                    stale("vertex array", "render (draw)", d.vao);
+                    report_stale("vertex array", "render (draw)", d.vao);
                     st.stats.skipped += 1;
                     continue;
                 }
@@ -323,7 +323,7 @@ fn run_pass(
                 continue;
             }
             let Some(group) = param_groups.get(gid.0) else {
-                stale("param group", "render (draw)", gid);
+                report_stale("param group", "render (draw)", gid);
                 complete = false;
                 break;
             };
@@ -391,7 +391,7 @@ fn run_pass(
             framebuffers.get(dst.0).map(Some).ok_or(())
         };
         match dst_obj {
-            Err(()) => stale("framebuffer", "render (resolve target)", dst),
+            Err(()) => report_stale("framebuffer", "render (resolve target)", dst),
             Ok(None) if copy::canvas_multisampled(gl) => console::error_once(
                 "[rswebgl] resolve into the canvas: it is multisampled itself \
                  (ContextOptions.antialias = true), a blit can't write into it; \
@@ -809,7 +809,7 @@ fn apply_group(
                 }
             }
             None => {
-                stale(
+                report_stale(
                     "texture",
                     &format!("texture \"{}\"", layout.textures[i]),
                     tex,
@@ -844,7 +844,7 @@ fn apply_group(
                     Some(&s.raw)
                 }
                 None => {
-                    stale(
+                    report_stale(
                         "sampler",
                         &format!("texture \"{}\"", layout.textures[i]),
                         sid,
@@ -868,7 +868,7 @@ fn apply_group(
             continue;
         }
         let Some(obj) = uniform_buffers.get_mut(ubo.0) else {
-            stale(
+            report_stale(
                 "uniform buffer",
                 &format!("block \"{}\"", layout.blocks[i]),
                 ubo,

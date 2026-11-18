@@ -3,7 +3,7 @@
 // wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 use web_sys::WebGl2RenderingContext;
@@ -17,8 +17,6 @@ use rswebgl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, Textur
 use rswebgl::vao::VertexAttr;
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 const RED_FRAG: &str = r#"#version 300 es
 precision highp float;
@@ -342,4 +340,39 @@ fn raw_gl_and_a_state_reset() {
     assert!(gl.is_texture(f.ctx.raw_texture(tex).as_ref()));
     f.ctx.destroy_texture(tex);
     assert!(f.ctx.raw_texture(tex).is_none());
+}
+
+// Dropping the last handle of a context deletes its GL objects at once, not
+// when the canvas is garbage-collected: an app that rebuilds its viewer
+// mustn't keep the old one's GPU memory until then.
+#[wasm_bindgen_test]
+fn dropping_the_context_deletes_its_objects() {
+    let f = fixture();
+    let tex = f
+        .ctx
+        .create_texture(
+            TextureTarget::Texture2D,
+            TextureMinFilter::Nearest,
+            TextureMagFilter::Nearest,
+        )
+        .unwrap();
+    f.ctx
+        .texture_storage_2d(tex, 1, &TextureFormat::rgba8(), 4, 4);
+    let buf = f
+        .ctx
+        .create_buffer(BufferUsage::StaticDraw, &[0; 64])
+        .unwrap();
+    let program = f.ctx.create_program(VERT, RED_FRAG).unwrap();
+    let raw_tex = f.ctx.raw_texture(tex).unwrap();
+    let raw_buf = f.ctx.raw_buffer(buf).unwrap();
+    let raw_program = f.ctx.raw_program(program).unwrap();
+    assert!(f.gl.is_texture(Some(&raw_tex)) && f.gl.is_buffer(Some(&raw_buf)));
+    assert!(f.gl.is_program(Some(&raw_program)));
+
+    let Fixture { ctx, gl, .. } = f;
+    drop(ctx);
+    assert!(!gl.is_texture(Some(&raw_tex)), "texture deleted");
+    assert!(!gl.is_buffer(Some(&raw_buf)), "buffer deleted");
+    assert!(!gl.is_program(Some(&raw_program)), "program deleted");
+    assert_eq!(gl.get_error(), WebGl2RenderingContext::NO_ERROR);
 }

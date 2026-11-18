@@ -25,7 +25,7 @@ use rswebgl_foundation::pool::Destroyed;
 use wasm_bindgen::prelude::*;
 
 use crate::console;
-use crate::context::{Context, Resources, stale};
+use crate::context::{Context, Resources};
 use crate::ids::{ParamGroupId, ParamLayoutId, SamplerId, TextureId, UniformBufferId};
 use crate::limits;
 use crate::uniform_buffer::UniformType;
@@ -249,7 +249,7 @@ impl Context {
             ..
         } = res;
         let Some(g) = param_groups.get_mut(group.0) else {
-            stale("param group", op, group);
+            self.stale("param group", op, group);
             return None;
         };
         let layout = param_layouts
@@ -333,7 +333,7 @@ impl Context {
         match res.param_layouts.destroy(layout.0) {
             Destroyed::Now(_) => forget_layout(&mut res, layout),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("param layout", "destroy_param_layout", layout),
+            Destroyed::Invalid => self.stale("param layout", "destroy_param_layout", layout),
         }
     }
 
@@ -418,7 +418,7 @@ impl Context {
         match res.param_groups.destroy(group.0) {
             Destroyed::Now(g) => release_layout(res, g.layout),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("param group", "destroy_param_group", group),
+            Destroyed::Invalid => self.stale("param group", "destroy_param_group", group),
         }
     }
 
@@ -595,7 +595,7 @@ impl Context {
     fn field_of(&self, group: ParamGroupId, name: &str, op: &str) -> Option<ParamField> {
         let res = self.res();
         let Some(g) = res.param_groups.get(group.0) else {
-            stale("param group", op, group);
+            self.stale("param group", op, group);
             return None;
         };
         let l = res.param_layouts.get_in_use(g.layout.0)?;

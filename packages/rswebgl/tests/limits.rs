@@ -2,7 +2,7 @@
 // Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 use web_sys::WebGl2RenderingContext;
@@ -16,8 +16,6 @@ use rswebgl::vao::VertexAttr;
 use rswebgl::vao_builder::{AttrKind, VaoBuilder};
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 fn assert_no_gl_error(f: &Fixture) {
     assert_eq!(f.gl.get_error(), WebGl2RenderingContext::NO_ERROR);

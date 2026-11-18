@@ -3,7 +3,7 @@
 // when states switch. Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 
@@ -15,8 +15,6 @@ use rswebgl::render_state::{BlendFactor, RenderState, TargetBlend};
 use rswebgl::renderbuffer::RenderbufferFormat;
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 const NULL: ParamGroupId = ParamGroupId::NULL;
 

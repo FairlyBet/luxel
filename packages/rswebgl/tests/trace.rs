@@ -8,8 +8,6 @@ use wasm_bindgen_test::*;
 
 use rswebgl::trace::{self, Trace};
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 fn names(report: &str) -> Vec<String> {
     let v = js_sys::JSON::parse(report).expect("valid JSON");
     let events = js_sys::Reflect::get(&v, &"traceEvents".into()).unwrap();

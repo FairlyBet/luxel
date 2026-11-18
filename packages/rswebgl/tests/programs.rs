@@ -2,7 +2,7 @@
 // Run with: wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 
@@ -11,8 +11,6 @@ use rswebgl::pass::Batch;
 use rswebgl::render_state::RenderState;
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 const RED_FRAG: &str = r#"#version 300 es
 precision highp float;

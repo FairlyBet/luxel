@@ -4,7 +4,7 @@
 // wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
@@ -14,8 +14,6 @@ use rswebgl::readback::ReadFormat;
 use rswebgl::texture::{TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget};
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 // The first row is the top of the image.
 const TOP: [u8; 4] = [255, 0, 0, 255];

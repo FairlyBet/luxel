@@ -7,7 +7,7 @@ use web_sys::{WebGl2RenderingContext, WebGlBuffer};
 
 use crate::buffer::{BufferKind, BufferUsage, Init, create_raw, write_raw};
 use crate::console;
-use crate::context::{Context, stale};
+use crate::context::Context;
 use crate::ids::UniformBufferId;
 use crate::limits;
 
@@ -249,7 +249,7 @@ impl Context {
     ) {
         match self.res().uniform_buffers.get_mut(ubo.0) {
             Some(u) => u.put(path, expect, vals),
-            None => stale("uniform buffer", op, ubo),
+            None => self.stale("uniform buffer", op, ubo),
         }
     }
 }
@@ -288,7 +288,7 @@ impl Context {
         match destroyed {
             Destroyed::Now(obj) => obj.delete(self.gl()),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("uniform buffer", "destroy_uniform_buffer", ubo),
+            Destroyed::Invalid => self.stale("uniform buffer", "destroy_uniform_buffer", ubo),
         }
     }
 
@@ -300,7 +300,7 @@ impl Context {
         let gl = self.gl();
         match self.res().uniform_buffers.get_mut(ubo.0) {
             Some(u) => u.flush(gl),
-            None => stale("uniform buffer", "uniform_buffer_upload", ubo),
+            None => self.stale("uniform buffer", "uniform_buffer_upload", ubo),
         }
     }
 

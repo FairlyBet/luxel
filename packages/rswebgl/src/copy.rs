@@ -14,7 +14,7 @@ use web_sys::{WebGl2RenderingContext as Gl, WebGlFramebuffer};
 
 use crate::buffer::BufferKind;
 use crate::console;
-use crate::context::{Context, stale};
+use crate::context::Context;
 use crate::draw::Viewport;
 use crate::framebuffer::ClearMask;
 use crate::ids::{BufferId, FramebufferId, TextureId};
@@ -155,7 +155,7 @@ impl Context {
             match res.framebuffers.get(fb.0) {
                 Some(f) => Ok(Some(&f.raw)),
                 None => {
-                    stale("framebuffer", OP, fb);
+                    self.stale("framebuffer", OP, fb);
                     Err(())
                 }
             }
@@ -233,7 +233,7 @@ impl Context {
             res.framebuffers
                 .get(fb.0)
                 .map(Some)
-                .ok_or_else(|| stale("framebuffer", OP, fb))
+                .ok_or_else(|| self.stale("framebuffer", OP, fb))
         };
         let (Ok(s), Ok(d)) = (get(src), get(dst)) else {
             return;
@@ -308,10 +308,10 @@ impl Context {
         let gl = self.gl();
         let res = self.res();
         let Some(s) = res.buffers.get(src.0) else {
-            return stale("buffer", OP, src);
+            return self.stale("buffer", OP, src);
         };
         let Some(d) = res.buffers.get(dst.0) else {
-            return stale("buffer", OP, dst);
+            return self.stale("buffer", OP, dst);
         };
         let problem = if s.kind == BufferKind::Index || d.kind == BufferKind::Index {
             Some("index buffers can't be copied".to_string())

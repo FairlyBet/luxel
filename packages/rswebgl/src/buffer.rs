@@ -3,7 +3,7 @@ use rswebgl_foundation::pool::Destroyed;
 use wasm_bindgen::prelude::*;
 use web_sys::{WebGl2RenderingContext, WebGlBuffer};
 
-use crate::context::{Context, stale};
+use crate::context::Context;
 use crate::ids::BufferId;
 
 #[wasm_bindgen]
@@ -186,7 +186,7 @@ impl Context {
     pub fn buffer_write(&self, buffer: BufferId, offset: i32, data: &[u8]) {
         let res = self.res();
         let Some(b) = res.buffers.get(buffer.0) else {
-            return stale("buffer", "buffer_write", buffer);
+            return self.stale("buffer", "buffer_write", buffer);
         };
         if b.kind == BufferKind::Index {
             self.gl_state().forget_vao();
@@ -214,7 +214,7 @@ impl Context {
         match destroyed {
             Destroyed::Now(obj) => obj.delete(self.gl()),
             Destroyed::Deferred => {}
-            Destroyed::Invalid => stale("buffer", "destroy_buffer", buffer),
+            Destroyed::Invalid => self.stale("buffer", "destroy_buffer", buffer),
         }
     }
 }

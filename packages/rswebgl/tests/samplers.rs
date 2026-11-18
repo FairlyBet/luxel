@@ -4,7 +4,7 @@
 // wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod common;
+use crate::common;
 
 use wasm_bindgen_test::*;
 
@@ -19,8 +19,6 @@ use rswebgl::texture::{
 };
 
 use common::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 const NULL: ParamGroupId = ParamGroupId::NULL;
 

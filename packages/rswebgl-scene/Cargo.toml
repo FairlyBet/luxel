@@ -2,6 +2,7 @@
 name = "rswebgl-scene"
 version = "0.1.0"
 edition = "2024"
+autotests = false
 description = "Scene for rswebgl on rswebgl-ecs: transforms, hierarchy, culling, draw-list assembly, glTF models, the JS facade"
 
 # cdylib: `wasm-pack build packages/rswebgl-scene --target web` is the JS bundle
@@ -28,3 +29,11 @@ wasm-bindgen-futures = "0.4"
 js-sys = { workspace = true }
 base64 = "0.22"
 web-sys = { workspace = true, features = ["Document", "Event", "EventTarget", "HtmlCanvasElement", "WebGl2RenderingContext"] }
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+
+[[test]]
+name = "furnace"
+path = "tests/furnace.rs"

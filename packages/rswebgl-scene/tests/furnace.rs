@@ -10,13 +10,13 @@
 use base64::Engine;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+
+wasm_bindgen_test_configure!(run_in_browser);
 use web_sys::{HtmlCanvasElement, WebGl2RenderingContext as Gl};
 
 use rswebgl::context::{Context, ContextOptions};
 use rswebgl_gltf::load_model;
 use rswebgl_scene::{Camera, Scene};
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 // One white material per row.
 const MATERIALS: [(&str, &str); 10] = [

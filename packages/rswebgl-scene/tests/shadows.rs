@@ -13,8 +13,6 @@ use rswebgl::context::{Context, ContextOptions};
 use rswebgl_gltf::load_model;
 use rswebgl_scene::Scene;
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 const SIZE: i32 = 32;
 
 // A 2×2 floor at z = 0 and a 0.4×0.4 square at z = 1 over its center, both

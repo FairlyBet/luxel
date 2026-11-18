@@ -19,8 +19,6 @@ use rswebgl_ecs::Entity;
 use rswebgl_gltf::load_model;
 use rswebgl_scene::{Camera, Scene};
 
-wasm_bindgen_test_configure!(run_in_browser);
-
 const W: i32 = 96;
 const H: i32 = 32;
 

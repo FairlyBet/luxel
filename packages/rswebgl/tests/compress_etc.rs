@@ -5,15 +5,13 @@
 // wasm-pack test --headless --chrome packages/rswebgl
 #![cfg(target_arch = "wasm32")]
 
-mod compress_util;
+use crate::compress_util;
 
 use wasm_bindgen_test::*;
 
 use rswebgl::texture_compressor::{CompressKind, TextureCompressor};
 
 use compress_util::*;
-
-wasm_bindgen_test_configure!(run_in_browser);
 
 // ETC1 holds one hue per half block (only brightness varies inside), so a
 // gradient across hues errs a little more than BC1.
