@@ -82,9 +82,6 @@ struct Taa {
     reset: bool,
 }
 
-/// FXAA (ported from three.js, see fxaa.frag): the display pass draws into
-/// an 8-bit texture the canvas's size, which this pass filters onto the
-/// canvas.
 /// Auto exposure (ported from Godot 3's GLES3 renderer, see exposure.frag):
 /// the frame's brightness shrunk to 1×1 on the GPU, eased toward from last
 /// frame's, read by the display (and TAA's weights) as `grey / it`.
@@ -251,15 +248,15 @@ impl AutoExposure {
         self.result[self.current].0
     }
 
-    fn destroy(self, ctx: &Context, live: bool) {
+    fn destroy(self, ctx: &Context, lost: bool) {
         for (p, l, g) in [self.begin, self.shrink, self.end] {
             ctx.destroy_param_group(g);
             ctx.destroy_param_layout(l);
-            if live {
+            if !lost {
                 ctx.destroy_program(p);
             }
         }
-        if live {
+        if !lost {
             for (t, fb, _) in self.chain {
                 ctx.destroy_framebuffer(fb);
                 ctx.destroy_texture(t);
@@ -272,6 +269,9 @@ impl AutoExposure {
     }
 }
 
+/// FXAA (ported from three.js, see fxaa.frag): the display pass draws into
+/// an 8-bit texture the canvas's size, which this pass filters onto the
+/// canvas.
 struct Fxaa {
     program: ProgramId,
     layout: ParamLayoutId,
@@ -646,7 +646,7 @@ impl HdrOutput {
             return Ok(());
         }
         if let Some(a) = self.auto.take() {
-            a.destroy(ctx, true);
+            a.destroy(ctx, false);
             return Ok(());
         }
         let vert = crate::fullscreen::vertex("#version 300 es\n");
@@ -976,12 +976,7 @@ impl HdrOutput {
             return false;
         }
         if self.grab_depth.is_null() {
-            let format = if self.reverse_z {
-                RenderbufferFormat::Depth32f
-            } else {
-                RenderbufferFormat::Depth24
-            };
-            match ctx.create_renderbuffer(format, gw, gh) {
+            match ctx.create_renderbuffer(depth_renderbuffer_format(self.reverse_z), gw, gh) {
                 Ok(rb) => {
                     // Kept either way (freed with the targets), so an
                     // incomplete pair isn't made again every frame.
@@ -1013,11 +1008,7 @@ impl HdrOutput {
 
     // The depth format of the target (what depth blits copy between).
     fn depth_format(&self) -> TextureFormat {
-        if self.reverse_z {
-            TextureFormat::depth32f()
-        } else {
-            TextureFormat::depth24()
-        }
+        depth_texture_format(self.reverse_z)
     }
 
     /// Frees the peeling targets (peeling turned off).
@@ -1304,11 +1295,7 @@ impl HdrOutput {
         self.free_target(ctx);
         self.size = (w, h);
         self.reverse_z = reverse_z;
-        let depth = if reverse_z {
-            RenderbufferFormat::Depth32f
-        } else {
-            RenderbufferFormat::Depth24
-        };
+        let depth = depth_renderbuffer_format(reverse_z);
         let color = ctx.create_texture(
             TextureTarget::Texture2D,
             TextureMinFilter::Nearest,
@@ -1395,12 +1382,7 @@ impl HdrOutput {
                 ctx.texture_storage_2d(t, 1, format, w, h);
                 Ok(t)
             };
-            let depth_format = if reverse_z {
-                TextureFormat::depth32f()
-            } else {
-                TextureFormat::depth24()
-            };
-            taa.depth = tex(&depth_format, TextureMinFilter::Nearest)?;
+            taa.depth = tex(&depth_texture_format(reverse_z), TextureMinFilter::Nearest)?;
             ctx.framebuffer_attach_depth_texture(resolve_fb, taa.depth, 0);
             for h_slot in &mut taa.history {
                 let t = ctx.create_texture(
@@ -1584,7 +1566,7 @@ impl HdrOutput {
     /// Frees it (after a context loss only the CPU-side group is left).
     pub fn destroy(mut self, ctx: &Context) {
         if let Some(a) = self.auto.take() {
-            a.destroy(ctx, self.generation == ctx.generation());
+            a.destroy(ctx, self.generation != ctx.generation());
         }
         ctx.destroy_param_group(self.group);
         ctx.destroy_param_layout(self.layout);
@@ -1620,5 +1602,23 @@ impl HdrOutput {
 }
 
 fn mip_levels(w: i32, h: i32) -> u32 {
-    32 - (w.max(h).max(1) as u32).leading_zeros()
+    rswebgl::texture::mip_levels(w, h) as u32
+}
+
+/// Depth with float precision where reverse-Z can use it (a texture to
+/// sample, or a renderbuffer).
+pub(crate) fn depth_texture_format(reverse_z: bool) -> TextureFormat {
+    if reverse_z {
+        TextureFormat::depth32f()
+    } else {
+        TextureFormat::depth24()
+    }
+}
+
+pub(crate) fn depth_renderbuffer_format(reverse_z: bool) -> RenderbufferFormat {
+    if reverse_z {
+        RenderbufferFormat::Depth32f
+    } else {
+        RenderbufferFormat::Depth24
+    }
 }

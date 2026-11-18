@@ -37,8 +37,7 @@ vec3 g_key_light = vec3(0.0);
 // The key light's share of `color` (radiance), for the second output: what
 // the contact shadow, applied after the opaque pass, takes away.
 float key_light_share(vec3 color) {
-    const vec3 luma = vec3(0.2126, 0.7152, 0.0722);
-    return clamp(dot(g_key_light, luma) / max(dot(color, luma), 1e-6), 0.0, 1.0);
+    return clamp(luminance(g_key_light) / max(luminance(color), 1e-6), 0.0, 1.0);
 }
 
 // The environment and the output (the renderer's block).

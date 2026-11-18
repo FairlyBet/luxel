@@ -70,7 +70,8 @@ use crate::transform::WorldMatrix;
 /// };
 /// layout(std140) uniform Lights {
 ///     Light u_lights[8];                // MAX_LIGHTS
-///     vec4 u_light_count;        // x lights, y 1: cascades tinted, z cascade overlap
+///     vec4 u_light_count;        // x lights, y 1: cascades tinted, z cascade overlap,
+///                                // w the key light's index (−1: none)
 ///     vec4 u_light_shadows[8];   // x first view (< 0: none), y views, z 0 ortho, 1 spot, 2 point
 ///     vec4 u_shadow_splits[8];   // the cascades' far bounds (camera-space depth)
 ///     vec4 u_shadow_views[16];   // MAX_SHADOW_VIEWS: x normal bias, y layer

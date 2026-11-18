@@ -166,9 +166,6 @@ fn cube_texture(
     Ok(t)
 }
 
-fn mip_count(size: i32) -> i32 {
-    32 - (size as u32).leading_zeros() as i32
-}
 
 // The GPU side of one bake: programs, a parameter group, a framebuffer.
 /// The bake's shaders and parameter state, built once (compiled in the
@@ -411,7 +408,7 @@ impl BakeJob {
         )?;
         ctx.texture_sub_image_2d(rgbe, 0, 0, 0, w, h, &TextureFormat::rgba8(), &image.rgbe);
         // The decoded image, mipmapped so the cube faces don't alias it.
-        let mips = mip_count(w.max(h));
+        let mips = rswebgl::texture::mip_levels(w, h);
         let equirect = texture(
             TextureTarget::Texture2D,
             Min::LinearMipmapLinear,
@@ -424,7 +421,7 @@ impl BakeJob {
         let source = texture(
             TextureTarget::TextureCubeMap,
             Min::LinearMipmapLinear,
-            mip_count(size),
+            rswebgl::texture::mip_levels(size, size),
             &rgba16f,
             size,
             size,

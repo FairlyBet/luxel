@@ -527,9 +527,6 @@ impl SceneRenderer {
         ctx.param_set_texture(self.frame_group, self.f_env_specular, env.specular());
     }
 
-    /// The background shader, built on first use (`set_background` callers can
-    /// build it early, so it compiles while other things load). None if it
-    /// failed to build (reported once).
     // The background shader if it has been built.
     pub(crate) fn built_background_program(&self) -> Option<ProgramId> {
         match self.skybox {
@@ -538,6 +535,9 @@ impl SceneRenderer {
         }
     }
 
+    /// The background shader, built on first use (`set_background` callers can
+    /// build it early, so it compiles while other things load). None if it
+    /// failed to build (reported once).
     pub fn background_program(&mut self, ctx: &Context) -> Option<ProgramId> {
         let program = *self.skybox.get_or_insert_with(|| {
             create_scene_program(ctx, FULLSCREEN_VERT, SKYBOX_FRAG).map_err(|e| {
@@ -865,12 +865,7 @@ impl SceneRenderer {
             if kind != ProgramKind::Uniforms {
                 // An instance of its own — as many copies as the command
                 // draws instances (each sees its object, as with uniforms).
-                let base = self.instances.push(&m);
-                if mesh.command.is_instanceable() {
-                    for _ in 1..mesh.command.instance_count.clamp(1, 4096) {
-                        self.instances.push(&m);
-                    }
-                }
+                let base = self.instances.push_copies(&m, &mesh.command);
                 ctx.param_set_i32(group, self.f_instance_base, base);
                 self.write_deformers(world, ctx, e, group);
                 self.frame_bases.insert(e, base);
@@ -885,10 +880,10 @@ impl SceneRenderer {
                 (Dest::Late, Some(late), _) => late,
                 _ => &mut *opaque,
             };
-            // As many copies as have instance slots (4096 at most).
+            // As many copies as have instance slots (`MAX_COPIES` at most).
             let mut cmd = mesh.command;
             if kind != ProgramKind::Uniforms && cmd.is_instanceable() {
-                cmd.instance_count = cmd.instance_count.clamp(1, 4096);
+                cmd.instance_count = cmd.instance_count.clamp(1, crate::instances::MAX_COPIES);
             }
             let mesh = &MeshRenderer {
                 command: cmd,
@@ -1164,12 +1159,7 @@ impl SceneRenderer {
                 continue;
             };
             if !self.frame_bases.contains_key(&e) {
-                let base = self.instances.push(&m);
-                if command.is_instanceable() {
-                    for _ in 1..command.instance_count.clamp(1, 4096) {
-                        self.instances.push(&m);
-                    }
-                }
+                let base = self.instances.push_copies(&m, command);
                 ctx.param_set_i32(group, self.f_instance_base, base);
                 self.write_deformers(world, ctx, e, group);
                 self.frame_bases.insert(e, base);
@@ -1565,15 +1555,15 @@ impl SceneRenderer {
         Ok(picker.pick(ctx, &meshes, &view))
     }
 
-    // Groups of entities that no longer have a MeshRenderer, seen through
-    // the removal log since the last look; a sweep also runs if there are
-    // more groups than meshes (a log trimmed too early).
     /// The tick through which it has looked at the removal logs:
     /// `World::trim_removed` no further than this.
     pub fn removals_checked(&self) -> Tick {
         self.removals_checked
     }
 
+    // Groups of entities that no longer have a MeshRenderer, seen through
+    // the removal log since the last look; a sweep also runs if there are
+    // more groups than meshes (a log trimmed too early).
     fn release_removed(&mut self, world: &World, ctx: &Context) {
         let meshes = world.storage::<MeshRenderer>();
         let since = self.removals_checked;

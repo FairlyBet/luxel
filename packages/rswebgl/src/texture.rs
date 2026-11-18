@@ -439,7 +439,7 @@ impl TextureObj {
 }
 
 /// Full mip-chain length for a base size: `floor(log2(max(w,h))) + 1`.
-pub(crate) fn mip_levels(w: i32, h: i32) -> i32 {
+pub fn mip_levels(w: i32, h: i32) -> i32 {
     let max = w.max(h).max(1) as u32;
     (32 - max.leading_zeros()) as i32
 }

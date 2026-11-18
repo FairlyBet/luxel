@@ -104,9 +104,7 @@ vec3 refracted_light(Surface s, float ior, float roughness, out float path) {
     // No copy of the scene (straight to the canvas): the background fill
     // when there is one — what shows behind — else the environment.
     if (background_filled()) return background_radiance(screen_uv(s.position + ray));
-    vec3 dir = path > 0.0 ? ray / path : -s.v;
-    return textureLod(u_env_specular, env_dir(dir, u_lighting.z), blur * u_lighting.w).rgb
-        * u_environment.rgb;
+    return scene_reflection(path > 0.0 ? ray / path : -s.v, blur);
 }
 
 vec3 env_transmission(Surface s, float ior, float roughness) {

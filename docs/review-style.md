@@ -134,19 +134,19 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
   vertex source ×6, `FULLSCREEN_VERT` in environment.rs → fullscreen.rs. — `fullscreen.rs`: `FULLSCREEN_VERT`, `vertex(prefix)`, `pass(…)`, `program(…)` with Undo; the skybox draws into the scene's pass (left)
 - [x] `any_hidden` scan ×10 → one helper. — `render::any_hidden`
 - [ ] output.rs (1636 lines): AutoExposure, Taa, Fxaa, PeelTargets split out.
-- [ ] destroy conventions: `lost` / `live` / self-checking / pair.
-- [ ] Depth format choice ×4 (one re-implements `depth_format()`);
+- [x] destroy conventions: `lost` / `live` / self-checking / pair. — AutoExposure takes `lost` like the rest; the self-checking ones and gpu_pick's pair left (each says what it does)
+- [x] Depth format choice ×4 (one re-implements `depth_format()`);
   texture + framebuffer setup ×5; `mip_levels` ×3; direct.rs duplicates
-  the MSAA-or-texture target.
-- [ ] Stale block docs (`u_shading` z, w; `u_light_count` w), drifted
+  the MSAA-or-texture target. — `depth_texture_format` / `depth_renderbuffer_format`; one `mip_levels` (the core's, now public); the target setup and direct.rs's twin of HdrOutput's MSAA target left
+- [x] Stale block docs (`u_shading` z, w; `u_light_count` w), drifted
   between Rust and GLSL.
-- [ ] Misplaced comments (render.rs ×2, output.rs FXAA, pbr.rs).
-- [ ] render.rs: own-instance push ×2 and 4096 ×4; Dest match ×2;
+- [x] Misplaced comments (render.rs ×2, output.rs FXAA, pbr.rs).
+- [x] render.rs: own-instance push ×2 and 4096 ×4; Dest match ×2;
   back-to-front key ×2; jitter matrix ×2; camera lookup ×2; two program
-  caches.
-- [ ] Lighting cache `Vec<Vec4>` by position → named.
-- [ ] Shaders: skinning/morph between pbr.vert and motion.vert; surface.glsl
-  re-implements `scene_reflection`; luma weights ×2.
+  caches. — `Instances::push_copies`, `MAX_COPIES`; the other small twins left
+- [x] Lighting cache `Vec<Vec4>` by position → named. — done with the set_peel bug
+- [x] Shaders: skinning/morph between pbr.vert and motion.vert; surface.glsl
+  re-implements `scene_reflection`; luma weights ×2. — luminance() and scene_reflection() reused; the skinning / morph twin between pbr.vert and motion.vert left (two programs' own inputs)
 - [ ] Visibility: `*_UNIFORM` pub but not exported; bare uniform strings;
   brdf_lut pub; `caster_bounds` / `scene_bounds` two names.
 - [ ] `key_light` belongs with lights, not shadow views.

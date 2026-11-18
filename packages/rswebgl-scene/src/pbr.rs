@@ -91,8 +91,6 @@ const FEATURES: [(u64, &str); 19] = [
     (MODEL_GLTF, "MODEL_GLTF"),
 ];
 
-// The layer a map belongs to (0: always used): an extension's maps only
-// count while its layer is on, so a texture without its factor costs nothing.
 // Samplers every scene shader binds: environment diffuse, specular, the BRDF
 // table, the scene copy, the peeled depth, the shadow maps.
 const FRAME_SAMPLERS: u32 = 6;
@@ -103,6 +101,8 @@ const DROP_ORDER: [usize; MAP_COUNT] = [
     16, 15, 14, 13, 18, 7, 6, 10, 11, 17, 9, 12, 5, 8, 3, 4, 1, 2, 0,
 ];
 
+// The layer a map belongs to (0: always used): an extension's maps only
+// count while its layer is on, so a texture without its factor costs nothing.
 const MAP_LAYERS: [u64; MAP_COUNT] = [
     0,
     0,

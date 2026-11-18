@@ -159,12 +159,7 @@ impl DirectTarget {
         reverse_z: bool,
     ) -> Result<(), Error> {
         self.free_target(ctx);
-        // Float depth where reverse-Z can use its precision.
-        let depth = if reverse_z {
-            RenderbufferFormat::Depth32f
-        } else {
-            RenderbufferFormat::Depth24
-        };
+        let depth = crate::output::depth_renderbuffer_format(reverse_z);
         let color = ctx.create_texture(
             TextureTarget::Texture2D,
             TextureMinFilter::Nearest,

@@ -107,6 +107,10 @@ impl Batches {
 }
 
 /// The instance texture and this frame's data for it.
+/// Copies of one mesh drawn from its own instances, at most (a command
+/// asking more draws this many).
+pub(crate) const MAX_COPIES: i32 = 4096;
+
 pub(crate) struct Instances {
     data: Vec<f32>,
     // What the texture holds, to skip an unchanged upload.
@@ -148,6 +152,18 @@ impl Instances {
     /// Instances so far this frame.
     pub fn len(&self) -> i32 {
         (self.data.len() / FLOATS) as i32
+    }
+
+    /// A mesh's own instances: `m` once per copy `command` draws (one unless
+    /// it is instanceable; at most `MAX_COPIES`). The first's index.
+    pub fn push_copies(&mut self, m: &Mat4, command: &rswebgl::draw::DrawCommand) -> i32 {
+        let base = self.push(m);
+        if command.is_instanceable() {
+            for _ in 1..command.instance_count.clamp(1, MAX_COPIES) {
+                self.push(m);
+            }
+        }
+        base
     }
 
     /// Appends `m` (affine: its last row is dropped); returns its index.
