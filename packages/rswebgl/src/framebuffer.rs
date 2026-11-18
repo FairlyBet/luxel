@@ -383,6 +383,28 @@ impl DefaultFramebuffer {
 
 #[wasm_bindgen]
 impl DefaultFramebuffer {
+    /// The clear color `[r, g, b, a]` (`setClearColor`).
+    #[wasm_bindgen(js_name = clearColor)]
+    pub fn clear_color(&self) -> Vec<f32> {
+        self.clear_color_rgba().to_vec()
+    }
+
+    /// The clear depth (`setClearDepth`, as given: reverse-Z flips it when
+    /// clearing).
+    #[wasm_bindgen(js_name = clearDepth)]
+    pub fn clear_depth(&self) -> f32 {
+        self.clear_depth_value()
+    }
+
+    /// The clear stencil value (`setClearStencil`).
+    #[wasm_bindgen(js_name = clearStencil)]
+    pub fn clear_stencil(&self) -> i32 {
+        self.clear_stencil_value()
+    }
+}
+
+#[wasm_bindgen]
+impl DefaultFramebuffer {
     /// Current drawing-buffer width in device pixels (tracks auto-resize).
     pub fn width(&self) -> i32 {
         self.inner.borrow().viewport.width
@@ -971,8 +993,8 @@ impl FramebufferObj {
                     continue;
                 };
                 let drawbuffer = i as i32;
-                let internal =
-                    source_format(att.source(), textures, renderbuffers).map(|(internal, _)| internal);
+                let internal = source_format(att.source(), textures, renderbuffers)
+                    .map(|(internal, _)| internal);
                 let value = self.color_clear.get(i).copied().unwrap_or_default();
                 // An integer attachment takes only an integer clear (a float
                 // one is INVALID_OPERATION, leaving it uncleared): a float

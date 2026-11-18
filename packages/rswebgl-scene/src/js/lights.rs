@@ -535,7 +535,8 @@ impl Scene {
         else {
             return JsValue::UNDEFINED;
         };
-        let color = |c: Vec4| JsValue::from(js_sys::Float32Array::from(&c.truncate().to_array()[..]));
+        let color =
+            |c: Vec4| JsValue::from(js_sys::Float32Array::from(&c.truncate().to_array()[..]));
         if kind == "color" {
             super::getters::object(&[("type", kind.into()), ("from", color(a))])
         } else {
@@ -549,7 +550,10 @@ impl Scene {
 const FILL_KINDS: [&str; 3] = ["color", "vertical", "radial"];
 
 fn fill_kind(name: &str) -> f32 {
-    FILL_KINDS.iter().position(|&k| k == name).map_or(0.0, |i| (i + 1) as f32)
+    FILL_KINDS
+        .iter()
+        .position(|&k| k == name)
+        .map_or(0.0, |i| (i + 1) as f32)
 }
 
 // A background color: three (or four, alpha ignored) finite numbers,

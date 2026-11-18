@@ -188,7 +188,10 @@ impl GpuProfiler {
         if let Some(slot) = timer.slots.iter_mut().find(|s| !s.awaiting) {
             slot.awaiting = true;
             slot.unrun = 0;
-            slot.run = self.ctx.poll_query(slot.query, "GpuProfiler").map_or(0, |(_, r)| r);
+            slot.run = self
+                .ctx
+                .poll_query(slot.query, "GpuProfiler")
+                .map_or(0, |(_, r)| r);
             return Some(slot.query);
         }
         if timer.slots.len() >= RING_MAX {

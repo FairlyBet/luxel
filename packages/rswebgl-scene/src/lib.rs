@@ -34,6 +34,7 @@ mod camera;
 mod culling;
 mod direct;
 mod environment;
+mod exposure;
 mod framing;
 mod fullscreen;
 mod gpu_pick;
@@ -52,7 +53,7 @@ mod render;
 mod shader;
 mod transform;
 
-pub use animation::{ModelAnimations, MorphWeights, Playback};
+pub use animation::{AnimationEvent, Fade, ModelAnimations, MorphWeights, Playback};
 pub use camera::{Camera, Projection};
 pub use culling::{Bounds, Frustum};
 pub use environment::{BakeJob, EnvBaker, Environment, PendingEnvironment};
@@ -72,8 +73,10 @@ pub use output::{HdrOutput, ToneMapping};
 pub use pbr::{PbrKey, PbrShaders, ShadingModel};
 pub use pick::{Hit, Ray, camera_ray, pick_bounds, ray_aabb, view_and_projection, world_to_ndc};
 pub use render::{
-    FRAME_BLOCK, FRAME_SLOT, LIGHTING_BLOCK, MATERIAL_SLOT, MODEL_UNIFORM, MeshRenderer,
-    NORMAL_MATRIX_UNIFORM, OBJECT_SLOT, Reloading, RenderStats, SceneRenderer, Visible,
+    FRAME_BLOCK, FRAME_SLOT, INSTANCE_BASE_UNIFORM, INSTANCES_TEXTURE, JOINT_BASE_UNIFORM,
+    LIGHTING_BLOCK, MATERIAL_SLOT, MODEL_UNIFORM, MORPH_BASE_UNIFORM, MeshRenderer,
+    NORMAL_MATRIX_UNIFORM, OBJECT_ID_UNIFORM, OBJECT_SLOT, Reloading, RenderStats, SceneRenderer,
+    Visible,
 };
 pub use shader::{CHUNKS, FRAG_PRELUDE, VERT_PRELUDE, chunk, create_scene_program, shader_sources};
 pub use transform::{Parent, Transform, WorldMatrix};

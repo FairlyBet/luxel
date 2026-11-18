@@ -223,7 +223,10 @@ impl Context {
     /// Whether the query was run and its result hasn't arrived yet.
     #[wasm_bindgen(js_name = queryPending)]
     pub fn query_pending(&self, q: QueryId) -> bool {
-        matches!(self.poll_query(q, "queryPending"), Some((QueryState::Pending, _)))
+        matches!(
+            self.poll_query(q, "queryPending"),
+            Some((QueryState::Pending, _))
+        )
     }
 
     /// The result of the query's last run: 1 / 0 for occlusion, nanoseconds

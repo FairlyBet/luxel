@@ -396,11 +396,7 @@ impl Default for RenderState {
 
 // glEnable / glDisable of `cap`.
 fn toggle(gl: &WebGl2RenderingContext, cap: u32, on: bool) {
-    if on {
-        gl.enable(cap)
-    } else {
-        gl.disable(cap)
-    }
+    if on { gl.enable(cap) } else { gl.disable(cap) }
 }
 
 /// Every stencil bit (the default stencil read and write masks).
@@ -477,7 +473,11 @@ impl RenderState {
         if self.targets.is_empty() {
             return;
         }
-        let Some(ext) = gl.get_extension(crate::extension::Extension::OesDrawBuffersIndexed.name()).ok().flatten() else {
+        let Some(ext) = gl
+            .get_extension(crate::extension::Extension::OesDrawBuffersIndexed.name())
+            .ok()
+            .flatten()
+        else {
             return;
         };
         let call = |name: &str, args: &[JsValue]| {
@@ -653,7 +653,11 @@ impl RenderState {
 
         // Polygon offset
         if self.polygon_offset_fill != prev.polygon_offset_fill {
-            toggle(gl, WebGl2RenderingContext::POLYGON_OFFSET_FILL, self.polygon_offset_fill);
+            toggle(
+                gl,
+                WebGl2RenderingContext::POLYGON_OFFSET_FILL,
+                self.polygon_offset_fill,
+            );
         }
         if self.polygon_offset_factor != prev.polygon_offset_factor
             || self.polygon_offset_units != prev.polygon_offset_units

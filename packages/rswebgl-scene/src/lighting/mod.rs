@@ -37,13 +37,13 @@ use rswebgl_ecs::{Entity, World};
 pub(crate) use casters::CasterDraw;
 pub(crate) use ground::GroundPlane;
 pub use ground::GroundShadow;
+pub(crate) use light::key_light;
 pub use light::{Light, LightKind};
 pub use maps::{MAX_SHADOW_LAYERS, MAX_SHADOW_VIEWS};
 pub use pack::MAX_LIGHTS;
 pub use settings::{LightShadow, ShadowCaster};
 pub use views::MAX_CASCADES;
 pub(crate) use views::caster_bounds as scene_bounds;
-pub(crate) use views::key_light;
 
 use ground::Ground;
 use maps::ShadowMaps;

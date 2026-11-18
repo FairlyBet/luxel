@@ -286,7 +286,12 @@ impl VaoBuilder {
 
     #[wasm_bindgen(js_name = addF16)]
     pub fn add_f16(&mut self, index: u32, kind: AttrKind, data: &[u16]) {
-        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::HALF_FLOAT);
+        self.push(
+            index,
+            kind,
+            bytes_of(data),
+            WebGl2RenderingContext::HALF_FLOAT,
+        );
     }
 
     #[wasm_bindgen(js_name = addI8)]
@@ -296,7 +301,12 @@ impl VaoBuilder {
 
     #[wasm_bindgen(js_name = addU8)]
     pub fn add_u8(&mut self, index: u32, kind: AttrKind, data: &[u8]) {
-        self.push(index, kind, data.to_vec(), WebGl2RenderingContext::UNSIGNED_BYTE);
+        self.push(
+            index,
+            kind,
+            data.to_vec(),
+            WebGl2RenderingContext::UNSIGNED_BYTE,
+        );
     }
 
     #[wasm_bindgen(js_name = addI16)]
@@ -306,7 +316,12 @@ impl VaoBuilder {
 
     #[wasm_bindgen(js_name = addU16)]
     pub fn add_u16(&mut self, index: u32, kind: AttrKind, data: &[u16]) {
-        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::UNSIGNED_SHORT);
+        self.push(
+            index,
+            kind,
+            bytes_of(data),
+            WebGl2RenderingContext::UNSIGNED_SHORT,
+        );
     }
 
     #[wasm_bindgen(js_name = addI32)]
@@ -316,7 +331,12 @@ impl VaoBuilder {
 
     #[wasm_bindgen(js_name = addU32)]
     pub fn add_u32(&mut self, index: u32, kind: AttrKind, data: &[u32]) {
-        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::UNSIGNED_INT);
+        self.push(
+            index,
+            kind,
+            bytes_of(data),
+            WebGl2RenderingContext::UNSIGNED_INT,
+        );
     }
 
     #[wasm_bindgen(js_name = addIndicesU8)]

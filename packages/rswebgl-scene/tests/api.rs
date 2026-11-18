@@ -1688,7 +1688,10 @@ async fn getters_read_back_the_setters() {
         .unwrap_err();
     assert!(bad.starts_with("setAmbientOcclusion: "), "{bad}");
     assert!(bad.contains("radius"), "{bad}");
-    let bad = s.scene.set_light(light, json(r#"{ "intensity": [] }"#)).unwrap_err();
+    let bad = s
+        .scene
+        .set_light(light, json(r#"{ "intensity": [] }"#))
+        .unwrap_err();
     assert!(bad.starts_with("setLight: "), "{bad}");
 
     let kids = s.scene.children(s.root);

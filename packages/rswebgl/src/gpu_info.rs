@@ -94,7 +94,10 @@ impl Context {
                 .unwrap_or_default()
         };
         let (vendor, renderer) = (text(Gl::VENDOR), text(Gl::RENDERER));
-        let unmasked = matches!(gl.get_extension(crate::extension::Extension::WebglDebugRendererInfo.name()), Ok(Some(_)));
+        let unmasked = matches!(
+            gl.get_extension(crate::extension::Extension::WebglDebugRendererInfo.name()),
+            Ok(Some(_))
+        );
         let (uv, ur) = if unmasked {
             (text(UNMASKED_VENDOR), text(UNMASKED_RENDERER))
         } else {

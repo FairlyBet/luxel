@@ -603,7 +603,8 @@ fn open_for_clear(
                 !(rs.color_mask_r && rs.color_mask_g && rs.color_mask_b && rs.color_mask_a)
             }),
         depth: mask.depth && closed(|rs| !rs.depth_mask),
-        stencil: mask.stencil && closed(|rs| rs.stencil_write_mask != crate::render_state::STENCIL_ALL),
+        stencil: mask.stencil
+            && closed(|rs| rs.stencil_write_mask != crate::render_state::STENCIL_ALL),
         scissor: closed(|rs| rs.scissor_test),
     };
     if opened.color {

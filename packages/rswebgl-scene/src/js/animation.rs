@@ -256,9 +256,10 @@ impl Scene {
         if !options::finite("setMorphWeights", &weights) {
             return;
         }
-        if self.world.is_alive(e) {
-            self.world
-                .insert(e, crate::animation::MorphWeights(weights));
-        }
+        self.insert(
+            e,
+            "setMorphWeights",
+            crate::animation::MorphWeights(weights),
+        );
     }
 }

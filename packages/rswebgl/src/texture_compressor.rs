@@ -336,7 +336,8 @@ impl TextureCompressor {
         internal: u32,
         kind: CompressKind,
     ) -> Result<js_sys::Promise, Error> {
-        let format = BlockFormat::written(internal, kind).ok_or("prepareFormat: not a format the encoders write")?;
+        let format = BlockFormat::written(internal, kind)
+            .ok_or("prepareFormat: not a format the encoders write")?;
         self.encoder(format, false)?;
         let program = self.encoders.borrow()[&format.key(false)].program;
         let ready = self.ctx.programs_ready(vec![program]);
@@ -359,7 +360,8 @@ impl TextureCompressor {
         kind: CompressKind,
         level: i32,
     ) -> Result<Vec<u8>, Error> {
-        let format = BlockFormat::written(internal, kind).ok_or("encodeLevel: not a format the encoders write")?;
+        let format = BlockFormat::written(internal, kind)
+            .ok_or("encodeLevel: not a format the encoders write")?;
         let extent = self
             .ctx
             .res()
@@ -559,11 +561,7 @@ impl TextureCompressor {
 
     // The encoder for `format` (made on first use).
     fn encoder(&self, format: BlockFormat, cube: bool) -> Result<(), Error> {
-        if self
-            .encoders
-            .borrow()
-            .contains_key(&format.key(cube))
-        {
+        if self.encoders.borrow().contains_key(&format.key(cube)) {
             return Ok(());
         }
         let (mode, source, layout) = match (format.family, format.kind) {
@@ -603,9 +601,7 @@ impl TextureCompressor {
             self.ctx
                 .param_set_sampler(params, encoder.f_source, self.cube_sampler);
         }
-        self.encoders
-            .borrow_mut()
-            .insert(format.key(cube), encoder);
+        self.encoders.borrow_mut().insert(format.key(cube), encoder);
         Ok(())
     }
 

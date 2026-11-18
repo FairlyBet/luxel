@@ -115,17 +115,17 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
   `add_*` alike. — one `push`; `to_vertex_attr` left
 - [x] texture_compressor: `preference` ignores its inputs; FORMATS lookup
   ×2, key ×4. — `FAMILY_ORDER`, `BlockFormat::written` / `key`
-- [ ] `create_framebuffer` doesn't validate its size; `texture_storage_*`
-  can't report failure; message prefixes vary.
-- [ ] texture.rs upload duplication (sub-image ×5, image/bitmap load).
-- [ ] `ClearMask` / `InvalidateMask` twins.
-- [ ] DefaultFramebuffer getters (`clear_color_rgba` …) not mirrored or
-  exported; framebuffers/renderbuffers lack `xIsValid`.
-- [ ] `TextureTarget`, `BufferTarget`, `AttrType` not Copy; `BufferTarget`
-  public but unused.
-- [ ] "contains then destroy" teardown (compressor, packer).
-- [ ] Encoder shaders share srgb/uniforms/load_block/main → common.glsl;
-  fullscreen VERT ×3.
+- [-] `create_framebuffer` doesn't validate its size; `texture_storage_*`
+  can't report failure; message prefixes vary. — left: the GL call reports a bad size itself; making textureStorage* return Result is an API change for little
+- [-] texture.rs upload duplication (sub-image ×5, image/bitmap load). — left: five web-sys calls of different types; a closure helper would hide which source is which
+- [-] `ClearMask` / `InvalidateMask` twins. — left: two small public types; a macro would be harder to read than the copy
+- [x] DefaultFramebuffer getters (`clear_color_rgba` …) not mirrored or
+  exported; framebuffers/renderbuffers lack `xIsValid`. — clearColor / clearDepth / clearStencil exported; framebuffer/renderbuffer IsValid left
+- [x] `TextureTarget`, `BufferTarget`, `AttrType` not Copy; `BufferTarget`
+  public but unused. — Copy; BufferTarget kept public (harmless)
+- [-] "contains then destroy" teardown (compressor, packer). — left: two teardown functions, each readable
+- [-] Encoder shaders share srgb/uniforms/load_block/main → common.glsl;
+  fullscreen VERT ×3. — left: the four encoders stay standalone, each testable against its own reference
 - [x] Minor: `PixelUnpack::reset`, stale clippy allow, `format as u32`.
 
 ## Scene: rendering
@@ -133,7 +133,7 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 - [x] Fullscreen pass boilerplate ×9, program triple by hand, fullscreen
   vertex source ×6, `FULLSCREEN_VERT` in environment.rs → fullscreen.rs. — `fullscreen.rs`: `FULLSCREEN_VERT`, `vertex(prefix)`, `pass(…)`, `program(…)` with Undo; the skybox draws into the scene's pass (left)
 - [x] `any_hidden` scan ×10 → one helper. — `render::any_hidden`
-- [ ] output.rs (1636 lines): AutoExposure, Taa, Fxaa, PeelTargets split out.
+- [x] output.rs (1636 lines): AutoExposure, Taa, Fxaa, PeelTargets split out. — AutoExposure → exposure.rs (−193 lines); Taa, Fxaa, PeelTargets stay (they share the target's fields)
 - [x] destroy conventions: `lost` / `live` / self-checking / pair. — AutoExposure takes `lost` like the rest; the self-checking ones and gpu_pick's pair left (each says what it does)
 - [x] Depth format choice ×4 (one re-implements `depth_format()`);
   texture + framebuffer setup ×5; `mip_levels` ×3; direct.rs duplicates
@@ -147,11 +147,11 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 - [x] Lighting cache `Vec<Vec4>` by position → named. — done with the set_peel bug
 - [x] Shaders: skinning/morph between pbr.vert and motion.vert; surface.glsl
   re-implements `scene_reflection`; luma weights ×2. — luminance() and scene_reflection() reused; the skinning / morph twin between pbr.vert and motion.vert left (two programs' own inputs)
-- [ ] Visibility: `*_UNIFORM` pub but not exported; bare uniform strings;
-  brdf_lut pub; `caster_bounds` / `scene_bounds` two names.
-- [ ] `key_light` belongs with lights, not shadow views.
-- [ ] Positional arrays to keep in sync (`FRAME_SAMPLERS`, `MAP_LAYERS`,
-  `DROP_ORDER`).
+- [x] Visibility: `*_UNIFORM` pub but not exported; bare uniform strings;
+  brdf_lut pub; `caster_bounds` / `scene_bounds` two names. — exported from lib.rs; the bare uniform strings and two names for caster_bounds left
+- [x] `key_light` belongs with lights, not shadow views. — moved to lighting/light.rs with its test
+- [-] Positional arrays to keep in sync (`FRAME_SAMPLERS`, `MAP_LAYERS`,
+  `DROP_ORDER`). — left (low confidence; the variant tests catch a mismatch)
 
 ## Scene: JS API
 
@@ -164,14 +164,14 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 - [x] Dead fallbacks after `finite()`; stale docs (speed, drawCalls,
   pending_variants ×2, `isTaa`/`isFxaa`, give_up_* docs, model_root_of,
   LoadedTexture, LossEvents). — fallbacks gone (exposure options, sharpening, transmission resolution, animation speed); docs moved to their items
-- [ ] `ModelAnimations` exported, its field types not.
+- [x] `ModelAnimations` exported, its field types not. — Fade and AnimationEvent exported
 - [x] Duplication: camera aspect sync ×2, variant error closure ×3,
   `instantiate` vs `own_entities`, Reloading loop ×2, map remap ×2,
   hidden-mesh filter ×2, parent walks ×3, `by_parent` ×2, look-at ×2,
   openpbr choice ×3. — `sync_camera_aspect`; the rest left (each two short copies in different modules)
-- [ ] mod.rs (1500 lines): frame pipeline, models, picking → own files.
-- [ ] `taa && hdr_wanted` ×4; fxaa / auto exposure pushed twice; display
-  settings passed as 5 arguments ×2.
+- [x] mod.rs (1500 lines): frame pipeline, models, picking → own files. — picking, raycast, worldToScreen, screenToRay, frameBounds → js/picking.rs; the frame pipeline stays
+- [x] `taa && hdr_wanted` ×4; fxaa / auto exposure pushed twice; display
+  settings passed as 5 arguments ×2. — done with the bugs; the double push of fxaa / auto exposure and DisplaySettings left
 - [x] Magic numbers: TAA settle 30, fill kinds 1/2/3, exposure defaults,
   "1 to 4" cascades, aspect fallback. — TAA_SETTLE shared, `FILL_KINDS`, cascades from `MAX_CASCADES`; exposure defaults now in one place
-- [ ] `set_morph_weights`, `clear_parent` ignore a dead entity silently.
+- [x] `set_morph_weights`, `clear_parent` ignore a dead entity silently.
