@@ -381,7 +381,8 @@ impl TextureObj {
             };
             (!(inside(x, w, lw) && inside(y, h, lh) && inside(z, d, ld))).then(|| {
                 format!(
-                    "region {w}x{h}x{d} at ({x}, {y}, {z}) is outside level {level} \n                     ({lw}x{lh}x{ld})"
+                    "region {w}x{h}x{d} at ({x}, {y}, {z}) is outside level {level} \
+                     ({lw}x{lh}x{ld})"
                 )
             })
         };

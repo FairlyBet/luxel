@@ -248,13 +248,15 @@ impl Context {
         };
         if samples > 0 {
             return Err(err!(
-                "read: color attachment {attachment} is multisampled ({samples}×); resolve it \n                 into a single-sampled target first (Pass::set_resolve or blit_framebuffer)"
+                "read: color attachment {attachment} is multisampled ({samples}×); resolve it \
+                 into a single-sampled target first (Pass::set_resolve or blit_framebuffer)"
             ));
         }
         let wanted = read_format_for(internal);
         if format != wanted {
             return Err(err!(
-                "read: color attachment {attachment} (format {internal:#x}) reads as {wanted:?}, \n                 not {format:?}"
+                "read: color attachment {attachment} (format {internal:#x}) reads as {wanted:?}, \
+                 not {format:?}"
             ));
         }
         Ok(())

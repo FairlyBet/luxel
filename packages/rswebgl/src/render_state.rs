@@ -719,11 +719,13 @@ impl Context {
             if !usable || state.targets.iter().any(|(i, _)| *i >= max) {
                 crate::console::error_once(&if usable {
                     format!(
-                        "[rswebgl] render state: a per-target blend past attachment {} \n                         (MAX_DRAW_BUFFERS); overrides ignored",
+                        "[rswebgl] render state: a per-target blend past attachment {} \
+                         (MAX_DRAW_BUFFERS); overrides ignored",
                         max - 1
                     )
                 } else {
-                    "[rswebgl] render state: per-target blending needs \n                     OES_draw_buffers_indexed, which this device lacks; overrides ignored"
+                    "[rswebgl] render state: per-target blending needs \
+                     OES_draw_buffers_indexed, which this device lacks; overrides ignored"
                         .to_string()
                 });
                 owned = state.clone();

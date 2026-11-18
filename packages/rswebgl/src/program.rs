@@ -880,12 +880,9 @@ impl Context {
             if failed.is_empty() {
                 Ok(JsValue::UNDEFINED)
             } else {
-                Err(Error::shader(failed.join(
-                    "
+                Err(Error::shader(failed.join("
 
-",
-                ))
-                .into())
+")).into())
             }
         })
     }

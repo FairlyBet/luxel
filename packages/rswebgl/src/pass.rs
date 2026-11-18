@@ -370,7 +370,8 @@ impl Pass {
             DrawMode::Points | DrawMode::Lines | DrawMode::Triangles
         ) {
             return console::error(&format!(
-                "[rswebgl] set_transform_feedback: {mode:?} can't be recorded; use Points, \n                 Lines or Triangles; ignored"
+                "[rswebgl] set_transform_feedback: {mode:?} can't be recorded; use Points, \
+                 Lines or Triangles; ignored"
             ));
         }
         let query = self.feedback.map_or(QueryId::NULL, |f| f.query);

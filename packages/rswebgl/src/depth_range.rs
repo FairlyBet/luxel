@@ -22,9 +22,10 @@ const ZERO_TO_ONE: u32 = 0x935F; // ZERO_TO_ONE_EXT
 
 #[wasm_bindgen]
 impl Context {
-    /// Turns reverse-Z on or off (see the module docs). False (and nothing
-    /// changes) where `EXT_clip_control` isn't available. Survives a context
-    /// loss: it's re-applied on restore.
+    /// Turns reverse-Z on or off (see the module docs). Returns whether what
+    /// was asked holds: false only for turning it on where `EXT_clip_control`
+    /// isn't available (nothing changes then). Survives a context loss: it's
+    /// re-applied on restore.
     #[wasm_bindgen(js_name = setReverseZ)]
     pub fn set_reverse_z(&self, on: bool) -> bool {
         if !self.enable_extension_quietly(Extension::ExtClipControl) {

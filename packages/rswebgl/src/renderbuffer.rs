@@ -95,7 +95,8 @@ impl Context {
             && samples > max
         {
             return Err(err!(
-                "renderbuffer samples {samples} exceed what {format:?} takes ({max}; \n                 maxSamplesFor)"
+                "renderbuffer samples {samples} exceed what {format:?} takes ({max}; \
+                 maxSamplesFor)"
             ));
         }
         let gl = self.gl();
