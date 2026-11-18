@@ -181,7 +181,10 @@ async fn node_visibility_hides_meshes_and_lights_not_cameras() {
             r#""extensionsUsed": ["KHR_lights_punctual", "KHR_node_visibility"],
   "extensionsRequired": ["KHR_node_visibility"],"#,
         )
-        .replace(r#""extensions": { "KHR_lights_punctual": { "light""#, hidden)
+        .replace(
+            r#""extensions": { "KHR_lights_punctual": { "light""#,
+            hidden,
+        )
     });
     let mut scene = Scene::new(&ctx).expect("scene");
     scene.set_dither(false);
@@ -224,6 +227,9 @@ async fn node_visibility_hides_meshes_and_lights_not_cameras() {
     scene.set_visible(bulb, true);
     scene.render_frame(eye);
     let lit = center();
-    assert!(lit[0] > unlit[0] + 60, "lit {lit:?} vs hidden light {unlit:?}");
+    assert!(
+        lit[0] > unlit[0] + 60,
+        "lit {lit:?} vs hidden light {unlit:?}"
+    );
     scene.destroy();
 }

@@ -207,7 +207,13 @@ impl AutoExposure {
         now_ms: f64,
     ) {
         let draw = |fb: FramebufferId, size: i32, program: ProgramId, group: ParamGroupId| {
-            ctx.render(&crate::fullscreen::pass(fb, (size, size), program, state, group));
+            ctx.render(&crate::fullscreen::pass(
+                fb,
+                (size, size),
+                program,
+                state,
+                group,
+            ));
         };
         // First step: the image into the luminance buffer.
         let (p, _, g) = self.begin;
@@ -522,7 +528,9 @@ impl HdrOutput {
                 &mut undo,
                 &vert,
                 &copy_frag,
-                &ParamLayoutBuilder::new().texture("u_source").texture("u_coverage"),
+                &ParamLayoutBuilder::new()
+                    .texture("u_source")
+                    .texture("u_coverage"),
             )?;
             let mut copy_state = RenderState::new();
             copy_state.depth_test = false;
@@ -1283,8 +1291,13 @@ impl HdrOutput {
             f.f_masked,
             if resolved.is_some() { 1.0 } else { 0.0 },
         );
-        let mut pass =
-            crate::fullscreen::pass(FramebufferId::NULL, (cw, ch), f.program, self.state, f.group);
+        let mut pass = crate::fullscreen::pass(
+            FramebufferId::NULL,
+            (cw, ch),
+            f.program,
+            self.state,
+            f.group,
+        );
         if let Some(p) = profiler {
             p.time(&mut pass, "fxaa");
         }

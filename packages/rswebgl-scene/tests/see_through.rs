@@ -142,7 +142,10 @@ async fn glass_shows_transparent_meshes_behind_it() {
     // (black) environment.
     scene.set_hdr(false);
     let px = center(&gl, &mut scene, camera).await;
-    assert!(px[1] > 150 && px[0] < 60, "direct: glass over green: {px:?}");
+    assert!(
+        px[1] > 150 && px[0] < 60,
+        "direct: glass over green: {px:?}"
+    );
     scene.destroy();
 }
 

@@ -44,63 +44,74 @@ impl Scene {
         camera: Entity,
         #[wasm_bindgen(unchecked_param_type = "CaptureOptions | undefined")] opts: Option<JsValue>,
     ) -> Result<js_sys::Promise, Error> {
-        let opts = opts.unwrap_or(JsValue::UNDEFINED);
-        let fb = self.ctx.default_framebuffer();
-        let canvas = fb.canvas().ok_or("capture: the context has no canvas")?;
-        if self.ctx.is_lost() {
-            return Err(Error::context_lost("capture: the WebGL context is lost"));
-        }
-        let (old_w, old_h) = (canvas.width(), canvas.height());
-        let max = rswebgl::limits::max_renderbuffer_size().clamp(1, 8192);
-        let size = |key: &str, default: u32| -> Result<u32, Error> {
-            Ok(options::u32_or(&opts, key, default)?.clamp(1, max))
-        };
-        let (w, h) = (size("width", old_w.max(1))?, size("height", old_h.max(1))?);
-        let mime = options::string_or(&opts, "type", "image/png")?;
-        let quality = match options::f32_or(&opts, "quality", f32::NAN)? {
-            q if q.is_nan() => JsValue::UNDEFINED,
-            q => q.clamp(0.0, 1.0).into(),
-        };
-        let taa = self.taa();
-        let frames = options::u32_or(&opts, "frames", if taa { super::on_demand::TAA_SETTLE } else { 1 })?.clamp(1, 256);
+        (|| -> Result<js_sys::Promise, Error> {
+            let opts = opts.unwrap_or(JsValue::UNDEFINED);
+            let fb = self.ctx.default_framebuffer();
+            let canvas = fb.canvas().ok_or("capture: the context has no canvas")?;
+            if self.ctx.is_lost() {
+                return Err(Error::context_lost("capture: the WebGL context is lost"));
+            }
+            let (old_w, old_h) = (canvas.width(), canvas.height());
+            let max = rswebgl::limits::max_renderbuffer_size().clamp(1, 8192);
+            let size = |key: &str, default: u32| -> Result<u32, Error> {
+                Ok(options::u32_or(&opts, key, default)?.clamp(1, max))
+            };
+            let (w, h) = (size("width", old_w.max(1))?, size("height", old_h.max(1))?);
+            let mime = options::string_or(&opts, "type", "image/png")?;
+            let quality = match options::f32_or(&opts, "quality", f32::NAN)? {
+                q if q.is_nan() => JsValue::UNDEFINED,
+                q => q.clamp(0.0, 1.0).into(),
+            };
+            let taa = self.taa();
+            let frames = options::u32_or(
+                &opts,
+                "frames",
+                if taa { super::on_demand::TAA_SETTLE } else { 1 },
+            )?
+            .clamp(1, 256);
 
-        let resized = (w, h) != (old_w, old_h);
-        if resized {
-            canvas.set_width(w);
-            canvas.set_height(h);
-            set_viewport_to_buffer(&fb);
-        }
-        for _ in 0..frames {
-            self.render_frame(camera);
-        }
-        // The drawing buffer is read now, before it's shown (and cleared):
-        // toBlob copies the bitmap at once and encodes later.
-        let mut started = Ok(());
-        let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let done = Closure::once_into_js(move |blob: JsValue| {
-                if blob.is_null() {
-                    let _ = reject.call1(
-                        &JsValue::NULL,
-                        &js_sys::Error::new("capture: the image couldn't be encoded").into(),
-                    );
-                } else {
-                    let _ = resolve.call1(&JsValue::NULL, &blob);
-                }
+            let resized = (w, h) != (old_w, old_h);
+            if resized {
+                canvas.set_width(w);
+                canvas.set_height(h);
+                set_viewport_to_buffer(&fb);
+            }
+            for _ in 0..frames {
+                self.render_frame(camera);
+            }
+            // The drawing buffer is read now, before it's shown (and cleared):
+            // toBlob copies the bitmap at once and encodes later.
+            let mut started = Ok(());
+            let promise = js_sys::Promise::new(&mut |resolve, reject| {
+                let done = Closure::once_into_js(move |blob: JsValue| {
+                    if blob.is_null() {
+                        let _ = reject.call1(
+                            &JsValue::NULL,
+                            &js_sys::Error::new("capture: the image couldn't be encoded").into(),
+                        );
+                    } else {
+                        let _ = resolve.call1(&JsValue::NULL, &blob);
+                    }
+                });
+                started = canvas.to_blob_with_type_and_encoder_options(
+                    done.unchecked_ref(),
+                    &mime,
+                    &quality,
+                );
             });
-            started =
-                canvas.to_blob_with_type_and_encoder_options(done.unchecked_ref(), &mime, &quality);
-        });
-        if resized {
-            canvas.set_width(old_w);
-            canvas.set_height(old_h);
-            set_viewport_to_buffer(&fb);
-            // A resize cleared the canvas, and the camera has the picture's
-            // aspect: a frame at the canvas's size now (TAA settles on).
-            self.render_frame(camera);
-            self.invalidate();
-        }
-        started.map_err(|e| Error::from(format!("capture: {e:?}")))?;
-        Ok(promise)
+            if resized {
+                canvas.set_width(old_w);
+                canvas.set_height(old_h);
+                set_viewport_to_buffer(&fb);
+                // A resize cleared the canvas, and the camera has the picture's
+                // aspect: a frame at the canvas's size now (TAA settles on).
+                self.render_frame(camera);
+                self.invalidate();
+            }
+            started.map_err(|e| Error::from(format!("capture: {e:?}")))?;
+            Ok(promise)
+        })()
+        .map_err(|e| e.in_op("capture"))
     }
 }
 

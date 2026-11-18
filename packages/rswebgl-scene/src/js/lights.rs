@@ -26,44 +26,47 @@ impl Scene {
         e: Entity,
         #[wasm_bindgen(unchecked_param_type = "CameraOptions")] camera: JsValue,
     ) -> Result<(), Error> {
-        self.invalidate();
-        let aspect = self.world.get::<Camera>(e).map_or(1.0, |c| c.aspect);
-        let near = options::f32_or(&camera, "znear", 0.1)?;
-        // Infinity: no far plane (a glTF camera without zfar; perspective
-        // only).
-        let infinite = js_sys::Reflect::get(&camera, &"zfar".into())
-            .ok()
-            .and_then(|v| v.as_f64())
-            == Some(f64::INFINITY);
-        let far = if infinite {
-            f32::INFINITY
-        } else {
-            options::f32_or(&camera, "zfar", 1000.0)?
-        };
-        if !(near > 0.0 && far > near) {
-            return Err("setCamera: needs 0 < znear < zfar".into());
-        }
-        let cam = match options::string(&camera, "type")?.as_str() {
-            "perspective" => {
-                let fov = options::f32_or(&camera, "yfov", std::f32::consts::FRAC_PI_4)?;
-                Camera::perspective(fov, aspect, near, far)
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            let aspect = self.world.get::<Camera>(e).map_or(1.0, |c| c.aspect);
+            let near = options::f32_or(&camera, "znear", 0.1)?;
+            // Infinity: no far plane (a glTF camera without zfar; perspective
+            // only).
+            let infinite = js_sys::Reflect::get(&camera, &"zfar".into())
+                .ok()
+                .and_then(|v| v.as_f64())
+                == Some(f64::INFINITY);
+            let far = if infinite {
+                f32::INFINITY
+            } else {
+                options::f32_or(&camera, "zfar", 1000.0)?
+            };
+            if !(near > 0.0 && far > near) {
+                return Err("setCamera: needs 0 < znear < zfar".into());
             }
-            "orthographic" => {
-                if infinite {
-                    return Err("setCamera: an orthographic camera needs a finite zfar".into());
+            let cam = match options::string(&camera, "type")?.as_str() {
+                "perspective" => {
+                    let fov = options::f32_or(&camera, "yfov", std::f32::consts::FRAC_PI_4)?;
+                    Camera::perspective(fov, aspect, near, far)
                 }
-                let ymag = options::f32_or(&camera, "ymag", 1.0)?;
-                Camera::orthographic(ymag, aspect, near, far)
-            }
-            other => {
-                return Err(format!(
-                    "setCamera: type \"{other}\" isn't \"perspective\" or \"orthographic\""
-                )
-                .into());
-            }
-        };
-        self.insert_camera(e, cam);
-        Ok(())
+                "orthographic" => {
+                    if infinite {
+                        return Err("setCamera: an orthographic camera needs a finite zfar".into());
+                    }
+                    let ymag = options::f32_or(&camera, "ymag", 1.0)?;
+                    Camera::orthographic(ymag, aspect, near, far)
+                }
+                other => {
+                    return Err(format!(
+                        "setCamera: type \"{other}\" isn't \"perspective\" or \"orthographic\""
+                    )
+                    .into());
+                }
+            };
+            self.insert_camera(e, cam);
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setCamera"))
     }
 
     /// Width / height of the target, for cameras used with `render` into a
@@ -82,6 +85,13 @@ impl Scene {
         }
     }
 
+    /// `e`'s aspect (`setCameraAspect`, or what `renderFrame` set), or
+    /// undefined if it isn't a camera.
+    #[wasm_bindgen(js_name = cameraAspect)]
+    pub fn camera_aspect(&self, e: Entity) -> Option<f32> {
+        self.world.get::<Camera>(e).map(|c| c.aspect)
+    }
+
     // --- lights ---------------------------------------------------------------
 
     /// Makes `e` a punctual light (see `LightOptions`; KHR_lights_punctual
@@ -94,51 +104,61 @@ impl Scene {
         e: Entity,
         #[wasm_bindgen(unchecked_param_type = "LightOptions")] light: JsValue,
     ) -> Result<(), Error> {
-        self.invalidate();
-        // Frozen shadows are baked again with it.
-        self.renderer.rebake_shadows();
-        let color = options::vec3_or(&light, "color", Vec3::ONE)?;
-        let intensity = options::f32_or(&light, "intensity", 1.0)?;
-        let range = options::f32_or(&light, "range", 0.0)?;
-        let l = match options::string(&light, "type")?.as_str() {
-            "directional" => Light::directional(color, intensity),
-            "point" => Light::point(color, intensity, range),
-            "spot" => {
-                let inner = options::f32_or(&light, "innerConeAngle", 0.0)?;
-                let outer = options::f32_or(&light, "outerConeAngle", std::f32::consts::FRAC_PI_4)?;
-                if !(0.0 <= inner && inner < outer && outer <= std::f32::consts::FRAC_PI_2) {
-                    return Err("setLight: needs 0 ≤ innerConeAngle < outerConeAngle ≤ π/2".into());
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            // Frozen shadows are baked again with it.
+            self.renderer.rebake_shadows();
+            let color = options::vec3_or(&light, "color", Vec3::ONE)?;
+            let intensity = options::f32_or(&light, "intensity", 1.0)?;
+            let range = options::f32_or(&light, "range", 0.0)?;
+            let l = match options::string(&light, "type")?.as_str() {
+                "directional" => Light::directional(color, intensity),
+                "point" => Light::point(color, intensity, range),
+                "spot" => {
+                    let inner = options::f32_or(&light, "innerConeAngle", 0.0)?;
+                    let outer =
+                        options::f32_or(&light, "outerConeAngle", std::f32::consts::FRAC_PI_4)?;
+                    if !(0.0 <= inner && inner < outer && outer <= std::f32::consts::FRAC_PI_2) {
+                        return Err(
+                            "setLight: needs 0 ≤ innerConeAngle < outerConeAngle ≤ π/2".into()
+                        );
+                    }
+                    Light::spot(color, intensity, range, inner, outer)
                 }
-                Light::spot(color, intensity, range, inner, outer)
-            }
-            other => {
-                return Err(format!(
-                    "setLight: type \"{other}\" isn't \"directional\", \"point\" or \"spot\""
-                )
-                .into());
-            }
-        };
-        let cast = options::bool_or(&light, "castShadow", false)?;
-        if cast {
-            let d = LightShadow::default();
-            let shadow = LightShadow {
-                normal_bias: options::f32_or(&light, "shadowNormalBias", d.normal_bias)?,
-                slope_bias: options::f32_or(&light, "shadowSlopeBias", d.slope_bias)?,
-                constant_bias: options::f32_or(&light, "shadowConstantBias", d.constant_bias)?,
-                cascades: options::u32_or(&light, "shadowCascades", d.cascades)?,
-                split_lambda: options::f32_or(&light, "shadowSplitLambda", d.split_lambda)?,
-                max_distance: options::f32_or(&light, "shadowMaxDistance", d.max_distance)?,
-                map_size: options::u32_or(&light, "shadowMapSize", d.map_size)?,
+                other => {
+                    return Err(format!(
+                        "setLight: type \"{other}\" isn't \"directional\", \"point\" or \"spot\""
+                    )
+                    .into());
+                }
             };
-            if !(1..=crate::lighting::MAX_CASCADES as u32).contains(&shadow.cascades) {
-                return Err("setLight: shadowCascades is 1 to 4".into());
+            let cast = options::bool_or(&light, "castShadow", false)?;
+            if cast {
+                let d = LightShadow::default();
+                let shadow = LightShadow {
+                    normal_bias: options::f32_or(&light, "shadowNormalBias", d.normal_bias)?,
+                    slope_bias: options::f32_or(&light, "shadowSlopeBias", d.slope_bias)?,
+                    constant_bias: options::f32_or(&light, "shadowConstantBias", d.constant_bias)?,
+                    cascades: options::u32_or(&light, "shadowCascades", d.cascades)?,
+                    split_lambda: options::f32_or(&light, "shadowSplitLambda", d.split_lambda)?,
+                    max_distance: options::f32_or(&light, "shadowMaxDistance", d.max_distance)?,
+                    map_size: options::u32_or(&light, "shadowMapSize", d.map_size)?,
+                };
+                if !(1..=crate::lighting::MAX_CASCADES as u32).contains(&shadow.cascades) {
+                    return Err(format!(
+                        "setLight: shadowCascades is 1 to {}",
+                        crate::lighting::MAX_CASCADES
+                    )
+                    .into());
+                }
+                self.world.insert(e, shadow);
+            } else {
+                self.world.remove::<LightShadow>(e);
             }
-            self.world.insert(e, shadow);
-        } else {
-            self.world.remove::<LightShadow>(e);
-        }
-        self.insert_light(e, l);
-        Ok(())
+            self.insert_light(e, l);
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setLight"))
     }
 
     /// The side of each shadow map in texels: 2048 by default; rounded to
@@ -220,29 +240,32 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "GroundShadowOptions | null")] options: JsValue,
     ) -> Result<(), Error> {
-        self.invalidate();
-        self.renderer.rebake_shadows();
-        if options.is_null() || options.is_undefined() {
-            self.renderer.set_ground_shadow(None);
-            return Ok(());
-        }
-        let d = crate::lighting::GroundShadow::default();
-        let s = crate::lighting::GroundShadow {
-            darkness: options::f32_or(&options, "darkness", d.darkness)?,
-            blur: options::f32_or(&options, "blur", d.blur)?,
-            opacity: options::f32_or(&options, "opacity", d.opacity)?,
-            reach: options::f32_or(&options, "reach", d.reach)?,
-            size: options::u32_or(&options, "size", d.size)?,
-        };
-        if !(s.darkness >= 0.0
-            && s.blur >= 0.0
-            && (0.0..=1.0).contains(&s.opacity)
-            && s.reach >= 0.0)
-        {
-            return Err("setGroundShadow: darkness, blur, reach ≥ 0, opacity in 0..1".into());
-        }
-        self.renderer.set_ground_shadow(Some(s));
-        Ok(())
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            self.renderer.rebake_shadows();
+            if options.is_null() || options.is_undefined() {
+                self.renderer.set_ground_shadow(None);
+                return Ok(());
+            }
+            let d = crate::lighting::GroundShadow::default();
+            let s = crate::lighting::GroundShadow {
+                darkness: options::f32_or(&options, "darkness", d.darkness)?,
+                blur: options::f32_or(&options, "blur", d.blur)?,
+                opacity: options::f32_or(&options, "opacity", d.opacity)?,
+                reach: options::f32_or(&options, "reach", d.reach)?,
+                size: options::u32_or(&options, "size", d.size)?,
+            };
+            if !(s.darkness >= 0.0
+                && s.blur >= 0.0
+                && (0.0..=1.0).contains(&s.opacity)
+                && s.reach >= 0.0)
+            {
+                return Err("setGroundShadow: darkness, blur, reach ≥ 0, opacity in 0..1".into());
+            }
+            self.renderer.set_ground_shadow(Some(s));
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setGroundShadow"))
     }
 
     /// The ground shadow's options as `setGroundShadow` takes them, or null
@@ -471,7 +494,7 @@ impl Scene {
         #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] color: &[f32],
     ) -> Result<(), Error> {
         let c = fill_color("setBackgroundColor", color)?;
-        self.set_fill(c.extend(1.0), Vec4::ZERO);
+        self.set_fill(c.extend(fill_kind("color")), Vec4::ZERO);
         Ok(())
     }
 
@@ -489,8 +512,7 @@ impl Scene {
         let a = fill_color("setBackgroundGradient", from)?;
         let b = fill_color("setBackgroundGradient", to)?;
         let w = match kind {
-            "vertical" => 2.0,
-            "radial" => 3.0,
+            "vertical" | "radial" => fill_kind(kind),
             other => {
                 return Err(format!(
                     "setBackgroundGradient: kind \"{other}\" isn't \"vertical\" or \"radial\""
@@ -507,23 +529,27 @@ impl Scene {
     #[wasm_bindgen(js_name = backgroundFill, unchecked_return_type = "BackgroundFill | undefined")]
     pub fn background_fill(&self) -> JsValue {
         let [a, b] = self.renderer.fill();
-        let kind = match a.w as u32 {
-            1 => "color",
-            2 => "vertical",
-            3 => "radial",
-            _ => return JsValue::UNDEFINED,
+        let Some(&kind) = (a.w as usize)
+            .checked_sub(1)
+            .and_then(|i| FILL_KINDS.get(i))
+        else {
+            return JsValue::UNDEFINED;
         };
-        let o = js_sys::Object::new();
-        let set = |k: &str, v: JsValue| {
-            let _ = js_sys::Reflect::set(&o, &k.into(), &v);
-        };
-        set("type", kind.into());
-        set("from", js_sys::Float32Array::from(&a.truncate().to_array()[..]).into());
-        if kind != "color" {
-            set("to", js_sys::Float32Array::from(&b.truncate().to_array()[..]).into());
+        let color = |c: Vec4| JsValue::from(js_sys::Float32Array::from(&c.truncate().to_array()[..]));
+        if kind == "color" {
+            super::getters::object(&[("type", kind.into()), ("from", color(a))])
+        } else {
+            super::getters::object(&[("type", kind.into()), ("from", color(a)), ("to", color(b))])
         }
-        o.into()
     }
+}
+
+// The background fill kinds, as the shaders read them from u_fill_a.w
+// (color.glsl `background_fill`): 1 + their index here, 0 none.
+const FILL_KINDS: [&str; 3] = ["color", "vertical", "radial"];
+
+fn fill_kind(name: &str) -> f32 {
+    FILL_KINDS.iter().position(|&k| k == name).map_or(0.0, |i| (i + 1) as f32)
 }
 
 // A background color: three (or four, alpha ignored) finite numbers,

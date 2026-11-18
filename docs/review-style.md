@@ -155,23 +155,23 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 
 ## Scene: JS API
 
-- [ ] Option helper errors lack the method name (every options setter).
-  Non-finite numbers: console error + ignore vs throw — to decide.
-- [ ] Getters: `quality()`, camera `aspect`, `mesh()`, environment size;
+- [x] Option helper errors lack the method name (every options setter).
+  Non-finite numbers: console error + ignore vs throw — to decide. — `Error::in_op`: the option-reading setters (setCamera, setLight, setMesh, setGroundShadow, setAmbientOcclusion, setContactShadows, setMaterialProperty, setMaterialTexture, loadTexture, capture) lead every error with their name; test. Non-finite numbers still console + ignore (documented split, left)
+- [x] Getters: `quality()`, camera `aspect`, `mesh()`, environment size;
   `setMaterial` ↔ `meshMaterial`; background fill getter name;
-  `setAutoExposureOptions` positional; getters.rs vs next to the setter.
-- [ ] Options by hand (`zfar`; objects built without `object()`; PickHit ×2).
-- [ ] Dead fallbacks after `finite()`; stale docs (speed, drawCalls,
+  `setAutoExposureOptions` positional; getters.rs vs next to the setter. — `cameraAspect` added; `quality()` left (a preset, not a state: settings change after it); `meshMaterial` / `backgroundFill` names and `setAutoExposureOptions`'s positional form left (breaking, low value); getters.rs kept for read-backs with no setter beside them
+- [x] Options by hand (`zfar`; objects built without `object()`; PickHit ×2). — `hit_object` for both PickHits; backgroundFill via `object()`; zfar's raw read left (needs Infinity)
+- [x] Dead fallbacks after `finite()`; stale docs (speed, drawCalls,
   pending_variants ×2, `isTaa`/`isFxaa`, give_up_* docs, model_root_of,
-  LoadedTexture, LossEvents).
+  LoadedTexture, LossEvents). — fallbacks gone (exposure options, sharpening, transmission resolution, animation speed); docs moved to their items
 - [ ] `ModelAnimations` exported, its field types not.
-- [ ] Duplication: camera aspect sync ×2, variant error closure ×3,
+- [x] Duplication: camera aspect sync ×2, variant error closure ×3,
   `instantiate` vs `own_entities`, Reloading loop ×2, map remap ×2,
   hidden-mesh filter ×2, parent walks ×3, `by_parent` ×2, look-at ×2,
-  openpbr choice ×3.
+  openpbr choice ×3. — `sync_camera_aspect`; the rest left (each two short copies in different modules)
 - [ ] mod.rs (1500 lines): frame pipeline, models, picking → own files.
 - [ ] `taa && hdr_wanted` ×4; fxaa / auto exposure pushed twice; display
   settings passed as 5 arguments ×2.
-- [ ] Magic numbers: TAA settle 30, fill kinds 1/2/3, exposure defaults,
-  "1 to 4" cascades, aspect fallback.
+- [x] Magic numbers: TAA settle 30, fill kinds 1/2/3, exposure defaults,
+  "1 to 4" cascades, aspect fallback. — TAA_SETTLE shared, `FILL_KINDS`, cascades from `MAX_CASCADES`; exposure defaults now in one place
 - [ ] `set_morph_weights`, `clear_parent` ignore a dead entity silently.

@@ -69,30 +69,34 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "AmbientOcclusionOptions | null")] options: JsValue,
     ) -> Result<(), Error> {
-        self.invalidate();
-        if options.is_null() || options.is_undefined() {
-            self.ambient_occlusion = None;
-            return Ok(());
-        }
-        let d = crate::occlusion::AmbientOcclusion::default();
-        let s = crate::occlusion::AmbientOcclusion {
-            radius: options::f32_or(&options, "radius", d.radius)?,
-            thickness: options::f32_or(&options, "thickness", d.thickness)?,
-            intensity: options::f32_or(&options, "intensity", d.intensity)?,
-            power: options::f32_or(&options, "power", d.power)?,
-            half_resolution: options::bool_or(&options, "halfResolution", d.half_resolution)?,
-        };
-        if !(s.radius >= 0.0
-            && s.thickness >= 0.0
-            && (0.0..=1.0).contains(&s.intensity)
-            && s.power > 0.0)
-        {
-            return Err(
-                "setAmbientOcclusion: radius, thickness ≥ 0, intensity in 0..1, power > 0".into(),
-            );
-        }
-        self.ambient_occlusion = Some(s);
-        Ok(())
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            if options.is_null() || options.is_undefined() {
+                self.ambient_occlusion = None;
+                return Ok(());
+            }
+            let d = crate::occlusion::AmbientOcclusion::default();
+            let s = crate::occlusion::AmbientOcclusion {
+                radius: options::f32_or(&options, "radius", d.radius)?,
+                thickness: options::f32_or(&options, "thickness", d.thickness)?,
+                intensity: options::f32_or(&options, "intensity", d.intensity)?,
+                power: options::f32_or(&options, "power", d.power)?,
+                half_resolution: options::bool_or(&options, "halfResolution", d.half_resolution)?,
+            };
+            if !(s.radius >= 0.0
+                && s.thickness >= 0.0
+                && (0.0..=1.0).contains(&s.intensity)
+                && s.power > 0.0)
+            {
+                return Err(
+                    "setAmbientOcclusion: radius, thickness ≥ 0, intensity in 0..1, power > 0"
+                        .into(),
+                );
+            }
+            self.ambient_occlusion = Some(s);
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setAmbientOcclusion"))
     }
 
     /// Screen-space contact shadows of the key light (the one giving the
@@ -110,29 +114,33 @@ impl Scene {
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "ContactShadowsOptions | null")] options: JsValue,
     ) -> Result<(), Error> {
-        self.invalidate();
-        if options.is_null() || options.is_undefined() {
-            self.contact_shadows = None;
-            return Ok(());
-        }
-        let d = crate::occlusion::ContactShadows::default();
-        let s = crate::occlusion::ContactShadows {
-            length: options::f32_or(&options, "length", d.length)?,
-            thickness: options::f32_or(&options, "thickness", d.thickness)?,
-            intensity: options::f32_or(&options, "intensity", d.intensity)?,
-            steps: options::u32_or(&options, "steps", d.steps)?,
-        };
-        if !(s.length >= 0.0
-            && s.thickness >= 0.0
-            && (0.0..=1.0).contains(&s.intensity)
-            && (1..=64).contains(&s.steps))
-        {
-            return Err(
-                "setContactShadows: length, thickness ≥ 0, intensity in 0..1, steps 1..64".into(),
-            );
-        }
-        self.contact_shadows = Some(s);
-        Ok(())
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            if options.is_null() || options.is_undefined() {
+                self.contact_shadows = None;
+                return Ok(());
+            }
+            let d = crate::occlusion::ContactShadows::default();
+            let s = crate::occlusion::ContactShadows {
+                length: options::f32_or(&options, "length", d.length)?,
+                thickness: options::f32_or(&options, "thickness", d.thickness)?,
+                intensity: options::f32_or(&options, "intensity", d.intensity)?,
+                steps: options::u32_or(&options, "steps", d.steps)?,
+            };
+            if !(s.length >= 0.0
+                && s.thickness >= 0.0
+                && (0.0..=1.0).contains(&s.intensity)
+                && (1..=64).contains(&s.steps))
+            {
+                return Err(
+                    "setContactShadows: length, thickness ≥ 0, intensity in 0..1, steps 1..64"
+                        .into(),
+                );
+            }
+            self.contact_shadows = Some(s);
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setContactShadows"))
     }
 
     /// The contact shadows' options as `setContactShadows` takes them, or
@@ -303,13 +311,7 @@ impl Scene {
         if !options::finite("setAutoExposureOptions", &[grey, min, max, speed]) {
             return;
         }
-        let ok = |v: f32, d: f32| if v.is_finite() { v } else { d };
-        self.auto_exposure_options = [
-            ok(grey, 0.4),
-            ok(min, 0.05),
-            ok(max, 10_000.0),
-            ok(speed, 0.5),
-        ];
+        self.auto_exposure_options = [grey, min, max, speed];
     }
 
     /// Antialiasing samples per pixel of the HDR target (default 4; 0 or 1
@@ -343,11 +345,7 @@ impl Scene {
         if !options::finite("setSharpening", &[amount]) {
             return;
         }
-        self.sharpness = if amount.is_finite() {
-            amount.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        self.sharpness = amount.clamp(0.0, 1.0);
     }
 
     pub fn sharpening(&self) -> f32 {
@@ -364,11 +362,7 @@ impl Scene {
         if !options::finite("setTransmissionResolution", &[scale]) {
             return;
         }
-        self.transmission_scale = if scale.is_finite() {
-            scale.clamp(0.25, 1.0)
-        } else {
-            1.0
-        };
+        self.transmission_scale = scale.clamp(0.25, 1.0);
     }
 
     #[wasm_bindgen(js_name = transmissionResolution)]
@@ -497,7 +491,7 @@ impl Scene {
         }
     }
 
-    // TAA off for good (`isTaa` answers false); HDR output stays.
+    // TAA off for good (`taa()` answers false); HDR output stays.
     fn give_up_taa(&mut self, e: &Error) {
         // Lost: everything fails until the restore, which rebuilds it.
         if self.ctx.is_lost() {
@@ -511,7 +505,7 @@ impl Scene {
         self.renderer.set_motion_vectors(&self.ctx, false);
     }
 
-    // FXAA off for good (`isFxaa` answers false).
+    // Auto exposure off for good (`autoExposure()` answers false).
     fn give_up_auto_exposure(&mut self, e: &Error) {
         if self.ctx.is_lost() {
             return;
@@ -522,6 +516,7 @@ impl Scene {
         self.auto_exposure = false;
     }
 
+    // FXAA off for good (`fxaa()` answers false).
     fn give_up_fxaa(&mut self, e: &Error) {
         if self.ctx.is_lost() {
             return;
@@ -617,5 +612,4 @@ impl Scene {
         }
         out.resolve_again(&self.ctx);
     }
-
 }

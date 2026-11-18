@@ -110,12 +110,22 @@ impl Scene {
         if anims.clips.get(index).is_none() {
             return Err(format!("crossfadeAnimation: no animation {index}").into());
         }
-        let Some(from) = anims.playing.filter(|_| seconds > 0.0 && seconds.is_finite()) else {
+        let Some(from) = anims
+            .playing
+            .filter(|_| seconds > 0.0 && seconds.is_finite())
+        else {
             return self.play_animation(root, index, looping);
         };
         self.invalidate();
         let previous = anims.fade.as_ref();
-        let base = fade_base(&self.world, &anims.clips, &anims.nodes, &from, previous, index);
+        let base = fade_base(
+            &self.world,
+            &anims.clips,
+            &anims.nodes,
+            &from,
+            previous,
+            index,
+        );
         let to = Playback::new(index, looping);
         let fade = Fade {
             // During a fade: from the mix it reached (`base`), not either clip.
@@ -181,7 +191,7 @@ impl Scene {
     }
 
     /// Seconds of animation per second of `advanceAnimations` (default 1;
-    /// negative plays backwards; a non-finite speed counts as 1).
+    /// negative plays backwards; a non-finite speed is reported and ignored).
     #[wasm_bindgen(js_name = setAnimationSpeed)]
     pub fn set_animation_speed(&mut self, root: Entity, speed: f32) {
         self.invalidate();
@@ -191,7 +201,7 @@ impl Scene {
         if let Some(mut a) = self.world.get_mut::<ModelAnimations>(root)
             && let Some(p) = a.playing.as_mut()
         {
-            p.speed = if speed.is_finite() { speed } else { 1.0 };
+            p.speed = speed;
         }
     }
 

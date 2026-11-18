@@ -9,9 +9,7 @@
 use glam::Mat4;
 use rswebgl::context::Context;
 use rswebgl::error::Error;
-use rswebgl::ids::{
-    FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, StateId, TextureId,
-};
+use rswebgl::ids::{FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, StateId, TextureId};
 use rswebgl::param::ParamLayoutBuilder;
 use rswebgl::render_state::{BlendFactor, RenderState};
 use rswebgl::shader_source::ShaderSource;
@@ -19,7 +17,6 @@ use rswebgl::texture::{
     TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget, TextureWrap,
 };
 use rswebgl::uniform_buffer::UniformType;
-
 
 const GTAO_FRAG: &str = include_str!("../shaders/gtao.frag");
 const DENOISE_FRAG: &str = include_str!("../shaders/gtao_denoise.frag");

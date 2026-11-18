@@ -41,11 +41,11 @@ use crate::shader::create_scene_program;
 /// model root and the fresh load.
 pub(crate) type Reloads = Rc<RefCell<Vec<(Entity, Result<Model, Error>)>>>;
 
+type LossListener = Closure<dyn FnMut(web_sys::Event)>;
+
 /// The app's `setOnLost` / `setOnRestored` callbacks: the first called
 /// from a listener on the canvas (the context's own slot stays the app's),
 /// the second once the scene has rebuilt.
-type LossListener = Closure<dyn FnMut(web_sys::Event)>;
-
 #[derive(Default)]
 pub(crate) struct LossEvents {
     on_lost: Rc<RefCell<Option<js_sys::Function>>>,
@@ -422,7 +422,9 @@ impl Scene {
     #[wasm_bindgen(js_name = setOnLost)]
     pub fn set_on_lost(
         &mut self,
-        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<js_sys::Function>,
+        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<
+            js_sys::Function,
+        >,
     ) {
         *self.loss_events.on_lost.borrow_mut() = f;
         if self.loss_events.listener.is_some() {
@@ -445,8 +447,10 @@ impl Scene {
                 console::error(&format!("[rswebgl-scene] onLost threw: {e:?}"));
             }
         });
-        let _ = target
-            .add_event_listener_with_callback("webglcontextlost", listener.as_ref().unchecked_ref());
+        let _ = target.add_event_listener_with_callback(
+            "webglcontextlost",
+            listener.as_ref().unchecked_ref(),
+        );
         self.loss_events.listener = Some((target, listener));
     }
 
@@ -458,7 +462,9 @@ impl Scene {
     #[wasm_bindgen(js_name = setOnRestored)]
     pub fn set_on_restored(
         &mut self,
-        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<js_sys::Function>,
+        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<
+            js_sys::Function,
+        >,
     ) {
         self.loss_events.on_restored = f;
     }

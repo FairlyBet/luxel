@@ -216,26 +216,29 @@ impl Scene {
         name: &str,
         #[wasm_bindgen(unchecked_param_type = "number | ArrayLike<number>")] value: JsValue,
     ) -> Result<(), Error> {
-        self.invalidate();
-        // Frozen shadows don't see this change on their own.
-        self.renderer.invalidate_shadows();
-        let values = options::numbers(&value)
-            .ok_or_else(|| Error::from(format!("\"{name}\" takes a number or numbers")))?;
-        // An OpenPBR name: the glTF-side properties that carry it.
-        let record = self
-            .materials
-            .get_mut(&material)
-            .ok_or("setMaterialProperty: not a material of this scene")?;
-        if name == "fuzz_color" && values.len() == 3 {
-            record.fuzz_color = [values[0], values[1], values[2]];
-        }
-        if let Some(writes) = openpbr::set(&record.material, name, &values, record.fuzz_color) {
-            for (prop, v) in writes.map_err(Error::from)? {
-                self.set_material_values(material, prop, &v)?;
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            // Frozen shadows don't see this change on their own.
+            self.renderer.invalidate_shadows();
+            let values = options::numbers(&value)
+                .ok_or_else(|| Error::from(format!("\"{name}\" takes a number or numbers")))?;
+            // An OpenPBR name: the glTF-side properties that carry it.
+            let record = self
+                .materials
+                .get_mut(&material)
+                .ok_or("setMaterialProperty: not a material of this scene")?;
+            if name == "fuzz_color" && values.len() == 3 {
+                record.fuzz_color = [values[0], values[1], values[2]];
             }
-            return Ok(());
-        }
-        self.set_material_values(material, name, &values)
+            if let Some(writes) = openpbr::set(&record.material, name, &values, record.fuzz_color) {
+                for (prop, v) in writes.map_err(Error::from)? {
+                    self.set_material_values(material, prop, &v)?;
+                }
+                return Ok(());
+            }
+            self.set_material_values(material, name, &values)
+        })()
+        .map_err(|e| e.in_op("setMaterialProperty"))
     }
 
     /// What a material's parameters mean to the OpenPBR model: "gltf" (as
@@ -350,32 +353,35 @@ impl Scene {
         url: &str,
         #[wasm_bindgen(unchecked_param_type = "TextureOptions | undefined")] opts: Option<JsValue>,
     ) -> Result<js_sys::Promise, Error> {
-        self.invalidate();
-        let opts = opts.unwrap_or(JsValue::UNDEFINED);
-        self.sync_context();
-        let spec = TextureSpec::parse(url, &opts)?;
-        let mut result = Ok(TextureId::NULL);
-        let promise = js_sys::Promise::new(&mut |resolve, reject| {
-            let (ctx, url) = (self.ctx.clone(), spec.url.clone());
-            let on_load = move |tex: TextureId| -> js_sys::Function {
-                Closure::once_into_js(move |w: f64, _h: f64| {
-                    if w > 0.0 {
-                        let _ = resolve.call1(&JsValue::NULL, &tex.to_raw().into());
-                    } else {
-                        if ctx.texture_is_valid(tex) {
-                            ctx.destroy_texture(tex);
+        (|| -> Result<js_sys::Promise, Error> {
+            self.invalidate();
+            let opts = opts.unwrap_or(JsValue::UNDEFINED);
+            self.sync_context();
+            let spec = TextureSpec::parse(url, &opts)?;
+            let mut result = Ok(TextureId::NULL);
+            let promise = js_sys::Promise::new(&mut |resolve, reject| {
+                let (ctx, url) = (self.ctx.clone(), spec.url.clone());
+                let on_load = move |tex: TextureId| -> js_sys::Function {
+                    Closure::once_into_js(move |w: f64, _h: f64| {
+                        if w > 0.0 {
+                            let _ = resolve.call1(&JsValue::NULL, &tex.to_raw().into());
+                        } else {
+                            if ctx.texture_is_valid(tex) {
+                                ctx.destroy_texture(tex);
+                            }
+                            let err = js_sys::Error::new(&format!("loadTexture: can't load {url}"));
+                            let _ = reject.call1(&JsValue::NULL, &err);
                         }
-                        let err = js_sys::Error::new(&format!("loadTexture: can't load {url}"));
-                        let _ = reject.call1(&JsValue::NULL, &err);
-                    }
-                })
-                .unchecked_into()
-            };
-            result = spec.start(&self.ctx, on_load);
-        });
-        let tex = result?;
-        self.textures.push(LoadedTexture { id: tex, spec });
-        Ok(promise)
+                    })
+                    .unchecked_into()
+                };
+                result = spec.start(&self.ctx, on_load);
+            });
+            let tex = result?;
+            self.textures.push(LoadedTexture { id: tex, spec });
+            Ok(promise)
+        })()
+        .map_err(|e| e.in_op("loadTexture"))
     }
 
     /// Frees a texture made by `loadTexture`. Materials still using it stop
@@ -423,55 +429,58 @@ impl Scene {
             JsValue,
         >,
     ) -> Result<(), Error> {
-        self.invalidate();
-        let opts = opts.unwrap_or(JsValue::UNDEFINED);
-        self.sync_context();
-        let texture = self.current_texture(texture);
-        // Frozen shadows don't see this change on their own.
-        self.renderer.invalidate_shadows();
-        let slot = MAP_NAMES
-            .iter()
-            .position(|&n| n == map)
-            .ok_or_else(|| Error::from(format!("setMaterialTexture: no map \"{map}\"")))?;
-        let uv = options::u32_or(&opts, "texCoord", 0)?;
-        if uv > 1 {
-            return Err("setMaterialTexture: texCoord must be 0 or 1".into());
-        }
-        let [ox, oy] = options::vec2_or(&opts, "offset", [0.0, 0.0])?;
-        let [sx, sy] = options::vec2_or(&opts, "scale", [1.0, 1.0])?;
-        let transform = [ox, oy, options::f32_or(&opts, "rotation", 0.0)?, sx, sy];
-        let record = self
-            .materials
-            .get_mut(&material)
-            .ok_or("setMaterialTexture: not a material of this scene")?;
-        let index = if texture.is_null() {
-            -1
-        } else {
-            EXTERNAL_TEXTURE
-        };
-        record.material.set_map(slot, index, uv);
-        record.material.set_uv_transform(slot, transform);
-        self.ctx.param_set_floats_by_name(
-            material,
-            rswebgl_gltf::MAP_SLOTS[slot].transform,
-            &rswebgl_gltf::uv_matrix(transform),
-        );
-        record.maps[slot] = texture;
-        let uniform = MAP_UNIFORMS[slot];
-        self.ctx
-            .param_set_texture_by_name(material, uniform, texture);
-        // The texture's own sampling parameters (`loadTexture`'s wrap / filter).
-        self.ctx
-            .param_set_sampler_by_name(material, uniform, SamplerId::NULL);
-        if slot == 0 {
-            self.ctx.param_set_ints_by_name(
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            let opts = opts.unwrap_or(JsValue::UNDEFINED);
+            self.sync_context();
+            let texture = self.current_texture(texture);
+            // Frozen shadows don't see this change on their own.
+            self.renderer.invalidate_shadows();
+            let slot = MAP_NAMES
+                .iter()
+                .position(|&n| n == map)
+                .ok_or_else(|| Error::from(format!("setMaterialTexture: no map \"{map}\"")))?;
+            let uv = options::u32_or(&opts, "texCoord", 0)?;
+            if uv > 1 {
+                return Err("setMaterialTexture: texCoord must be 0 or 1".into());
+            }
+            let [ox, oy] = options::vec2_or(&opts, "offset", [0.0, 0.0])?;
+            let [sx, sy] = options::vec2_or(&opts, "scale", [1.0, 1.0])?;
+            let transform = [ox, oy, options::f32_or(&opts, "rotation", 0.0)?, sx, sy];
+            let record = self
+                .materials
+                .get_mut(&material)
+                .ok_or("setMaterialTexture: not a material of this scene")?;
+            let index = if texture.is_null() {
+                -1
+            } else {
+                EXTERNAL_TEXTURE
+            };
+            record.material.set_map(slot, index, uv);
+            record.material.set_uv_transform(slot, transform);
+            self.ctx.param_set_floats_by_name(
                 material,
-                "u_has_base_color_tex",
-                &[!texture.is_null() as i32],
+                rswebgl_gltf::MAP_SLOTS[slot].transform,
+                &rswebgl_gltf::uv_matrix(transform),
             );
-        }
-        self.update_variants_of(material);
-        Ok(())
+            record.maps[slot] = texture;
+            let uniform = MAP_UNIFORMS[slot];
+            self.ctx
+                .param_set_texture_by_name(material, uniform, texture);
+            // The texture's own sampling parameters (`loadTexture`'s wrap / filter).
+            self.ctx
+                .param_set_sampler_by_name(material, uniform, SamplerId::NULL);
+            if slot == 0 {
+                self.ctx.param_set_ints_by_name(
+                    material,
+                    "u_has_base_color_tex",
+                    &[!texture.is_null() as i32],
+                );
+            }
+            self.update_variants_of(material);
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setMaterialTexture"))
     }
 
     /// The texture of one of a material's maps (names as for
@@ -588,8 +597,6 @@ impl Scene {
         }
     }
 
-    // The model mesh `e` belongs to: the nearest ancestor (or itself) that
-    // is a model root.
     /// The entities of the model at `root` (at or under it, not inside
     /// another model hung under it).
     pub(super) fn own_entities(&self, root: Entity) -> Vec<Entity> {
@@ -599,6 +606,8 @@ impl Scene {
             .collect()
     }
 
+    // The model mesh `e` belongs to: the nearest ancestor (or itself) that
+    // is a model root.
     pub(super) fn model_root_of(&self, mut e: Entity) -> Option<Entity> {
         for _ in 0..=self.world.len() {
             if self.model_roots.contains_key(&e) {
@@ -769,13 +778,13 @@ pub(crate) struct TextureSpec {
     flip_y: bool,
 }
 
-/// A texture `loadTexture` made: freed with the scene, reloaded after a loss.
 impl TextureSpec {
     pub(crate) fn url(&self) -> &str {
         &self.url
     }
 }
 
+/// A texture `loadTexture` made: freed with the scene, reloaded after a loss.
 pub(crate) struct LoadedTexture {
     pub(crate) id: TextureId,
     pub(crate) spec: TextureSpec,

@@ -63,6 +63,18 @@ impl Error {
         &self.message
     }
 
+    /// The same error with its message led by `op` (`"setLight: …"`), unless
+    /// it already is: for helpers whose messages don't know who called them.
+    pub fn in_op(self, op: &str) -> Self {
+        if self.message.starts_with(op) {
+            return self;
+        }
+        Self {
+            message: format!("{op}: {}", self.message),
+            ..self
+        }
+    }
+
     pub fn kind(&self) -> ErrorKind {
         self.kind
     }

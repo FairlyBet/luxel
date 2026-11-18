@@ -607,10 +607,14 @@ mod tests {
 
     #[test]
     fn the_key_light_gives_the_most_light_at_the_middle() {
-
         let mut world = World::new();
         let caster = world.spawn();
-        world.insert(caster, ShadowCaster { program: rswebgl::ids::ProgramId::NULL });
+        world.insert(
+            caster,
+            ShadowCaster {
+                program: rswebgl::ids::ProgramId::NULL,
+            },
+        );
         world.insert(caster, WorldMatrix(Mat4::IDENTITY));
         world.insert(caster, Bounds::new(Vec3::splat(-0.1), Vec3::splat(0.1)));
         let sun = world.spawn();
@@ -624,12 +628,17 @@ mod tests {
         assert_eq!(key, bulb);
         assert_eq!(at, Vec4::new(0.12, 0.12, 0.0, 1.0));
         // 10 m away it gives 15 lux: the sun's (toward it: +Z).
-        world.insert(bulb, WorldMatrix(Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0))));
-        assert_eq!(key_light(&world), Some((sun, Vec4::new(0.0, 0.0, 1.0, 0.0))));
+        world.insert(
+            bulb,
+            WorldMatrix(Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0))),
+        );
+        assert_eq!(
+            key_light(&world),
+            Some((sun, Vec4::new(0.0, 0.0, 1.0, 0.0)))
+        );
         // Out of its range: nothing from it.
         world.insert(bulb, Light::point(Vec3::ONE, 1e9, 1.0));
         assert_eq!(key_light(&world).map(|(e, _)| e), Some(sun));
-
     }
 
     // A sun from above and a little to the side.

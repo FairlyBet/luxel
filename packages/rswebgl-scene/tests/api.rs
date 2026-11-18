@@ -768,9 +768,8 @@ void main() { frag_color = vec4(1.0); }",
 
     // The scene's own loss events, beside the app's ctx callbacks.
     let events = js_sys::Array::new();
-    let note = |what: &str| {
-        js_sys::Function::new_no_args(&format!("this.push('{what}')")).bind0(&events)
-    };
+    let note =
+        |what: &str| js_sys::Function::new_no_args(&format!("this.push('{what}')")).bind0(&events);
     s.scene.set_on_lost(Some(note("lost")));
     s.scene.set_on_restored(Some(note("restored")));
 
@@ -812,7 +811,11 @@ void main() { frag_color = vec4(1.0); }",
     // fetched again with its image, the loaded texture back.
     let px = s.frame().await;
     js_sys::Reflect::set(&global, &"fetch".into(), &fetch).unwrap();
-    assert_eq!((px, s.scene.drawn()), ([GREEN, BLUE, RED], 3), "at once after whenReady");
+    assert_eq!(
+        (px, s.scene.drawn()),
+        ([GREEN, BLUE, RED], 3),
+        "at once after whenReady"
+    );
     assert_eq!(events.join(",").as_string().unwrap(), "lost,restored");
     let mut restored = None;
     for _ in 0..200 {
@@ -1490,7 +1493,11 @@ async fn a_variant_reads_its_own_texcoord_set() {
     }
     assert_eq!(px, BLUE);
     assert_eq!(s.scene.material_variant(quad).as_deref(), Some("blue"));
-    assert!(s.scene.set_material_variant(quad, Some("none".into())).is_err());
+    assert!(
+        s.scene
+            .set_material_variant(quad, Some("none".into()))
+            .is_err()
+    );
     assert_eq!(s.scene.material_variant(quad).as_deref(), Some("blue"));
     s.scene.set_material_variant(quad, None).unwrap();
     assert_eq!(s.scene.material_variant(quad), None);
@@ -1613,7 +1620,10 @@ async fn getters_read_back_the_setters() {
     assert_eq!(color.to_vec(), vec![1.0, 0.5, 0.25]);
     // What it returns, setLight takes back.
     s.scene.set_light(light, l).unwrap();
-    assert_eq!(get(&s.scene.light(light), "shadowCascades").as_f64(), Some(2.0));
+    assert_eq!(
+        get(&s.scene.light(light), "shadowCascades").as_f64(),
+        Some(2.0)
+    );
     assert!(s.scene.light(s.camera).is_undefined());
 
     s.scene.set_exposure(1.5);
@@ -1648,22 +1658,38 @@ async fn getters_read_back_the_setters() {
     assert_eq!(get(&ao, "halfResolution"), JsValue::TRUE);
     assert_eq!(get(&ao, "intensity").as_f64(), Some(1.0));
     s.scene.set_ambient_occlusion(ao).unwrap();
-    assert_eq!(get(&s.scene.ambient_occlusion(), "radius").as_f64(), Some(0.5));
+    assert_eq!(
+        get(&s.scene.ambient_occlusion(), "radius").as_f64(),
+        Some(0.5)
+    );
     s.scene.set_ambient_occlusion(JsValue::NULL).unwrap();
     assert!(s.scene.ambient_occlusion().is_null());
-    s.scene.set_contact_shadows(json(r#"{ "steps": 8 }"#)).unwrap();
+    s.scene
+        .set_contact_shadows(json(r#"{ "steps": 8 }"#))
+        .unwrap();
     let c = s.scene.contact_shadows();
     assert_eq!(get(&c, "steps").as_f64(), Some(8.0));
     s.scene.set_contact_shadows(c).unwrap();
     s.scene.set_contact_shadows(JsValue::NULL).unwrap();
     assert!(s.scene.contact_shadows().is_null());
-    s.scene.set_ground_shadow(json(r#"{ "opacity": 0.5 }"#)).unwrap();
+    s.scene
+        .set_ground_shadow(json(r#"{ "opacity": 0.5 }"#))
+        .unwrap();
     let g = s.scene.ground_shadow();
     assert_eq!(get(&g, "opacity").as_f64(), Some(0.5));
     s.scene.set_ground_shadow(g).unwrap();
     assert_eq!(get(&s.scene.ground_shadow(), "opacity").as_f64(), Some(0.5));
     s.scene.set_ground_shadow(JsValue::NULL).unwrap();
     assert!(s.scene.ground_shadow().is_null());
+    // An option the setter can't read: the error names the setter.
+    let bad = s
+        .scene
+        .set_ambient_occlusion(json(r#"{ "radius": "far" }"#))
+        .unwrap_err();
+    assert!(bad.starts_with("setAmbientOcclusion: "), "{bad}");
+    assert!(bad.contains("radius"), "{bad}");
+    let bad = s.scene.set_light(light, json(r#"{ "intensity": [] }"#)).unwrap_err();
+    assert!(bad.starts_with("setLight: "), "{bad}");
 
     let kids = s.scene.children(s.root);
     assert_eq!(kids.len(), 3);
@@ -1673,7 +1699,8 @@ async fn getters_read_back_the_setters() {
     assert!(!s.scene.visible(s.root));
     s.scene.set_visible(s.root, true);
     assert!(s.scene.is_shown(part));
-    s.scene.set_bounds(part, &[-1.0, -2.0, -3.0], &[1.0, 2.0, 3.0]);
+    s.scene
+        .set_bounds(part, &[-1.0, -2.0, -3.0], &[1.0, 2.0, 3.0]);
     assert_eq!(s.scene.bounds(part), vec![-1.0, -2.0, -3.0, 1.0, 2.0, 3.0]);
     s.scene.set_translation(part, 4.0, 5.0, 6.0);
     assert_eq!(&s.scene.local_matrix(part)[12..15], &[4.0, 5.0, 6.0]);
@@ -1693,8 +1720,16 @@ async fn background_colors_and_gradients_show_as_given() {
     s.scene.set_exposure(2.0);
     let px = |s: &Setup, x: i32, y: i32| {
         let mut out = [0u8; 4];
-        s.gl.read_pixels_with_opt_u8_array(x, y, 1, 1, Gl::RGBA, Gl::UNSIGNED_BYTE, Some(&mut out[..]))
-            .unwrap();
+        s.gl.read_pixels_with_opt_u8_array(
+            x,
+            y,
+            1,
+            1,
+            Gl::RGBA,
+            Gl::UNSIGNED_BYTE,
+            Some(&mut out[..]),
+        )
+        .unwrap();
         out
     };
     let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 3);
@@ -1705,25 +1740,42 @@ async fn background_colors_and_gradients_show_as_given() {
     s.scene.set_background_color(&[0.2, 0.4, 0.6]).unwrap();
     s.scene.render_frame(s.camera);
     if s.scene.pending() > 0 {
-        assert!(s.scene.needs_render(Some(s.camera.to_raw())), "redrawn once linked");
+        assert!(
+            s.scene.needs_render(Some(s.camera.to_raw())),
+            "redrawn once linked"
+        );
     }
     for hdr in [true, false] {
         s.scene.set_hdr(hdr);
         s.scene.set_background_color(&[0.2, 0.4, 0.6]).unwrap();
         assert_eq!(s.frame().await, [color; 3], "hdr {hdr}");
-        s.scene.set_background_gradient(&[1.0, 0.0, 0.0], &[0.0, 0.0, 1.0], "vertical").unwrap();
+        s.scene
+            .set_background_gradient(&[1.0, 0.0, 0.0], &[0.0, 0.0, 1.0], "vertical")
+            .unwrap();
         s.frame().await;
         let (bottom, top) = (px(&s, 0, 0), px(&s, 0, H - 1));
-        assert!(near(bottom, [251, 0, 4, 255]) && near(top, [4, 0, 251, 255]), "hdr {hdr}: {bottom:?} {top:?}");
-        s.scene.set_background_gradient(&[1.0, 1.0, 1.0], &[0.0, 0.0, 0.0], "radial").unwrap();
+        assert!(
+            near(bottom, [251, 0, 4, 255]) && near(top, [4, 0, 251, 255]),
+            "hdr {hdr}: {bottom:?} {top:?}"
+        );
+        s.scene
+            .set_background_gradient(&[1.0, 1.0, 1.0], &[0.0, 0.0, 0.0], "radial")
+            .unwrap();
         s.frame().await;
         let (center, corner) = (px(&s, W / 2, H / 2), px(&s, 0, 0));
-        assert!(center[0] > 245 && corner[0] < 15, "hdr {hdr}: {center:?} {corner:?}");
+        assert!(
+            center[0] > 245 && corner[0] < 15,
+            "hdr {hdr}: {center:?} {corner:?}"
+        );
     }
     let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &k.into()).unwrap();
     let fill = s.scene.background_fill();
     assert_eq!(get(&fill, "type"), "radial");
-    assert!(s.scene.set_background_gradient(&[0.0; 3], &[1.0; 3], "conic").is_err());
+    assert!(
+        s.scene
+            .set_background_gradient(&[0.0; 3], &[1.0; 3], "conic")
+            .is_err()
+    );
     assert!(s.scene.set_background_color(&[0.0, 1.0]).is_err());
     // The environment background replaces it, and the reverse.
     s.scene.set_background(0.0);
@@ -1765,5 +1817,10 @@ async fn taa_edges_over_a_fill_have_no_fringe() {
     assert!(partial > 4, "antialiased edges: {partial}");
     let min_red = px.iter().map(|p| p[0]).min().unwrap();
     let fringe: Vec<_> = px.iter().filter(|p| p[0] < 240).collect();
-    assert!(fringe.is_empty(), "{} fringe pixels, min red {min_red}, e.g. {:?}", fringe.len(), fringe.first());
+    assert!(
+        fringe.is_empty(),
+        "{} fringe pixels, min red {min_red}, e.g. {:?}",
+        fringe.len(),
+        fringe.first()
+    );
 }

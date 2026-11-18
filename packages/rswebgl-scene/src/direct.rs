@@ -22,7 +22,6 @@ use rswebgl::texture::{
     TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget, TextureWrap,
 };
 
-
 // Texel for pixel: the target is the canvas's size.
 const COPY_FRAG: &str = "precision highp float;
 precision highp sampler2D;

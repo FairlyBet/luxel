@@ -166,7 +166,6 @@ fn cube_texture(
     Ok(t)
 }
 
-
 // The GPU side of one bake: programs, a parameter group, a framebuffer.
 /// The bake's shaders and parameter state, built once (compiled in the
 /// background) and shared by every bake on a context.

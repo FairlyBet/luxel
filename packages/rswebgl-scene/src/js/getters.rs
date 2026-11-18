@@ -181,9 +181,9 @@ impl Scene {
     /// `e`'s local bounds (`setBounds`, or a glTF mesh's): `[minX, minY,
     /// minZ, maxX, maxY, maxZ]`, or empty without any.
     pub fn bounds(&self, e: Entity) -> Vec<f32> {
-        self.world.get::<Bounds>(e).map_or_else(Vec::new, |b| {
-            [b.min.to_array(), b.max.to_array()].concat()
-        })
+        self.world
+            .get::<Bounds>(e)
+            .map_or_else(Vec::new, |b| [b.min.to_array(), b.max.to_array()].concat())
     }
 
     /// `e`'s local transform as a column-major 4×4 matrix (relative to its

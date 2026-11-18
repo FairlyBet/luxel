@@ -167,10 +167,9 @@ pub struct Scene {
     see_through_pass: Pass,
     transmission_layers: usize,
     stats: RenderStats,
-    // PBR variant switches waiting for the new program to link: the mesh
-    // keeps drawing with its old one meanwhile.
-    // Meshes waiting for their new variant to link: the program, and the
-    // vertex array and attributes it is for.
+    // Meshes waiting for their new PBR variant to link (drawn with the old
+    // one meanwhile): the program, and the vertex array and attributes it
+    // is for.
     pending_variants: Vec<(Entity, ProgramId, VertexArrayId, u32)>,
 }
 
@@ -361,7 +360,7 @@ impl Scene {
         #[wasm_bindgen(unchecked_param_type = "ArrayLike<number>")] m: &[f32],
     ) {
         let Ok(cols) = <[f32; 16]>::try_from(m) else {
-            console::error_once("[rswebgl-scene] setLocalMatrix needs 16 numbers; ignored");
+            console::error_once("[rswebgl-scene] setLocalMatrix: needs 16 numbers; ignored");
             return;
         };
         let t = Transform::from_matrix(Mat4::from_cols_array(&cols));
@@ -433,7 +432,7 @@ impl Scene {
                 true
             }
             (Some(_), false) => {
-                console::error_once("[rswebgl-scene] copyWorldMatrix needs room for 16 floats");
+                console::error_once("[rswebgl-scene] copyWorldMatrix: needs room for 16 floats");
                 false
             }
             (None, _) => false,
@@ -531,25 +530,28 @@ impl Scene {
         #[wasm_bindgen(unchecked_param_type = "MeshOptions")] mesh: JsValue,
         draw: &DrawCommand,
     ) -> Result<(), Error> {
-        self.invalidate();
-        // Frozen shadows are baked again with it.
-        self.renderer.rebake_shadows();
-        let mesh = MeshRenderer {
-            program: self
-                .current_program(ProgramId::from_raw(options::u32_or(&mesh, "program", 0)?)),
-            state: StateId::from_raw(options::u32_or(&mesh, "state", 0)?),
-            vao: VertexArrayId::from_raw(options::u32_or(&mesh, "vao", 0)?),
-            material: ParamGroupId::from_raw(options::u32_or(&mesh, "material", 0)?),
-            command: *draw,
-            transparent: options::bool_or(&mesh, "transparent", false)?,
-            transmissive: options::bool_or(&mesh, "transmissive", false)?,
-        };
-        if mesh.program.is_null() || mesh.state.is_null() {
-            return Err("setMesh: \"program\" and \"state\" are required".into());
-        }
-        self.pending_variants.retain(|p| p.0 != e);
-        self.insert(e, "setMesh", mesh);
-        Ok(())
+        (|| -> Result<(), Error> {
+            self.invalidate();
+            // Frozen shadows are baked again with it.
+            self.renderer.rebake_shadows();
+            let mesh = MeshRenderer {
+                program: self
+                    .current_program(ProgramId::from_raw(options::u32_or(&mesh, "program", 0)?)),
+                state: StateId::from_raw(options::u32_or(&mesh, "state", 0)?),
+                vao: VertexArrayId::from_raw(options::u32_or(&mesh, "vao", 0)?),
+                material: ParamGroupId::from_raw(options::u32_or(&mesh, "material", 0)?),
+                command: *draw,
+                transparent: options::bool_or(&mesh, "transparent", false)?,
+                transmissive: options::bool_or(&mesh, "transmissive", false)?,
+            };
+            if mesh.program.is_null() || mesh.state.is_null() {
+                return Err("setMesh: \"program\" and \"state\" are required".into());
+            }
+            self.pending_variants.retain(|p| p.0 != e);
+            self.insert(e, "setMesh", mesh);
+            Ok(())
+        })()
+        .map_err(|e| e.in_op("setMesh"))
     }
 
     #[wasm_bindgen(js_name = removeMesh)]
@@ -805,10 +807,7 @@ impl Scene {
         self.last_frame = None;
         let fb = self.ctx.default_framebuffer();
         let (w, h) = (fb.width(), fb.height());
-        let aspect = w.max(1) as f32 / h.max(1) as f32;
-        if let Some(mut c) = self.world.get_mut::<crate::camera::Camera>(camera) {
-            c.set_if_neq(crate::camera::Camera { aspect, ..*c });
-        }
+        self.sync_camera_aspect(camera);
         if !self.sync_context() {
             return 0; // lost: nothing to draw with
         }
@@ -1047,15 +1046,15 @@ impl Scene {
         self.stats.drawn
     }
 
-    /// Draw calls the last frame made: fewer than `drawn` when identical
-    /// meshes (same shader, geometry and material) drew as one instanced
-    /// draw.
     /// Meshes the last frame drew motion vectors for (they moved; with TAA).
     #[wasm_bindgen(js_name = movingMeshes)]
     pub fn moving_meshes(&self) -> usize {
         self.stats.moving
     }
 
+    /// Draw calls the last frame made: fewer than `drawn` when identical
+    /// meshes (same shader, geometry and material) drew as one instanced
+    /// draw.
     #[wasm_bindgen(js_name = drawCalls)]
     pub fn draw_calls(&self) -> usize {
         self.stats.draws
@@ -1261,15 +1260,7 @@ impl Scene {
             let Some(hit) = found.await? else {
                 return Ok(JsValue::NULL);
             };
-            let out = js_sys::Object::new();
-            let set = |k: &str, v: JsValue| js_sys::Reflect::set(&out, &k.into(), &v);
-            set("entity", hit.entity.to_raw().into())?;
-            set(
-                "point",
-                js_sys::Float32Array::from(&hit.point.to_array()[..]).into(),
-            )?;
-            set("distance", hit.distance.into())?;
-            Ok(out.into())
+            Ok(hit_object(&hit))
         }))
     }
 
@@ -1285,11 +1276,7 @@ impl Scene {
     #[wasm_bindgen(js_name = frameBounds)]
     pub fn frame_bounds(&mut self, camera: Entity, root: Entity, margin: Option<f32>) -> Vec<f32> {
         // The aspect the next frame draws at (a new camera has 1 until then).
-        let fb = self.ctx.default_framebuffer();
-        let aspect = fb.width().max(1) as f32 / fb.height().max(1) as f32;
-        if let Some(mut c) = self.world.get_mut::<crate::camera::Camera>(camera) {
-            c.set_if_neq(crate::camera::Camera { aspect, ..*c });
-        }
+        self.sync_camera_aspect(camera);
         self.transforms.update(&mut self.world);
         let bounds = crate::framing::world_bounds(&self.world, root).or_else(|| {
             // A model without mesh bounds: its sphere as loaded, moved with
@@ -1357,15 +1344,7 @@ impl Scene {
         let Some(hit) = crate::pick::pick_bounds(&self.world, camera, Vec2::new(x, y)) else {
             return JsValue::NULL;
         };
-        let out = js_sys::Object::new();
-        let set = |k: &str, v: JsValue| js_sys::Reflect::set(&out, &k.into(), &v);
-        let _ = set("entity", hit.entity.to_raw().into());
-        let _ = set(
-            "point",
-            js_sys::Float32Array::from(&hit.point.to_array()[..]).into(),
-        );
-        let _ = set("distance", hit.distance.into());
-        out.into()
+        hit_object(&hit)
     }
 
     /// Frees everything the scene owns: its renderer resources, the built-in
@@ -1502,4 +1481,24 @@ impl Scene {
         );
         self.stats.drawn
     }
+}
+
+impl Scene {
+    // `camera`'s aspect from the canvas (a change only when it differs).
+    fn sync_camera_aspect(&mut self, camera: Entity) {
+        let fb = self.ctx.default_framebuffer();
+        let aspect = fb.width().max(1) as f32 / fb.height().max(1) as f32;
+        if let Some(mut c) = self.world.get_mut::<crate::camera::Camera>(camera) {
+            c.set_if_neq(crate::camera::Camera { aspect, ..*c });
+        }
+    }
+}
+
+// A hit as JS sees it (`PickHit`).
+fn hit_object(hit: &crate::pick::Hit) -> JsValue {
+    getters::object(&[
+        ("entity", hit.entity.to_raw().into()),
+        ("point", js_sys::Float32Array::from(&hit.point.to_array()[..]).into()),
+        ("distance", hit.distance.into()),
+    ])
 }

@@ -286,7 +286,9 @@ pub fn fade_base(
 // (morph weights set with another count: what `a` lacks is `b`'s).
 fn mix(a: &[f32], b: &[f32], w: f32, path: AnimationPath) -> Vec<f32> {
     if path == AnimationPath::Rotation && a.len() == 4 && b.len() == 4 {
-        let q = Quat::from_slice(a).slerp(Quat::from_slice(b), w).normalize();
+        let q = Quat::from_slice(a)
+            .slerp(Quat::from_slice(b), w)
+            .normalize();
         return q.to_array().to_vec();
     }
     b.iter()
@@ -483,7 +485,13 @@ mod tests {
         world.insert(n1, Transform::IDENTITY);
         let tr = |node, times: &[f32], values: &[f32]| AnimationChannel {
             node,
-            ..channel(AnimationPath::Translation, Interpolation::Linear, times, values, 3)
+            ..channel(
+                AnimationPath::Translation,
+                Interpolation::Linear,
+                times,
+                values,
+                3,
+            )
         };
         let clips: Rc<[Animation]> = vec![
             Animation {
@@ -533,16 +541,33 @@ mod tests {
         anims.playing = Some(play(0, true));
         world.insert(root, anims.clone());
         assert!(advance(&mut world, 0.9).is_empty());
-        assert_eq!(advance(&mut world, 0.2), [AnimationEvent::Looped { root, clip: 0 }]);
+        assert_eq!(
+            advance(&mut world, 0.2),
+            [AnimationEvent::Looped { root, clip: 0 }]
+        );
         let p = world.get::<ModelAnimations>(root).unwrap().playing.unwrap();
         assert!((p.time - 0.1).abs() < 1e-5, "{}", p.time);
         // Backwards: the start is the end, wrapping below 0 a loop.
-        anims.playing = Some(Playback { speed: -1.0, time: 0.5, ..play(0, false) });
+        anims.playing = Some(Playback {
+            speed: -1.0,
+            time: 0.5,
+            ..play(0, false)
+        });
         world.insert(root, anims.clone());
-        assert_eq!(advance(&mut world, 1.0), [AnimationEvent::Finished { root, clip: 0 }]);
-        anims.playing = Some(Playback { speed: -1.0, time: 0.5, ..play(0, true) });
+        assert_eq!(
+            advance(&mut world, 1.0),
+            [AnimationEvent::Finished { root, clip: 0 }]
+        );
+        anims.playing = Some(Playback {
+            speed: -1.0,
+            time: 0.5,
+            ..play(0, true)
+        });
         world.insert(root, anims);
-        assert_eq!(advance(&mut world, 1.0), [AnimationEvent::Looped { root, clip: 0 }]);
+        assert_eq!(
+            advance(&mut world, 1.0),
+            [AnimationEvent::Looped { root, clip: 0 }]
+        );
     }
 
     // A fade begun with `fade_base` as `crossfadeAnimation` begins one.
@@ -579,7 +604,11 @@ mod tests {
             advance(&mut world, 0.9);
             advance(&mut world, last);
             assert!(world.get::<ModelAnimations>(root).unwrap().fade.is_none());
-            assert!((pos(&world, n1).y - 1.0).abs() < 1e-5, "{last}: {}", pos(&world, n1));
+            assert!(
+                (pos(&world, n1).y - 1.0).abs() < 1e-5,
+                "{last}: {}",
+                pos(&world, n1)
+            );
         }
     }
 
@@ -599,7 +628,10 @@ mod tests {
         advance(&mut world, 1.0);
         let a = world.get::<ModelAnimations>(root).unwrap();
         let t = a.playing.unwrap().time;
-        assert!((pos(&world, n0).x - t).abs() < 1e-5, "clip 0 alone at its end");
+        assert!(
+            (pos(&world, n0).x - t).abs() < 1e-5,
+            "clip 0 alone at its end"
+        );
     }
 
     // Played backwards from its start (or a clip with no length): finished
@@ -607,10 +639,16 @@ mod tests {
     #[test]
     fn finished_at_once_when_already_at_the_end() {
         let (mut world, mut anims, _) = two_clips();
-        anims.playing = Some(Playback { speed: -1.0, ..play(0, false) });
+        anims.playing = Some(Playback {
+            speed: -1.0,
+            ..play(0, false)
+        });
         let root = world.spawn();
         world.insert(root, anims);
-        assert_eq!(advance(&mut world, 0.1), [AnimationEvent::Finished { root, clip: 0 }]);
+        assert_eq!(
+            advance(&mut world, 0.1),
+            [AnimationEvent::Finished { root, clip: 0 }]
+        );
         assert!(advance(&mut world, 0.1).is_empty());
     }
 
@@ -635,7 +673,10 @@ mod tests {
     #[test]
     fn a_crossfade_mixes_the_clips_then_hands_over() {
         let (mut world, mut anims, [n0, n1]) = two_clips();
-        let from = Playback { time: 0.25, ..play(0, true) };
+        let from = Playback {
+            time: 0.25,
+            ..play(0, true)
+        };
         apply(&mut world, &anims.clips[0], &anims.nodes, from.time);
         let base = fade_base(&world, &anims.clips, &anims.nodes, &from, None, 1);
         assert_eq!(base.len(), 2, "both nodes' translations");

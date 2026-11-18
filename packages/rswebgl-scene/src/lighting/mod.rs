@@ -50,8 +50,8 @@ use maps::ShadowMaps;
 use pack::LightsBlock;
 use settings::ShadowOptions;
 use views::{
-    CASCADE_OVERLAP, ShadowView, ViewCamera, cascade_views, caster_bounds, ground_bounds, ground_view,
-    point_views, shadow_view,
+    CASCADE_OVERLAP, ShadowView, ViewCamera, cascade_views, caster_bounds, ground_bounds,
+    ground_view, point_views, shadow_view,
 };
 
 use crate::camera::Camera;
