@@ -185,8 +185,6 @@ its owner.
   decoders come from CDNs); checked with the Khronos samples in the viewer.
 - Attributes (quantized ones too) are dequantized to f32 on upload, indices
   keep their width: keeping normalized u8 / u16 would cut memory on mobile.
-- The texture sRGB role is decided by usage; a texture shared by a linear
-  and an sRGB role picks one.
 - A material reading more than two TEXCOORD sets keeps the first two (the
   shader has two UV slots), reported.
 - MikkTSpace tangents are per vertex: a vertex shared by faces whose
