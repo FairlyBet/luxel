@@ -130,7 +130,9 @@ pub async fn decode(json: &mut Value, buffers: &mut Vec<Vec<u8>>) -> Result<(), 
     let mut out = Vec::new();
     let mut views = Vec::new(); // (accessor, offset, length, stride)
     for ((_, attributes, indices), job) in jobs.iter().zip(pending) {
-        let r = job.await.map_err(|e| format!("Draco: {}", crate::fetch::message(&e)))?;
+        let r = job
+            .await
+            .map_err(|e| format!("Draco: {}", crate::fetch::message(&e)))?;
         let decoded: Array = Reflect::get(&r, &"attributes".into())
             .and_then(|a| a.dyn_into())
             .map_err(|_| "Draco: bad decoder result")?;

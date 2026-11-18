@@ -12,7 +12,11 @@ extern "C" {
     #[wasm_bindgen(js_name = hasDecoder)]
     pub(crate) fn has_decoder(kind: &str) -> bool;
     #[wasm_bindgen(js_name = ktx2Transcode)]
-    pub(crate) fn ktx2_transcode(bytes: &Uint8Array, srgb: bool, config: &JsValue) -> js_sys::Promise;
+    pub(crate) fn ktx2_transcode(
+        bytes: &Uint8Array,
+        srgb: bool,
+        config: &JsValue,
+    ) -> js_sys::Promise;
     #[wasm_bindgen(js_name = dracoDecode)]
     pub(crate) fn draco_decode(bytes: &Uint8Array, attributes: &JsValue) -> js_sys::Promise;
 }

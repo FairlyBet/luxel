@@ -57,7 +57,10 @@ fn read_index(data: &[u8], at: usize, ty: gltf::accessor::sparse::IndexType) -> 
 }
 
 /// A bufferView's bytes in `buffers`; None out of range.
-pub(crate) fn view_bytes<'b>(view: &gltf::buffer::View, buffers: &'b [Vec<u8>]) -> Option<&'b [u8]> {
+pub(crate) fn view_bytes<'b>(
+    view: &gltf::buffer::View,
+    buffers: &'b [Vec<u8>],
+) -> Option<&'b [u8]> {
     let start = view.offset();
     buffers
         .get(view.buffer().index())?

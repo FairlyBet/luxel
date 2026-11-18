@@ -202,11 +202,9 @@ fn load_ktx2(
         return failed_later(on_load);
     }
     let bytes = match image.source() {
-        gltf::image::Source::View { view, .. } => {
-            crate::accessor::view_bytes(&view, buffers)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| "image bufferView out of range".to_string())
-        }
+        gltf::image::Source::View { view, .. } => crate::accessor::view_bytes(&view, buffers)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| "image bufferView out of range".to_string()),
         gltf::image::Source::Uri { uri, .. } => match decode_data_uri(uri) {
             Some(decoded) => decoded.map_err(|e| format!("image data URI: {e:?}")),
             None => {

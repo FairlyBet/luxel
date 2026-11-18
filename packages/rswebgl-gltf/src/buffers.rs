@@ -55,7 +55,8 @@ pub async fn resolve_buffers(
 }
 
 /// The meshopt extension under both its names (EXT first, KHR ratified).
-pub(crate) const MESHOPT_EXTENSIONS: [&str; 2] = ["EXT_meshopt_compression", "KHR_meshopt_compression"];
+pub(crate) const MESHOPT_EXTENSIONS: [&str; 2] =
+    ["EXT_meshopt_compression", "KHR_meshopt_compression"];
 
 /// A bufferView's buffer index and byte range, read from its JSON (before a
 /// document exists); None when they overflow.

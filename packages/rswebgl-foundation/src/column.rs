@@ -23,7 +23,9 @@ mod sealed {
 }
 
 /// A scalar a column can hold: the numeric types JS typed arrays exist for.
-pub trait ColumnScalar: Copy + Default + PartialEq + std::fmt::Debug + 'static + sealed::Sealed {
+pub trait ColumnScalar:
+    Copy + Default + PartialEq + std::fmt::Debug + 'static + sealed::Sealed
+{
     /// The JS typed array viewing a slice of this type.
     type JsArray;
 
