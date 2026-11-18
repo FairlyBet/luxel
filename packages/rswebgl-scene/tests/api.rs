@@ -1359,6 +1359,8 @@ async fn quality_presets() {
     s.scene.set_hdr(true);
     s.scene.set_quality("high").unwrap();
     assert!(s.scene.is_taa() && s.scene.ambient_occlusion());
+    // Contact shadows only when asked for.
+    assert!(!s.scene.contact_shadows());
     assert_eq!(s.scene.shadow_map_size(), 2048);
     assert_eq!(s.ctx.default_framebuffer().max_pixel_ratio(), 2.0);
     s.frame().await;

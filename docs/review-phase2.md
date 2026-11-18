@@ -205,8 +205,15 @@ Not done from this item:
 Known limit: glass sees the background fill without auto exposure or tone
 mapping undone, so a white fill looks light grey through clear glass.
 
-**Open bugs (phone, Mali-G57, 2026-11-18):** contact shadows show for an
-instant when switched on, then vanish; ambient occlusion never shows.
+**Open bug (phone, Mali-G57, 2026-11-18):** with contact shadows on, they
+show for an instant, then vanish — and ambient occlusion goes with them
+(AO alone works). So it is the key light's share output (the opaque pass
+into `opaque_fb`: colour, R8 share, the shared depth), not the AO shaders.
+No shader errors in the report. Tried: copying the depth for AO from
+`opaque_fb` instead of `fb` — no change. Contact shadows are now off by
+default (viewer and `setQuality("high")`): screen-space, they show only the
+start of a long shadow and change with the view; AO with shadow maps looks
+steadier.
 Auto exposure without HDR output does nothing — by design (it meters the
 HDR target).
 

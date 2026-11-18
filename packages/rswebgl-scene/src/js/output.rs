@@ -19,8 +19,12 @@ impl Scene {
     ///   most 1 pixel per CSS pixel.
     /// - "medium": 4× MSAA; 2048² shadow maps; no ambient occlusion or
     ///   contact shadows; transmission at half resolution; at most 1.5.
-    /// - "high": TAA; 2048² shadow maps; ambient occlusion and contact
-    ///   shadows; full-resolution transmission; at most 2.
+    /// - "high": TAA; 2048² shadow maps; ambient occlusion; full-resolution
+    ///   transmission; at most 2.
+    ///
+    /// Contact shadows stay off in every preset (`setContactShadows` turns
+    /// them on): screen-space, they show only part of a long shadow and
+    /// change with the view; shadow maps and AO look steadier.
     ///
     /// The pixel cap is the canvas's (`defaultFramebuffer().setMaxPixelRatio`,
     /// with auto-resize). Throws on another name.
@@ -49,7 +53,7 @@ impl Scene {
             }
         };
         self.set_ambient_occlusion(on(effects))?;
-        self.set_contact_shadows(on(effects))?;
+        self.set_contact_shadows(JsValue::NULL)?;
         self.set_transmission_resolution(transmission);
         self.ctx.default_framebuffer().set_max_pixel_ratio(ratio);
         Ok(())
