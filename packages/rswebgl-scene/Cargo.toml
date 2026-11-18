@@ -33,7 +33,3 @@ web-sys = { workspace = true, features = ["Document", "Event", "EventTarget", "H
 [[test]]
 name = "integration"
 path = "tests/main.rs"
-
-[[test]]
-name = "furnace"
-path = "tests/furnace.rs"

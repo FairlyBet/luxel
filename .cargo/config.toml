@@ -4,8 +4,9 @@
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+simd128"]
 
-# The browser test runner's time per test file (default 20 s): the texture
-# compression tests compile ETC / BC6H encoders that take ANGLE's D3D shader
-# compiler over ten seconds.
+# The browser test runner's time for a whole test binary (default 20 s). Each
+# crate's tests are one binary (tests/main.rs): the scene's run takes well
+# over a minute, and the texture compression tests compile ETC / BC6H
+# encoders that take ANGLE's D3D shader compiler over ten seconds.
 [env]
-WASM_BINDGEN_TEST_TIMEOUT = "60"
+WASM_BINDGEN_TEST_TIMEOUT = "600"
