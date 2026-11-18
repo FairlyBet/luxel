@@ -32,6 +32,8 @@ use crate::uniform_buffer::UniformType;
 
 /// Number of group slots on a batch / draw.
 pub const GROUP_SLOTS: usize = 4;
+/// The group slot the default sort key groups draws by: the material's.
+pub const MATERIAL_SLOT: usize = 1;
 
 /// A field index within a layout, from `Context::param_field`. The top bits
 /// say which kind of field it is.
@@ -319,7 +321,7 @@ impl Context {
         let mut res = self.res();
         match res.param_layouts.insert(obj) {
             Ok(h) => Ok(h.into()),
-            Err(e) => Err(e.to_string().into()),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -376,7 +378,7 @@ impl Context {
             Ok(h) => Ok(h.into()),
             Err(e) => {
                 release_layout(res, layout);
-                Err(e.to_string().into())
+                Err(e.into())
             }
         }
     }
@@ -405,7 +407,7 @@ impl Context {
             Ok(h) => Ok(h.into()),
             Err(e) => {
                 release_layout(res, layout);
-                Err(e.to_string().into())
+                Err(e.into())
             }
         }
     }

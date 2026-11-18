@@ -7,7 +7,7 @@
 // in the context), so a frame that starts with the program, VAO, render state
 // and textures the previous one ended with re-issues none of them. Library
 // code that binds outside the renderer resets the part it touched; code that
-// changes GL state behind the library's back calls `Context::invalidate_state`.
+// changes GL state behind the library's back calls `Context::reset_gl_state`.
 
 use crate::error::{Error, err};
 use wasm_bindgen::prelude::*;
@@ -94,8 +94,9 @@ impl Context {
     }
 
     /// Forgets what the library believes is bound, so the next render binds
-    /// everything afresh. Call after changing GL state directly (your own GL
-    /// calls on the same context, or another library sharing it).
+    /// everything afresh. After GL calls of your own (or another library's
+    /// on the same context) call `resetGlState`, which does this and also
+    /// puts back the state the library expects at its default.
     #[wasm_bindgen(js_name = invalidateState)]
     pub fn invalidate_state(&self) {
         self.core.invalidate_state();
@@ -602,7 +603,7 @@ fn open_for_clear(
                 !(rs.color_mask_r && rs.color_mask_g && rs.color_mask_b && rs.color_mask_a)
             }),
         depth: mask.depth && closed(|rs| !rs.depth_mask),
-        stencil: mask.stencil && closed(|rs| rs.stencil_write_mask != 0xFFFF_FFFF),
+        stencil: mask.stencil && closed(|rs| rs.stencil_write_mask != crate::render_state::STENCIL_ALL),
         scissor: closed(|rs| rs.scissor_test),
     };
     if opened.color {
@@ -612,7 +613,7 @@ fn open_for_clear(
         gl.depth_mask(true);
     }
     if opened.stencil {
-        gl.stencil_mask(0xFFFF_FFFF);
+        gl.stencil_mask(crate::render_state::STENCIL_ALL);
     }
     if opened.scissor {
         gl.disable(WebGl2RenderingContext::SCISSOR_TEST);

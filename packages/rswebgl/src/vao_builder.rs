@@ -214,7 +214,6 @@ struct AttrEntry {
 }
 
 struct IndexEntry {
-    gl_type: u32,
     data: Vec<u8>,
 }
 
@@ -270,90 +269,59 @@ impl VaoBuilder {
         self.usage = usage;
     }
 
-    #[wasm_bindgen(js_name = addF32)]
-    pub fn add_f32(&mut self, index: u32, kind: AttrKind, data: &[f32]) {
+    // One attribute's array, of GL type `source_gl_type`.
+    fn push(&mut self, index: u32, kind: AttrKind, data: Vec<u8>, source_gl_type: u32) {
         self.attrs.push(AttrEntry {
             index,
             kind,
-            data: bytes_of(data),
-            source_gl_type: WebGl2RenderingContext::FLOAT,
+            data,
+            source_gl_type,
         });
+    }
+
+    #[wasm_bindgen(js_name = addF32)]
+    pub fn add_f32(&mut self, index: u32, kind: AttrKind, data: &[f32]) {
+        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::FLOAT);
     }
 
     #[wasm_bindgen(js_name = addF16)]
     pub fn add_f16(&mut self, index: u32, kind: AttrKind, data: &[u16]) {
-        self.attrs.push(AttrEntry {
-            index,
-            kind,
-            data: bytes_of(data),
-            source_gl_type: WebGl2RenderingContext::HALF_FLOAT,
-        });
+        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::HALF_FLOAT);
     }
 
     #[wasm_bindgen(js_name = addI8)]
     pub fn add_i8(&mut self, index: u32, kind: AttrKind, data: &[i8]) {
-        self.attrs.push(AttrEntry {
-            index,
-            kind,
-            data: bytes_of(data),
-            source_gl_type: WebGl2RenderingContext::BYTE,
-        });
+        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::BYTE);
     }
 
     #[wasm_bindgen(js_name = addU8)]
     pub fn add_u8(&mut self, index: u32, kind: AttrKind, data: &[u8]) {
-        self.attrs.push(AttrEntry {
-            index,
-            kind,
-            data: data.to_vec(),
-            source_gl_type: WebGl2RenderingContext::UNSIGNED_BYTE,
-        });
+        self.push(index, kind, data.to_vec(), WebGl2RenderingContext::UNSIGNED_BYTE);
     }
 
     #[wasm_bindgen(js_name = addI16)]
     pub fn add_i16(&mut self, index: u32, kind: AttrKind, data: &[i16]) {
-        self.attrs.push(AttrEntry {
-            index,
-            kind,
-            data: bytes_of(data),
-            source_gl_type: WebGl2RenderingContext::SHORT,
-        });
+        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::SHORT);
     }
 
     #[wasm_bindgen(js_name = addU16)]
     pub fn add_u16(&mut self, index: u32, kind: AttrKind, data: &[u16]) {
-        self.attrs.push(AttrEntry {
-            index,
-            kind,
-            data: bytes_of(data),
-            source_gl_type: WebGl2RenderingContext::UNSIGNED_SHORT,
-        });
+        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::UNSIGNED_SHORT);
     }
 
     #[wasm_bindgen(js_name = addI32)]
     pub fn add_i32(&mut self, index: u32, kind: AttrKind, data: &[i32]) {
-        self.attrs.push(AttrEntry {
-            index,
-            kind,
-            data: bytes_of(data),
-            source_gl_type: WebGl2RenderingContext::INT,
-        });
+        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::INT);
     }
 
     #[wasm_bindgen(js_name = addU32)]
     pub fn add_u32(&mut self, index: u32, kind: AttrKind, data: &[u32]) {
-        self.attrs.push(AttrEntry {
-            index,
-            kind,
-            data: bytes_of(data),
-            source_gl_type: WebGl2RenderingContext::UNSIGNED_INT,
-        });
+        self.push(index, kind, bytes_of(data), WebGl2RenderingContext::UNSIGNED_INT);
     }
 
     #[wasm_bindgen(js_name = addIndicesU8)]
     pub fn add_indices_u8(&mut self, data: &[u8]) {
         self.indices = Some(IndexEntry {
-            gl_type: WebGl2RenderingContext::UNSIGNED_BYTE,
             data: data.to_vec(),
         });
     }
@@ -361,7 +329,6 @@ impl VaoBuilder {
     #[wasm_bindgen(js_name = addIndicesU16)]
     pub fn add_indices_u16(&mut self, data: &[u16]) {
         self.indices = Some(IndexEntry {
-            gl_type: WebGl2RenderingContext::UNSIGNED_SHORT,
             data: bytes_of(data),
         });
     }
@@ -369,7 +336,6 @@ impl VaoBuilder {
     #[wasm_bindgen(js_name = addIndicesU32)]
     pub fn add_indices_u32(&mut self, data: &[u32]) {
         self.indices = Some(IndexEntry {
-            gl_type: WebGl2RenderingContext::UNSIGNED_INT,
             data: bytes_of(data),
         });
     }
@@ -483,7 +449,6 @@ impl VaoBuilder {
             let ibo = ctx.create_index_buffer(self.usage, &idx.data)?;
             ctx.own_buffer(vao, ibo);
             ctx.vertex_array_set_index_buffer(vao, ibo);
-            let _ = idx.gl_type; // tracked for future API (e.g. expose IndexType to caller)
         }
 
         Ok(())

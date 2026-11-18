@@ -379,6 +379,18 @@ impl ProgramObj {
 
     // Waits for the link if it's still running (blocking), reporting a failure
     // once. Returns whether the program is usable.
+    // Finishes the link if the driver says it completed (without blocking).
+    fn poll_link(&mut self, gl: &Gl) {
+        let complete = gl
+            .get_program_parameter(&self.raw, COMPLETION_STATUS_KHR)
+            .as_bool()
+            .unwrap_or(false);
+        if complete {
+            let _span = tracing::info_span!("gl.linkFinished").entered();
+            self.ensure_linked(gl);
+        }
+    }
+
     pub(crate) fn ensure_linked(&mut self, gl: &Gl) -> bool {
         if !self.ready
             && let Err(msg) = self.finalize(gl)
@@ -696,7 +708,7 @@ impl Context {
         let mut res = self.res();
         match res.programs.insert(obj) {
             Ok(h) => Ok(h.into()),
-            Err(e) => Err(e.to_string().into()),
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -732,14 +744,7 @@ impl Context {
         if gl.is_context_lost() {
             return false;
         }
-        let complete = gl
-            .get_program_parameter(&p.raw, COMPLETION_STATUS_KHR)
-            .as_bool()
-            .unwrap_or(false);
-        if complete {
-            let _span = tracing::info_span!("gl.linkFinished").entered();
-            p.ensure_linked(gl);
-        }
+        p.poll_link(gl);
         p.ready
     }
 
@@ -817,14 +822,7 @@ impl Context {
         if p.ready {
             return false;
         }
-        let complete = gl
-            .get_program_parameter(&p.raw, COMPLETION_STATUS_KHR)
-            .as_bool()
-            .unwrap_or(false);
-        if complete {
-            let _span = tracing::info_span!("gl.linkFinished").entered();
-            p.ensure_linked(gl);
-        }
+        p.poll_link(gl);
         !p.ready
     }
 

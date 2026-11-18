@@ -195,7 +195,7 @@ impl Context {
                 disturbed: false,
             })
             .map(Into::into)
-            .map_err(|e| Error::from(e.to_string()))
+            .map_err(Error::from)
     }
 
     #[wasm_bindgen(js_name = destroyQuery)]
@@ -223,7 +223,7 @@ impl Context {
     /// Whether the query was run and its result hasn't arrived yet.
     #[wasm_bindgen(js_name = queryPending)]
     pub fn query_pending(&self, q: QueryId) -> bool {
-        matches!(self.poll_query(q), Some((QueryState::Pending, _)))
+        matches!(self.poll_query(q, "queryPending"), Some((QueryState::Pending, _)))
     }
 
     /// The result of the query's last run: 1 / 0 for occlusion, nanoseconds
@@ -232,7 +232,7 @@ impl Context {
     /// frame the query ran in — poll next frame.
     #[wasm_bindgen(js_name = queryResult)]
     pub fn query_result(&self, q: QueryId) -> Option<f64> {
-        match self.poll_query(q)?.0 {
+        match self.poll_query(q, "queryResult")?.0 {
             QueryState::Ready(v) => Some(v),
             _ => None,
         }
@@ -249,10 +249,10 @@ impl Context {
 
 impl Context {
     // The query's state (polled) and run number.
-    pub(crate) fn poll_query(&self, q: QueryId) -> Option<(QueryState, u32)> {
+    pub(crate) fn poll_query(&self, q: QueryId, op: &str) -> Option<(QueryState, u32)> {
         let mut res = self.res();
         if res.queries.get(q.0).is_none() {
-            stale("query", "query_result", q);
+            stale("query", op, q);
             return None;
         }
         poll(self.gl(), &mut res.queries, q);
@@ -269,7 +269,7 @@ impl Context {
         q: QueryId,
     ) -> impl Future<Output = Result<f64, Error>> + use<> {
         let ctx = self.clone();
-        let started = self.poll_query(q).map(|(_, run)| run);
+        let started = self.poll_query(q, "queryResultAsync").map(|(_, run)| run);
         let epoch = self.core.epoch.get();
         // Submit the queued commands, or the result may not come before the
         // next frame flushes them (or ever, without one).
@@ -280,7 +280,7 @@ impl Context {
                 if ctx.is_lost() || ctx.core.epoch.get() != epoch {
                     return Err(Error::context_lost("query: the WebGL context was lost"));
                 }
-                let state = match ctx.poll_query(q) {
+                let state = match ctx.poll_query(q, "queryResultAsync") {
                     None => return Err("query: destroyed or invalid".into()),
                     Some((_, r)) if r != run => {
                         return Err("query: run again before its result arrived".into());

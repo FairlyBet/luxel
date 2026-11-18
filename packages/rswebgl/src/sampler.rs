@@ -21,7 +21,8 @@ use crate::ids::SamplerId;
 use crate::render_state::DepthFunc;
 use crate::texture::{TextureCompareMode, TextureMagFilter, TextureMinFilter, TextureWrap};
 
-const TEXTURE_MAX_ANISOTROPY_EXT: u32 = 0x84FE;
+/// `EXT_texture_filter_anisotropic`'s parameter (not in web-sys' Gl).
+pub(crate) const TEXTURE_MAX_ANISOTROPY_EXT: u32 = 0x84FE;
 
 /// Sampling parameters. `new()` gives the WebGL defaults; set the fields you
 /// need (`linear_clamp` / `nearest_clamp` / `trilinear_repeat` cover the usual
@@ -171,7 +172,7 @@ impl Context {
             .samplers
             .insert(SamplerObj { raw, desc: *desc })
             .map(Into::into)
-            .map_err(|e| Error::from(e.to_string()))
+            .map_err(Error::from)
     }
 
     /// Deletes the sampler. Groups that still name it report it at render and

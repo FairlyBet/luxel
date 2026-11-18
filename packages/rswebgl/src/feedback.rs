@@ -273,7 +273,7 @@ impl Context {
                 bindings: [None; MAX_FEEDBACK_BUFFERS as usize],
             })
             .map(Into::into)
-            .map_err(|e| Error::from(e.to_string()))
+            .map_err(Error::from)
     }
 
     /// Deletes the object; its buffers are let go of (and deleted if they

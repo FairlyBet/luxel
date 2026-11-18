@@ -131,7 +131,7 @@ impl Context {
                 format,
             })
             .map(Into::into)
-            .map_err(|e| Error::from(e.to_string()))
+            .map_err(Error::from)
     }
 
     // The most samples `format` takes, or None when the query fails (lost).

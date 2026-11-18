@@ -54,13 +54,13 @@ void main() {
 }
 ";
 
-const RGBA8: u32 = 0x8058;
-const SRGB8_ALPHA8: u32 = 0x8C43;
+const RGBA8: u32 = Gl::RGBA8;
+const SRGB8_ALPHA8: u32 = Gl::SRGB8_ALPHA8;
 // Float formats BC6H reads.
-const R11F_G11F_B10F: u32 = 0x8C3A;
-const RGBA16F: u32 = 0x881A;
-const RGBA32F: u32 = 0x8814;
-const MAX_ANISOTROPY: u32 = 0x84FE;
+const R11F_G11F_B10F: u32 = Gl::R11F_G11F_B10F;
+const RGBA16F: u32 = Gl::RGBA16F;
+const RGBA32F: u32 = Gl::RGBA32F;
+const MAX_ANISOTROPY: u32 = crate::sampler::TEXTURE_MAX_ANISOTROPY_EXT;
 // The widest encode target (texels; a row of blocks wraps onto the next).
 const TARGET_WIDTH: i32 = 1024;
 
@@ -90,6 +90,23 @@ struct BlockFormat {
     srgb: bool,
     family: Family,
 }
+
+impl BlockFormat {
+    // The format the encoders write as `internal` for `kind`, if any.
+    fn written(internal: u32, kind: CompressKind) -> Option<Self> {
+        FORMATS
+            .iter()
+            .find(|f| f.internal == internal && f.kind == kind)
+            .copied()
+    }
+
+    // Its encoder's key (for a cube map's faces or a 2D texture).
+    fn key(&self, cube: bool) -> EncoderKey {
+        (self.internal, self.kind, cube)
+    }
+}
+
+type EncoderKey = (u32, CompressKind, bool);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Family {
@@ -159,7 +176,7 @@ pub struct TextureCompressor {
     etc_layout: ParamLayoutId,
     tables: TextureId,
     // By the format's GL enum and kind (ASTC writes all three into one).
-    encoders: RefCell<HashMap<(u32, CompressKind, bool), Encoder>>,
+    encoders: RefCell<HashMap<EncoderKey, Encoder>>,
     cube_layout: ParamLayoutId,
     // Exact texel reads at an explicit level from a cube.
     cube_sampler: crate::ids::SamplerId,
@@ -174,7 +191,7 @@ pub struct TextureCompressor {
 #[wasm_bindgen]
 impl TextureCompressor {
     /// Enables the compressed-texture extensions it uses (S3TC, S3TC sRGB,
-    /// RGTC, ETC) where the device has them and starts compiling its
+    /// RGTC, BPTC, ETC, ASTC) where the device has them and starts compiling its
     /// encoders.
     #[wasm_bindgen(constructor)]
     pub fn new(ctx: &Context) -> Result<TextureCompressor, Error> {
@@ -211,8 +228,8 @@ impl TextureCompressor {
             TextureMagFilter::Nearest,
         )?;
         let rg8ui = TextureFormat {
-            internal: 0x8238, // RG8UI
-            format: 0x8228,   // RG_INTEGER
+            internal: Gl::RG8UI as i32,
+            format: Gl::RG_INTEGER,
             data_type: Gl::UNSIGNED_BYTE,
         };
         ctx.texture_storage_2d(tables, 1, &rg8ui, 256, 2);
@@ -289,12 +306,14 @@ impl TextureCompressor {
         })
     }
 
-    /// Compresses `tex` — a 2D RGBA8 or SRGB8_ALPHA8 texture, its levels
-    /// filled (mips made) — in place: the same handle then samples the
-    /// compressed texture, with its sampler settings. False (and the
-    /// texture left as it was) where it can't be: no format for `kind`
-    /// here, the texture isn't 2D RGBA8 / sRGB, its size isn't a multiple
-    /// of 4 (S3TC needs whole blocks at level 0), or the context is lost.
+    /// Compresses `tex`, its levels filled (mips made), in place: the same
+    /// handle then samples the compressed texture, with its sampler
+    /// settings. Takes a 2D RGBA8 or SRGB8_ALPHA8 texture (`Rgb`, `Rgba`,
+    /// `Rg`), or a 2D or cube R11F_G11F_B10F / RGBA16F / RGBA32F one
+    /// (`Hdr`). False (and the texture left as it was) where it can't be: no
+    /// format for `kind` here, the texture isn't one of those, its size
+    /// isn't a multiple of 4 (whole blocks at level 0), or the context is
+    /// lost.
     pub fn compress(&self, tex: TextureId, kind: CompressKind) -> bool {
         let _span = tracing::info_span!("textureCompressor.compress").entered();
         match self.try_compress(tex, kind) {
@@ -306,10 +325,6 @@ impl TextureCompressor {
         }
     }
 
-    /// Level `level` of `tex` encoded as `internal` for `kind` (any format
-    /// the encoders write, whether or not the device samples it), its
-    /// blocks' bytes. For tests: a format the device lacks can still be decoded on
-    /// the CPU.
     /// Makes the encoder for `internal` / `kind` (as `encode_level`
     /// would, compiling in the background) and resolves once it has
     /// compiled. For tests.
@@ -321,13 +336,9 @@ impl TextureCompressor {
         internal: u32,
         kind: CompressKind,
     ) -> Result<js_sys::Promise, Error> {
-        let format = FORMATS
-            .iter()
-            .find(|f| f.internal == internal && f.kind == kind)
-            .copied()
-            .ok_or("prepareFormat: not a format the encoders write")?;
+        let format = BlockFormat::written(internal, kind).ok_or("prepareFormat: not a format the encoders write")?;
         self.encoder(format, false)?;
-        let program = self.encoders.borrow()[&(format.internal, format.kind, false)].program;
+        let program = self.encoders.borrow()[&format.key(false)].program;
         let ready = self.ctx.programs_ready(vec![program]);
         Ok(wasm_bindgen_futures::future_to_promise(async move {
             ready.await;
@@ -335,6 +346,10 @@ impl TextureCompressor {
         }))
     }
 
+    /// Level `level` of `tex` encoded as `internal` for `kind` (any format
+    /// the encoders write, whether or not the device samples it), its
+    /// blocks' bytes. For tests: a format the device lacks can still be
+    /// decoded on the CPU.
     #[doc(hidden)]
     #[wasm_bindgen(js_name = encodeLevel)]
     pub fn encode_level(
@@ -344,11 +359,7 @@ impl TextureCompressor {
         kind: CompressKind,
         level: i32,
     ) -> Result<Vec<u8>, Error> {
-        let format = FORMATS
-            .iter()
-            .find(|f| f.internal == internal && f.kind == kind)
-            .copied()
-            .ok_or("encodeLevel: not a format the encoders write")?;
+        let format = BlockFormat::written(internal, kind).ok_or("encodeLevel: not a format the encoders write")?;
         let extent = self
             .ctx
             .res()
@@ -370,7 +381,7 @@ impl TextureCompressor {
                 0,
                 l.target.0,
                 l.target.1,
-                0x8D99, // RGBA_INTEGER
+                Gl::RGBA_INTEGER,
                 Gl::UNSIGNED_INT,
                 Some(&view),
             )
@@ -515,9 +526,9 @@ fn plan_levels(
 
 impl TextureCompressor {
     // The format `kind` compresses to here: BC where the device has it, else
-    // ETC2 / EAC.
+    // ETC2 / EAC, else ASTC (`Self::FAMILY_ORDER`).
     fn format(&self, kind: CompressKind, srgb: bool) -> Option<BlockFormat> {
-        self.preference(kind).into_iter().find_map(|family| {
+        Self::FAMILY_ORDER.into_iter().find_map(|family| {
             FORMATS
                 .iter()
                 .copied()
@@ -525,16 +536,14 @@ impl TextureCompressor {
         })
     }
 
-    // Families in the order `kind` takes them. ASTC last: this encoder
+    // Families in the order every kind takes them. ASTC last: this encoder
     // (one partition, one weight plane) loses to ETC2 / EAC of the same
     // size on busy blocks — measured mean error on a block of independent
     // waves: RG 28.6 vs RG11 5.2, RGBA 34.7 vs 26.5 — and its RGB is twice
     // ETC2 RGB's size for little gain (29.9 vs 33.4). Those ETC numbers
     // predate the ETC1 selector fix, which only made ETC better. It is for
     // devices with neither BC nor ETC.
-    fn preference(&self, _kind: CompressKind) -> [Family; 3] {
-        [Family::Bc, Family::Etc, Family::Astc]
-    }
+    const FAMILY_ORDER: [Family; 3] = [Family::Bc, Family::Etc, Family::Astc];
 
     // Whether the device samples `f`.
     fn has(&self, f: &BlockFormat) -> bool {
@@ -553,7 +562,7 @@ impl TextureCompressor {
         if self
             .encoders
             .borrow()
-            .contains_key(&(format.internal, format.kind, cube))
+            .contains_key(&format.key(cube))
         {
             return Ok(());
         }
@@ -596,7 +605,7 @@ impl TextureCompressor {
         }
         self.encoders
             .borrow_mut()
-            .insert((format.internal, format.kind, cube), encoder);
+            .insert(format.key(cube), encoder);
         Ok(())
     }
 
@@ -604,8 +613,8 @@ impl TextureCompressor {
     fn scratch(&self, size: (i32, i32)) -> Result<(FramebufferId, TextureId), Error> {
         let ctx = &self.ctx;
         let rgba32ui = TextureFormat {
-            internal: 0x8D70, // RGBA32UI
-            format: 0x8D99,   // RGBA_INTEGER
+            internal: Gl::RGBA32UI as i32,
+            format: Gl::RGBA_INTEGER,
             data_type: Gl::UNSIGNED_INT,
         };
         let scratch = ctx.create_texture(
@@ -642,7 +651,7 @@ impl TextureCompressor {
         let ctx = &self.ctx;
         self.encoder(format, cube)?;
         let encoders = self.encoders.borrow();
-        let encoder = &encoders[&(format.internal, format.kind, cube)];
+        let encoder = &encoders[&format.key(cube)];
         // A failed encoder would draw nothing: all-zero blocks (black, or
         // transparent black) swapped in as if compressed.
         if !ctx.program_linked(encoder.program) {
@@ -684,7 +693,7 @@ impl TextureCompressor {
             let res = ctx.res();
             res.textures
                 .get(tex.0)
-                .map(|t| (t.target.clone(), t.internal.get(), t.extent.get()))
+                .map(|t| (t.target, t.internal.get(), t.extent.get()))
         }) else {
             return Err("compress: the texture is destroyed".into());
         };
@@ -736,7 +745,7 @@ impl TextureCompressor {
                     0,
                     l.target.0,
                     l.target.1,
-                    0x8D99, // RGBA_INTEGER
+                    Gl::RGBA_INTEGER,
                     Gl::UNSIGNED_INT,
                     l.offset,
                 );

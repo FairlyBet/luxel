@@ -7,7 +7,7 @@ use crate::context::{Context, stale};
 use crate::ids::BufferId;
 
 #[wasm_bindgen]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BufferTarget {
     Array = 34962,             // ARRAY_BUFFER
     ElementArray = 34963,      // ELEMENT_ARRAY_BUFFER
@@ -21,7 +21,7 @@ pub enum BufferTarget {
 
 impl BufferTarget {
     pub(crate) fn as_gl(&self) -> u32 {
-        self.clone() as u32
+        *self as u32
     }
 }
 
@@ -145,7 +145,7 @@ impl Context {
             Ok(h) => Ok(h.into()),
             Err(e) => {
                 drop(res);
-                Err(e.to_string().into())
+                Err(e.into())
             }
         }
     }

@@ -40,9 +40,13 @@ pub(crate) fn blit(
         Gl::BACK
     });
     gl.bind_framebuffer(Gl::DRAW_FRAMEBUFFER, dst);
-    // blitFramebuffer obeys the scissor test: a draw's leftover scissor
-    // would clip the copy. Off for it, back as it was (the state cache
-    // stays right).
+    blit_unscissored(gl, s, d, mask, filter);
+}
+
+// The bound READ into the bound DRAW. blitFramebuffer obeys the scissor
+// test: a draw's leftover scissor would clip the copy. Off for it, back as
+// it was (the state cache stays right).
+fn blit_unscissored(gl: &Gl, s: Viewport, d: Viewport, mask: u32, filter: u32) {
     let scissored = gl.is_enabled(Gl::SCISSOR_TEST);
     if scissored {
         gl.disable(Gl::SCISSOR_TEST);
@@ -66,7 +70,7 @@ pub(crate) fn blit(
 
 /// `blit` of one color attachment into one: `src`'s `src_index` read, only
 /// `dst`'s `dst_index` written (the canvas: index 0, its back buffer).
-/// `dst_buffers` restores `dst`'s draw buffers after (`None` for the canvas).
+/// `restore_dst` restores `dst`'s draw buffers after (`None` for the canvas).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn blit_attachment(
     gl: &Gl,
@@ -98,25 +102,7 @@ pub(crate) fn blit_attachment(
         }
         gl.draw_buffers(arr.as_ref());
     }
-    let scissored = gl.is_enabled(Gl::SCISSOR_TEST);
-    if scissored {
-        gl.disable(Gl::SCISSOR_TEST);
-    }
-    gl.blit_framebuffer(
-        s.x,
-        s.y,
-        s.x + s.width,
-        s.y + s.height,
-        d.x,
-        d.y,
-        d.x + d.width,
-        d.y + d.height,
-        Gl::COLOR_BUFFER_BIT,
-        filter,
-    );
-    if scissored {
-        gl.enable(Gl::SCISSOR_TEST);
-    }
+    blit_unscissored(gl, s, d, Gl::COLOR_BUFFER_BIT, filter);
     if let Some(restore) = restore_dst {
         restore(gl);
     }
@@ -130,14 +116,7 @@ pub(crate) fn blit_attachment(
 /// Whether the canvas's drawing buffer is multisampled (antialias): a blit
 /// can't write into it then (GL ES 3.0: DRAW with SAMPLE_BUFFERS > 0).
 pub(crate) fn canvas_multisampled(gl: &Gl) -> bool {
-    let attrs = js_sys::Reflect::get(gl.as_ref(), &"getContextAttributes".into())
-        .ok()
-        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
-        .and_then(|f| f.call0(gl.as_ref()).ok());
-    attrs
-        .and_then(|a| js_sys::Reflect::get(&a, &"antialias".into()).ok())
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    crate::framebuffer::context_attribute(gl, "antialias").unwrap_or(false)
 }
 
 #[wasm_bindgen]

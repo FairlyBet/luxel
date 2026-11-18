@@ -109,14 +109,6 @@ impl PixelUnpack {
     /// Restore all of the above to their WebGL defaults so upload state never
     /// leaks across calls.
     pub(crate) fn reset(gl: &WebGl2RenderingContext) {
-        gl.pixel_storei(UNPACK_FLIP_Y_WEBGL, 0);
-        gl.pixel_storei(UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
-        gl.pixel_storei(UNPACK_COLORSPACE_CONVERSION_WEBGL, BROWSER_DEFAULT_WEBGL);
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_ALIGNMENT, 4);
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_ROW_LENGTH, 0);
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_SKIP_PIXELS, 0);
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_SKIP_ROWS, 0);
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_IMAGE_HEIGHT, 0);
-        gl.pixel_storei(WebGl2RenderingContext::UNPACK_SKIP_IMAGES, 0);
+        Self::default().apply(gl);
     }
 }

@@ -249,7 +249,7 @@ fn device_size(
 
 // A boolean of `getContextAttributes()` (what the browser actually gave;
 // None for a lost context or an unknown name).
-fn context_attribute(gl: &WebGl2RenderingContext, name: &str) -> Option<bool> {
+pub(crate) fn context_attribute(gl: &WebGl2RenderingContext, name: &str) -> Option<bool> {
     let attrs = js_sys::Reflect::get(gl.as_ref(), &"getContextAttributes".into())
         .ok()?
         .dyn_into::<js_sys::Function>()
@@ -482,10 +482,6 @@ impl DefaultFramebuffer {
         Ok(())
     }
 
-    /// With auto-resize: the drawing buffer at `scale` × the device pixels
-    /// the canvas covers (0.1–2; default 1). Below 1 draws fewer pixels —
-    /// the browser stretches them to the canvas — for speed on dense
-    /// screens or slow GPUs; above 1 supersamples. Applies at once.
     /// The drawing buffer's size as the browser made it: `[width, height]`
     /// (it may be smaller than the canvas asks for, past what it allows).
     #[wasm_bindgen(js_name = drawingBufferSize)]
@@ -499,6 +495,10 @@ impl DefaultFramebuffer {
         self.inner.borrow().canvas.clone()
     }
 
+    /// With auto-resize: the drawing buffer at `scale` × the device pixels
+    /// the canvas covers (0.1–2; default 1). Below 1 draws fewer pixels —
+    /// the browser stretches them to the canvas — for speed on dense
+    /// screens or slow GPUs; above 1 supersamples. Applies at once.
     #[wasm_bindgen(js_name = setResolutionScale)]
     pub fn set_resolution_scale(&self, scale: f64) {
         if !scale.is_finite() {
@@ -631,7 +631,7 @@ impl ColorAttachment {
 
 // Whether a sized internal format is an integer one: Some(true) signed,
 // Some(false) unsigned, None not integer.
-fn integer_kind(internal: u32) -> Option<bool> {
+pub(crate) fn integer_kind(internal: u32) -> Option<bool> {
     match internal {
         // R8I R16I R32I RG8I RG16I RG32I RGBA8I RGBA16I RGBA32I
         0x8231 | 0x8233 | 0x8235 | 0x8237 | 0x8239 | 0x823B | 0x8D8E | 0x8D88 | 0x8D82 => {
@@ -912,13 +912,9 @@ impl FramebufferObj {
         textures: &Pool<TextureObj>,
         renderbuffers: &Pool<RenderbufferObj>,
     ) -> bool {
-        self.color.iter().flatten().any(|a| match a.source() {
-            Source::Texture(t) => textures
-                .get_in_use(t.0)
-                .is_some_and(|t| crate::float_targets::is_float32(t.internal.get())),
-            Source::Renderbuffer(r) => renderbuffers
-                .get_in_use(r.0)
-                .is_some_and(|r| crate::float_targets::is_float32(r.format.as_gl())),
+        self.color.iter().flatten().any(|a| {
+            source_format(a.source(), textures, renderbuffers)
+                .is_some_and(|(internal, _)| crate::float_targets::is_float32(internal))
         })
     }
 
@@ -975,10 +971,8 @@ impl FramebufferObj {
                     continue;
                 };
                 let drawbuffer = i as i32;
-                let internal = match att.source() {
-                    Source::Texture(t) => textures.get_in_use(t.0).map(|o| o.internal.get()),
-                    Source::Renderbuffer(r) => renderbuffers.get_in_use(r.0).map(|o| o.internal()),
-                };
+                let internal =
+                    source_format(att.source(), textures, renderbuffers).map(|(internal, _)| internal);
                 let value = self.color_clear.get(i).copied().unwrap_or_default();
                 // An integer attachment takes only an integer clear (a float
                 // one is INVALID_OPERATION, leaving it uncleared): a float
@@ -1245,7 +1239,7 @@ impl Context {
                 clear_stencil: 0,
             })
             .map(Into::into)
-            .map_err(|e| Error::from(e.to_string()))
+            .map_err(Error::from)
     }
 
     /// Deletes the framebuffer and stops using its attachments (textures and

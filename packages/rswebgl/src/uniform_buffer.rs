@@ -278,7 +278,7 @@ impl Context {
         let mut res = self.res();
         match res.uniform_buffers.insert(obj) {
             Ok(h) => Ok(h.into()),
-            Err(e) => Err(e.to_string().into()),
+            Err(e) => Err(e.into()),
         }
     }
 

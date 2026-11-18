@@ -112,7 +112,7 @@ impl Context {
     /// `can_render_to` for a renderbuffer format.
     #[wasm_bindgen(js_name = canRenderToRenderbuffer)]
     pub fn can_render_to_renderbuffer(&self, format: RenderbufferFormat) -> bool {
-        self.float_target_problem(format as u32).is_none()
+        self.float_target_problem(format.as_gl()).is_none()
     }
 
     /// Whether 32-bit float textures can use linear filtering

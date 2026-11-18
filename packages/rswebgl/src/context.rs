@@ -461,7 +461,7 @@ impl Context {
     /// Enables an extension; it's re-enabled automatically after a context restore.
     #[wasm_bindgen(js_name = enableExtension)]
     pub fn enable_extension(&self, ext: Extension) -> bool {
-        if self.is_extension_enabled(ext.clone()) {
+        if self.is_extension_enabled(ext) {
             return true;
         }
         let name = ext.name();
@@ -485,7 +485,7 @@ impl Context {
     /// `enable_extension` without the console line (for libraries enabling
     /// what they can use); true if available.
     pub fn enable_extension_quietly(&self, ext: Extension) -> bool {
-        if self.is_extension_enabled(ext.clone()) {
+        if self.is_extension_enabled(ext) {
             return true;
         }
         let available = self

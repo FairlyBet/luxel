@@ -30,7 +30,7 @@ type ImageLoadHandler = Rc<RefCell<Option<Closure<dyn FnMut()>>>>;
 // ---------------------------------------------------------------------------
 
 #[wasm_bindgen]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextureTarget {
     Texture2D = 3553,       // TEXTURE_2D
     Texture3D = 32879,      // TEXTURE_3D
@@ -40,7 +40,7 @@ pub enum TextureTarget {
 
 impl TextureTarget {
     pub(crate) fn as_gl(&self) -> u32 {
-        self.clone() as u32
+        *self as u32
     }
 }
 
@@ -340,9 +340,6 @@ impl TextureObj {
         self.target.as_gl()
     }
 
-    // Checks a texStorage request against the implementation limits for this
-    // target (`depth` is 1 for 2D / cube). Reports and returns false if it
-    // can't be allocated, so the caller skips the GL call.
     // Mip levels a size allows: a 3D texture's depth halves with the rest;
     // an array's layer count doesn't.
     fn max_levels(&self, width: i32, height: i32, depth: i32) -> i32 {
@@ -356,7 +353,6 @@ impl TextureObj {
     // reject it with a bare INVALID_VALUE); reports and returns false if it
     // doesn't fit. A 3D texture's depth halves per level, an array's
     // layers don't.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn region_fits(
         &self,
         op: &str,
@@ -395,6 +391,9 @@ impl TextureObj {
         }
     }
 
+    // Checks a texStorage request against the implementation limits for this
+    // target (`depth` is 1 for 2D / cube). Reports and returns false if it
+    // can't be allocated, so the caller skips the GL call.
     fn storage_fits(&self, levels: i32, width: i32, height: i32, depth: i32) -> bool {
         let (max_wh, max_d, what) = match self.target {
             TextureTarget::Texture2D => (limits::max_texture_size(), 1, "MAX_TEXTURE_SIZE"),
@@ -446,8 +445,6 @@ pub(crate) fn mip_levels(w: i32, h: i32) -> i32 {
 }
 
 impl Context {
-    // Resolves `tex`, binds it to its target, runs `f`, unbinds. Reports a
-    // stale handle (as `op`) and returns None instead.
     // `texture_storage_2d`, saying whether storage was allocated.
     fn allocate_2d(
         &self,
@@ -470,6 +467,8 @@ impl Context {
         .unwrap_or(false)
     }
 
+    // Resolves `tex`, binds it to its target, runs `f`, unbinds. Reports a
+    // stale handle (as `op`) and returns None instead.
     pub(crate) fn with_texture<T>(
         &self,
         tex: TextureId,
@@ -573,7 +572,7 @@ impl Context {
                 extent: Cell::new([0; 4]),
             })
             .map(Into::into)
-            .map_err(|e| Error::from(e.to_string()))
+            .map_err(Error::from)
     }
 
     /// Whether `tex` names a live texture (false once destroyed, or after a
@@ -627,7 +626,7 @@ impl Context {
     /// The texture's target, or None for a stale handle.
     #[wasm_bindgen(js_name = textureTarget)]
     pub fn texture_target(&self, tex: TextureId) -> Option<TextureTarget> {
-        self.res().textures.get(tex.0).map(|t| t.target.clone())
+        self.res().textures.get(tex.0).map(|t| t.target)
     }
 
     // --- immutable storage allocation ---------------------------------------
@@ -1372,14 +1371,21 @@ impl Context {
     }
 
     /// `TEXTURE_MAX_ANISOTROPY_EXT` — anisotropic filtering level (≥1.0).
-    /// Requires `ExtTextureFilterAnisotropic` to be enabled.
+    /// Needs `ExtTextureFilterAnisotropic` enabled (else warned and
+    /// ignored, as `createSampler` does).
     #[wasm_bindgen(js_name = textureSetMaxAnisotropy)]
     pub fn texture_set_max_anisotropy(&self, tex: TextureId, value: f32) {
-        const TEXTURE_MAX_ANISOTROPY_EXT: u32 = 0x84FE;
+        if !self.is_extension_enabled(crate::extension::Extension::ExtTextureFilterAnisotropic) {
+            console::warn(
+                "[rswebgl] texture_set_max_anisotropy: needs \
+                 ExtTextureFilterAnisotropic enabled; ignored",
+            );
+            return;
+        }
         self.set_param_f(
             tex,
             "texture_set_max_anisotropy",
-            TEXTURE_MAX_ANISOTROPY_EXT,
+            crate::sampler::TEXTURE_MAX_ANISOTROPY_EXT,
             value,
         );
     }

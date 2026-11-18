@@ -91,6 +91,13 @@ impl fmt::Debug for Error {
 
 impl std::error::Error for Error {}
 
+/// A handle pool with no slot left (`rswebgl_foundation::pool::PoolFull`).
+impl From<rswebgl_foundation::pool::PoolFull> for Error {
+    fn from(e: rswebgl_foundation::pool::PoolFull) -> Self {
+        e.to_string().into()
+    }
+}
+
 impl From<String> for Error {
     fn from(s: String) -> Self {
         Self::new(ErrorKind::Other, s)

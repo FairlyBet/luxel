@@ -81,13 +81,21 @@ impl GpuProfiler {
         }
     }
 
+    // After a restore the old queries went with the lost context: starts
+    // afresh. Whether it did.
+    fn resync(&mut self) -> bool {
+        if self.generation == self.ctx.generation() {
+            return false;
+        }
+        self.timers.clear();
+        self.generation = self.ctx.generation();
+        self.available = self.ctx.can_time_gpu();
+        true
+    }
+
     /// Collects the results that have arrived. Call once a frame.
     pub fn update(&mut self) {
-        if self.generation != self.ctx.generation() {
-            // Restored after a loss: the old queries went with it.
-            self.timers.clear();
-            self.generation = self.ctx.generation();
-            self.available = self.ctx.can_time_gpu();
+        if self.resync() {
             return;
         }
         let ctx = &self.ctx;
@@ -96,7 +104,7 @@ impl GpuProfiler {
                 if !slot.awaiting {
                     continue;
                 }
-                let Some((state, run)) = ctx.poll_query(slot.query) else {
+                let Some((state, run)) = ctx.poll_query(slot.query, "GpuProfiler") else {
                     slot.awaiting = false;
                     continue;
                 };
@@ -161,12 +169,7 @@ impl GpuProfiler {
         if !self.available || self.ctx.is_lost() {
             return None;
         }
-        if self.generation != self.ctx.generation() {
-            // Restored after a loss: the old queries are gone with it.
-            self.timers.clear();
-            self.generation = self.ctx.generation();
-            self.available = self.ctx.can_time_gpu();
-        }
+        self.resync();
         let i = match self.timers.iter().position(|t| t.label == label) {
             Some(i) => i,
             None => {
@@ -185,7 +188,7 @@ impl GpuProfiler {
         if let Some(slot) = timer.slots.iter_mut().find(|s| !s.awaiting) {
             slot.awaiting = true;
             slot.unrun = 0;
-            slot.run = self.ctx.poll_query(slot.query).map_or(0, |(_, r)| r);
+            slot.run = self.ctx.poll_query(slot.query, "GpuProfiler").map_or(0, |(_, r)| r);
             return Some(slot.query);
         }
         if timer.slots.len() >= RING_MAX {

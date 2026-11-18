@@ -109,9 +109,7 @@ struct State {
     name_index: HashMap<String, u32>,
     tracks: Vec<(u32, String)>,
     metadata: Vec<(String, String)>,
-    // GPU progress probes (`gpu_fence`): a fence per frame and when it was
-    // set (µs since start), oldest first.
-    // Fences in flight: each with the context (and its generation) it was
+    // GPU progress probes (`gpu_fence`), oldest first. Fences in flight: each with the context (and its generation) it was
     // set on — only that context can wait on or delete it.
     fences: Vec<Fence>,
 }
@@ -655,7 +653,8 @@ impl Trace {
     }
 
     /// A span with known times (`performance.now()` milliseconds), on
-    /// `track` (≥ 2 for rows of your own: name them with `trackName`).
+    /// `track` (`TRACK_MAIN`, `TRACK_GPU`, or ≥ 3 for rows of your own: name
+    /// them with `trackName`).
     /// For things measured elsewhere: long animation frames, long tasks.
     pub fn complete(name: &str, start_ms: f64, duration_ms: f64, track: u32) {
         STATE.with(|s| {

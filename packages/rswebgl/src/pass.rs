@@ -229,7 +229,7 @@ impl Pass {
         groups: [ParamGroupId; GROUP_SLOTS],
         command: &DrawCommand,
     ) {
-        let key = default_key(program, state, groups[1], vao);
+        let key = default_key(program, state, groups[crate::param::MATERIAL_SLOT], vao);
         self.push_groups_with_key(key, program, state, vao, groups, command);
     }
 

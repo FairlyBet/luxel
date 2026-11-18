@@ -70,7 +70,7 @@ fn the_context_enables_float_extensions_the_device_has() {
         Extension::ExtFloatBlend,
     ] {
         assert_eq!(
-            f.ctx.is_extension_enabled(ext.clone()),
+            f.ctx.is_extension_enabled(ext),
             supported(&f, ext.name()),
             "{}",
             ext.name()

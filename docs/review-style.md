@@ -78,43 +78,43 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 
 ## Core: context, renderer, programs
 
-- [ ] `invalidateState` and `resetGlState` overlap (docs point at both).
-- [ ] `run_pass` is ~370 lines: the MSAA resolve and the invalidate list
-  extract cleanly.
-- [ ] Link polling written twice (`program_is_ready`, `program_link_pending`).
-- [ ] Operation names in messages: snake_case vs camelCase; `poll_query`
-  hardcodes "query_result".
-- [ ] Extension names as strings beside the `Extension` enum; `Extension`
-  not Copy.
-- [ ] render_state.rs: `apply` repeats `apply_blend`; enable/disable ×7;
-  two adjacent impl blocks; `0xFFFFFFFF` stencil mask ×4.
-- [ ] stats.rs format sizes by raw hex (named in compressed_format.rs).
-- [ ] param.rs `KIND_*` u32 with catch-all arms; `DrawCommand.kind` dead arm.
-- [ ] Stale comments: trace tracks "≥ 2", fence comments, depth_range
-  return, `describe_log` method nothing calls.
-- [ ] profiler generation reset ×2; loss bookkeeping in context.rs;
-  `epoch` vs `generation()`.
-- [ ] JS predicate naming (`programIsReady` / `isFramebufferComplete` /
-  `queryPending`; `ubo*` vs `UniformBuffer`) — breaking, to decide.
-- [ ] program.rs six impl blocks; parked-sampler literal ×2; material
-  slot `groups[1]` bare.
+- [x] `invalidateState` and `resetGlState` overlap (docs point at both). — docs point at resetGlState (invalidateState: the cached bindings only); both kept
+- [-] `run_pass` is ~370 lines: the MSAA resolve and the invalidate list
+  extract cleanly. — left for now: a move of working code with no behaviour to show for it
+- [x] Link polling written twice (`program_is_ready`, `program_link_pending`). — `ProgramObj::poll_link`
+- [x] Operation names in messages: snake_case vs camelCase; `poll_query`
+  hardcodes "query_result". — poll_query takes its caller's name; the snake_case vs camelCase split is left (many messages, no wrong one)
+- [x] Extension names as strings beside the `Extension` enum; `Extension`
+  not Copy. — and `Extension` (and TextureTarget, BufferTarget, AttrType) Copy
+- [x] render_state.rs: `apply` repeats `apply_blend`; enable/disable ×7;
+  two adjacent impl blocks; `0xFFFFFFFF` stencil mask ×4. — one `toggle`, `apply` calls `apply_blend`, `STENCIL_ALL`
+- [-] stats.rs format sizes by raw hex (named in compressed_format.rs). — left: a table of sizes, each hex commented
+- [-] param.rs `KIND_*` u32 with catch-all arms; `DrawCommand.kind` dead arm. — left: private, three matches in one file
+- [x] Stale comments: trace tracks "≥ 2", fence comments, depth_range
+  return, `describe_log` method nothing calls. — describe_log's method exists (kept); depth_range done with the bugs
+- [x] profiler generation reset ×2; loss bookkeeping in context.rs;
+  `epoch` vs `generation()`. — `resync`; the loss bookkeeping move and epoch rename left (internal names)
+- [-] JS predicate naming (`programIsReady` / `isFramebufferComplete` /
+  `queryPending`; `ubo*` vs `UniformBuffer`) — breaking, to decide. — to decide with the user (breaking)
+- [x] program.rs six impl blocks; parked-sampler literal ×2; material
+  slot `groups[1]` bare. — `MATERIAL_SLOT` named; impl blocks and the sampler literal left
 
 ## Core: resources
 
-- [ ] Doc comments on the wrong items (texture.rs ×2, framebuffer.rs
+- [x] Doc comments on the wrong items (texture.rs ×2, framebuffer.rs
   `setResolutionScale` undocumented, texture_compressor.rs).
-- [ ] Docs contradicting code (texture_compressor formats, ASTC/BPTC;
+- [x] Docs contradicting code (texture_compressor formats, ASTC/BPTC;
   copy.rs `dst_buffers`).
-- [ ] Format tables ×3 (readback, framebuffer, float_targets).
-- [ ] GL constants redefined (anisotropy ×3, RGBA8 …, bare hex) → `Gl::`.
-- [ ] Anisotropy: sampler warns, texture sets blindly.
-- [ ] copy.rs re-implements `context_attribute`; blit scissor block ×2.
-- [ ] Attachment format looked up inline (use `source_format`); buffer
-  release written out (use `vao::release_buffer`).
-- [ ] vao_builder: dead `gl_type` field, `to_vertex_attr` re-match, eight
-  `add_*` alike.
-- [ ] texture_compressor: `preference` ignores its inputs; FORMATS lookup
-  ×2, key ×4.
+- [x] Format tables ×3 (readback, framebuffer, float_targets). — readback's is built from `float_need` and `integer_kind`
+- [x] GL constants redefined (anisotropy ×3, RGBA8 …, bare hex) → `Gl::`. — one `TEXTURE_MAX_ANISOTROPY_EXT`, `Gl::` for the rest
+- [x] Anisotropy: sampler warns, texture sets blindly. — the texture setter warns and skips too
+- [x] copy.rs re-implements `context_attribute`; blit scissor block ×2. — `blit_unscissored`, `context_attribute`
+- [x] Attachment format looked up inline (use `source_format`); buffer
+  release written out (use `vao::release_buffer`). — `source_format`; feedback keeps its own release (it holds a pool borrow, not Resources)
+- [x] vao_builder: dead `gl_type` field, `to_vertex_attr` re-match, eight
+  `add_*` alike. — one `push`; `to_vertex_attr` left
+- [x] texture_compressor: `preference` ignores its inputs; FORMATS lookup
+  ×2, key ×4. — `FAMILY_ORDER`, `BlockFormat::written` / `key`
 - [ ] `create_framebuffer` doesn't validate its size; `texture_storage_*`
   can't report failure; message prefixes vary.
 - [ ] texture.rs upload duplication (sub-image ×5, image/bitmap load).
@@ -126,7 +126,7 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 - [ ] "contains then destroy" teardown (compressor, packer).
 - [ ] Encoder shaders share srgb/uniforms/load_block/main → common.glsl;
   fullscreen VERT ×3.
-- [ ] Minor: `PixelUnpack::reset`, stale clippy allow, `format as u32`.
+- [x] Minor: `PixelUnpack::reset`, stale clippy allow, `format as u32`.
 
 ## Scene: rendering
 

@@ -14,7 +14,7 @@ use crate::limits;
 // ---------------------------------------------------------------------------
 
 #[wasm_bindgen]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttrType {
     Byte = 0x1400,          // BYTE
     UnsignedByte = 0x1401,  // UNSIGNED_BYTE
@@ -28,7 +28,7 @@ pub enum AttrType {
 
 impl AttrType {
     fn as_gl(&self) -> u32 {
-        self.clone() as u32
+        *self as u32
     }
 }
 
@@ -169,7 +169,7 @@ impl Context {
             .vertex_arrays
             .insert(obj)
             .map(Into::into)
-            .map_err(|e| Error::from(e.to_string()))
+            .map_err(Error::from)
     }
 }
 

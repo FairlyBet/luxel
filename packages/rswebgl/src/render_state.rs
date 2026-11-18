@@ -369,11 +369,11 @@ impl Default for RenderState {
             stencil_test: false,
             stencil_func: StencilFunc::Always,
             stencil_ref: 0,
-            stencil_mask: 0xFFFFFFFF,
+            stencil_mask: STENCIL_ALL,
             stencil_fail: StencilOp::Keep,
             stencil_depth_fail: StencilOp::Keep,
             stencil_pass: StencilOp::Keep,
-            stencil_write_mask: 0xFFFFFFFF,
+            stencil_write_mask: STENCIL_ALL,
 
             scissor_test: false,
             scissor_x: 0,
@@ -394,27 +394,32 @@ impl Default for RenderState {
     }
 }
 
+// glEnable / glDisable of `cap`.
+fn toggle(gl: &WebGl2RenderingContext, cap: u32, on: bool) {
+    if on {
+        gl.enable(cap)
+    } else {
+        gl.disable(cap)
+    }
+}
+
+/// Every stencil bit (the default stencil read and write masks).
+pub(crate) const STENCIL_ALL: u32 = 0xFFFF_FFFF;
+
 impl RenderState {
     // Every parameter is set, enabled or not: `apply_diff` compares them all,
     // so a parameter skipped here would be assumed set by the next diff.
     pub(crate) fn apply(&self, gl: &WebGl2RenderingContext, reverse_z: bool) {
         type Gl = WebGl2RenderingContext;
-        let toggle = |cap: u32, on: bool| {
-            if on { gl.enable(cap) } else { gl.disable(cap) }
-        };
+        let toggle = |cap: u32, on: bool| toggle(gl, cap, on);
 
         toggle(Gl::DEPTH_TEST, self.depth_test);
         gl.depth_func(self.depth_func.as_gl_for(reverse_z));
         gl.depth_mask(self.depth_mask);
 
-        toggle(Gl::BLEND, self.blend);
-        gl.blend_func_separate(
-            self.blend_src_rgb.as_gl(),
-            self.blend_dst_rgb.as_gl(),
-            self.blend_src_alpha.as_gl(),
-            self.blend_dst_alpha.as_gl(),
-        );
-        gl.blend_equation_separate(self.blend_eq_rgb.as_gl(), self.blend_eq_alpha.as_gl());
+        // Blending and the color mask (`apply_blend` alone sets them when
+        // only per-target overrides change).
+        self.apply_blend(gl);
 
         toggle(Gl::CULL_FACE, self.cull_face);
         gl.cull_face(self.cull_mode.as_gl());
@@ -441,13 +446,6 @@ impl RenderState {
             self.scissor_height,
         );
 
-        gl.color_mask(
-            self.color_mask_r,
-            self.color_mask_g,
-            self.color_mask_b,
-            self.color_mask_a,
-        );
-
         toggle(Gl::POLYGON_OFFSET_FILL, self.polygon_offset_fill);
         gl.polygon_offset(self.polygon_offset_factor, self.polygon_offset_units);
 
@@ -457,11 +455,7 @@ impl RenderState {
     // The blend state and color mask for every attachment — the non-indexed
     // calls set all of them, undoing any per-target override.
     fn apply_blend(&self, gl: &WebGl2RenderingContext) {
-        if self.blend {
-            gl.enable(WebGl2RenderingContext::BLEND);
-        } else {
-            gl.disable(WebGl2RenderingContext::BLEND);
-        }
+        toggle(gl, WebGl2RenderingContext::BLEND, self.blend);
         gl.blend_func_separate(
             self.blend_src_rgb.as_gl(),
             self.blend_dst_rgb.as_gl(),
@@ -483,7 +477,7 @@ impl RenderState {
         if self.targets.is_empty() {
             return;
         }
-        let Some(ext) = gl.get_extension("OES_draw_buffers_indexed").ok().flatten() else {
+        let Some(ext) = gl.get_extension(crate::extension::Extension::OesDrawBuffersIndexed.name()).ok().flatten() else {
             return;
         };
         let call = |name: &str, args: &[JsValue]| {
@@ -556,11 +550,7 @@ impl RenderState {
         let prev_blend = if per_target { self } else { prev };
         // Depth
         if self.depth_test != prev.depth_test {
-            if self.depth_test {
-                gl.enable(WebGl2RenderingContext::DEPTH_TEST);
-            } else {
-                gl.disable(WebGl2RenderingContext::DEPTH_TEST);
-            }
+            toggle(gl, WebGl2RenderingContext::DEPTH_TEST, self.depth_test);
         }
         if self.depth_func != prev.depth_func {
             gl.depth_func(self.depth_func.as_gl_for(reverse_z));
@@ -571,11 +561,7 @@ impl RenderState {
 
         // Blend
         if self.blend != prev_blend.blend {
-            if self.blend {
-                gl.enable(WebGl2RenderingContext::BLEND);
-            } else {
-                gl.disable(WebGl2RenderingContext::BLEND);
-            }
+            toggle(gl, WebGl2RenderingContext::BLEND, self.blend);
         }
         if self.blend_src_rgb != prev_blend.blend_src_rgb
             || self.blend_dst_rgb != prev_blend.blend_dst_rgb
@@ -597,11 +583,7 @@ impl RenderState {
 
         // Cull face
         if self.cull_face != prev.cull_face {
-            if self.cull_face {
-                gl.enable(WebGl2RenderingContext::CULL_FACE);
-            } else {
-                gl.disable(WebGl2RenderingContext::CULL_FACE);
-            }
+            toggle(gl, WebGl2RenderingContext::CULL_FACE, self.cull_face);
         }
         if self.cull_mode != prev.cull_mode {
             gl.cull_face(self.cull_mode.as_gl());
@@ -612,11 +594,7 @@ impl RenderState {
 
         // Stencil
         if self.stencil_test != prev.stencil_test {
-            if self.stencil_test {
-                gl.enable(WebGl2RenderingContext::STENCIL_TEST);
-            } else {
-                gl.disable(WebGl2RenderingContext::STENCIL_TEST);
-            }
+            toggle(gl, WebGl2RenderingContext::STENCIL_TEST, self.stencil_test);
         }
         if self.stencil_func != prev.stencil_func
             || self.stencil_ref != prev.stencil_ref
@@ -644,11 +622,7 @@ impl RenderState {
 
         // Scissor
         if self.scissor_test != prev.scissor_test {
-            if self.scissor_test {
-                gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
-            } else {
-                gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
-            }
+            toggle(gl, WebGl2RenderingContext::SCISSOR_TEST, self.scissor_test);
         }
         if self.scissor_x != prev.scissor_x
             || self.scissor_y != prev.scissor_y
@@ -679,11 +653,7 @@ impl RenderState {
 
         // Polygon offset
         if self.polygon_offset_fill != prev.polygon_offset_fill {
-            if self.polygon_offset_fill {
-                gl.enable(WebGl2RenderingContext::POLYGON_OFFSET_FILL);
-            } else {
-                gl.disable(WebGl2RenderingContext::POLYGON_OFFSET_FILL);
-            }
+            toggle(gl, WebGl2RenderingContext::POLYGON_OFFSET_FILL, self.polygon_offset_fill);
         }
         if self.polygon_offset_factor != prev.polygon_offset_factor
             || self.polygon_offset_units != prev.polygon_offset_units

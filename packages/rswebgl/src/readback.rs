@@ -236,7 +236,7 @@ impl Context {
         // The canvas is a normalized RGBA8 target (an antialiased one is
         // resolved by the browser for the read).
         let (internal, samples) = if fb.is_null() {
-            (0x8058, 0)
+            (Gl::RGBA8, 0)
         } else {
             let res = self.res();
             let f = res
@@ -312,18 +312,13 @@ fn read_len(r: Region, format: ReadFormat) -> Result<usize, Error> {
 // The only format WebGL2 reads a color attachment of this sized internal
 // format as (besides the implementation's own extra format, not used here).
 fn read_format_for(internal: u32) -> ReadFormat {
-    match internal {
-        // R16F RG16F RGBA16F R32F RG32F RGBA32F R11F_G11F_B10F
-        0x822D | 0x822F | 0x881A | 0x822E | 0x8230 | 0x8814 | 0x8C3A => ReadFormat::RgbaF32,
-        // R8I R16I R32I RG8I RG16I RG32I RGBA8I RGBA16I RGBA32I
-        0x8231 | 0x8233 | 0x8235 | 0x8237 | 0x8239 | 0x823B | 0x8D8E | 0x8D88 | 0x8D82 => {
-            ReadFormat::RgbaI32
-        }
-        // R8UI R16UI R32UI RG8UI RG16UI RG32UI RGBA8UI RGBA16UI RGBA32UI RGB10_A2UI
-        0x8232 | 0x8234 | 0x8236 | 0x8238 | 0x823A | 0x823C | 0x8D7C | 0x8D76 | 0x8D70 | 0x906F => {
-            ReadFormat::RgbaU32
-        }
-        _ => ReadFormat::Rgba8,
+    if crate::float_targets::float_need(internal).is_some() {
+        return ReadFormat::RgbaF32;
+    }
+    match crate::framebuffer::integer_kind(internal) {
+        Some(true) => ReadFormat::RgbaI32,
+        Some(false) => ReadFormat::RgbaU32,
+        None => ReadFormat::Rgba8,
     }
 }
 
