@@ -79,20 +79,17 @@ fixes straight away.
 ## Carried into phase 2
 
 Found in phase 1, real but not bugs to fix in place (a design change, or
-only reachable where nothing is left to break):
+only reachable where nothing is left to break). Status (2026-11-18):
 
-- ECS: `World::insert` / `get_mut` stamp writes with the next system's
-  tick; a system writing through them during its own run sees its own
-  write as changed next time (no effect today).
-- glTF: a texture used both as color and as data is built once, sRGB
-  (already in TODO.md); variant materials using other TEXCOORD sets or
-  adding normal maps get the default material's vertex arrays (UV slots,
-  generated tangents).
-- Core: the profiler's slot reuse depends on `update()` vs `time()` call
-  order; error paths that leak only while the context is lost.
-- Scene: `whenReady` doesn't wait for models reloading after a context
-  loss; morphing meshes aren't culled at all (their bounds don't include
-  the targets' deltas); point / spot shadow near planes can clip a caster
-  very close to the light.
+- [x] ECS: `World::insert` / `get_mut` stamp writes with the next system's
+  tick (one tick rule, a1c3a41).
+- [x] glTF: a texture used both as color and as data is built in both
+  spaces (a8e5796); variant materials get the vertex arrays they need
+  (097f415).
+- [x] Core: the profiler's slot reuse vs call order (4dae443). Left: error
+  paths that leak only while the context is lost.
+- [x] Scene: `whenReady` waits for models reloading after a loss (bab643a);
+  morphing meshes are culled with widened bounds (ce18db7). Left: point /
+  spot shadow near planes can clip a caster very close to the light.
 - Shading: under the OpenPBR model a glTF specularFactor < 1 becomes an IOR
   change (the grazing reflection stays at 1), as the OpenPBR mapping says.

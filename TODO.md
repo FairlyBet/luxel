@@ -50,12 +50,13 @@ blending, the display's divide, TAA, the glass copy).
    from below, blurred, on a plane under them; cached like the maps).
    GTAO (`setAmbientOcclusion`, three.js' GTAOShader) at half resolution,
    smoothed by depth, multiplied into the opaque scene before TAA, and
-   contact shadows of the brightest directional light (`setContactShadows`,
-   Filament's ray through the depth) in the same pass. Both as
-   post-passes over the opaque scene's depth (as three.js' GTAOPass /
-   SAOPass): the darkening
-   multiplies the lit image — direct light and reflections too, not only
-   the light it belongs to — for no extra pass over the geometry.
+   contact shadows of the key light — the one giving the most light at the
+   scene's centre, directional, point or spot (`setContactShadows`,
+   Filament's ray through the depth; off by default) — in the same pass.
+   Both are post-passes over the opaque scene's depth (as three.js'
+   GTAOPass / SAOPass): AO multiplies the lit image (direct light and
+   reflections too), for no extra pass over the geometry; contact shadows
+   dim only their light's share of each pixel.
 
    Later, maybe: a depth prepass (the opaque scene's depth drawn first,
    then shaded with `depth_func` EQUAL). The lit shaders could then read
@@ -88,7 +89,7 @@ blending, the display's divide, TAA, the glass copy).
    shared material UBO would gain ~25% over plain uniforms — low priority,
    per-object data already goes through the instance texture.
 4. Later: bloom, LOD by meshoptimizer's simplifier, `KHR_animation_pointer`,
-   `KHR_node_visibility`, `KHR_materials_volume_scatter`, `ctx.gpuInfo()`.
+   `KHR_materials_volume_scatter`.
 
 Texture arrays to cut texture switches: not planned in general. Layers
 share one size and format (glTF textures don't: resampling loses quality),
@@ -115,7 +116,7 @@ sub-image regions are checked against their level. Left:
 ### Uniform buffers (UBO)
 
 - Dirty runs closer than 1 KB upload as one `bufferSubData` (measured on
-  a Mali-G57, see "Planned" 7); the threshold isn't tuned per device.
+  a Mali-G57, see "Planned" 3); the threshold isn't tuned per device.
 - Layout validation is size-only (`UNIFORM_BLOCK_DATA_SIZE` vs our std140
   size): same-size permutations and per-field offset errors slip through.
 - `bindBufferRange` (several blocks in one buffer) is wired
@@ -123,8 +124,6 @@ sub-image regions are checked against their level. Left:
 
 ### Extensions
 
-- `WEBGL_debug_renderer_info`: a `ctx.gpu_info()` (vendor + renderer) for bug
-  reports and per-GPU fallbacks.
 - `WEBGL_multi_draw`: little left for it after the scene's instancing (glTF
   primitives each have their own vertex array; without base instance the
   draws of one multi-draw can't find their instances). Worth it for apps
@@ -183,8 +182,9 @@ its owner.
   the decoders the app points at. KTX2 picks ASTC → BC7 → ETC2 → BC1/3 →
   RGBA8 as three.js does. Draco and KTX2 have no automated tests (the
   decoders come from CDNs); checked with the Khronos samples in the viewer.
-- Attributes (quantized ones too) are dequantized to f32 on upload, indices
-  keep their width: keeping normalized u8 / u16 would cut memory on mobile.
+- Plain files' positions and skin weights stay f32 on the GPU (normals,
+  tangents, UVs and colors go up as 16-bit; quantized files as stored);
+  indices keep their width.
 - A material reading more than two TEXCOORD sets keeps the first two (the
   shader has two UV slots), reported.
 - MikkTSpace tangents are per vertex: a vertex shared by faces whose
@@ -282,7 +282,6 @@ its owner.
 - Picking draws meshes by their location-0 attribute, not their own
   shaders: a displacing or skinning shader is picked at rest. No box
   selection.
-- A model added twice needs two loads (no shared GPU data between roots).
 - Context loss: the environment's `.hdr` bytes stay in memory for the
   rebake; models are fetched again from their URL unless
   `setRestoreModels(false)`.
@@ -294,8 +293,7 @@ its owner.
 
 ## JS API and packaging
 
-- Handles are bare `number`s in the `.d.ts`; branded types would catch
-  mixing them up. Parameter names there stay snake_case.
+- Parameter names in the `.d.ts` stay snake_case.
 - Builders consume themselves (`VaoBuilder.build`, `ParamLayoutBuilder`
   chaining): in JS the object is freed by the call.
 - npm: `node scripts/build-npm.mjs` builds the package into `dist/npm`, not

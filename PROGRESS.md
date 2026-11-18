@@ -161,11 +161,12 @@
 Separate crate translating glTF/GLB (geometry → VAOs, materials → uniforms +
 render state, textures, node transforms → draw list) using only rswebgl's public
 API. Async load (fetches external buffers/images; textures fill in via the DOM
-image decoder). v1 covers static meshes + PBR metallic-roughness factors/base
-color; deferred items (skinning, animation, KTX2/Draco, …) are in `TODO.md`.
+image decoder). Meshes, skins, morph targets, animation, KTX2 / Draco /
+meshopt and the KHR_materials_* extensions are read; what is left is in
+`TODO.md`.
 Separate occlusion + metallic-roughness maps are GPU-packed into one ORM texture
 (`src/pack.rs` + `texture_packer`). Materials come out as parameter groups with
-every factor and all five maps; the PBR shader that reads them is in
+every factor and all 19 maps; the PBR shader that reads them is in
 `packages/rswebgl-scene/shaders/`.
 
 ## Foundation (`packages/rswebgl-foundation`)
@@ -197,9 +198,9 @@ Design: `docs/design/ecs.md`. ECS and hierarchy: host tests; `SceneRenderer`: br
 | Camera, Bounds, frustum culling          | ✅     | `rswebgl-scene/src/{camera,culling}.rs` |
 | SceneRenderer: frame UBO, object groups, Pass assembly (E3) | ✅ | `rswebgl-scene/src/render.rs` |
 | glTF nodes → entities, `Name`, `find_by_name` (E4) | ✅ | `rswebgl-scene/src/model.rs` |
-| JS facade `Scene` (cdylib bundle; example `examples/js-scene`) | ✅ | `rswebgl-scene/src/js.rs` |
-| PBR shader variants, full glTF materials, lights, transparency (E5a) | ✅ | `rswebgl-scene/src/{pbr,light}.rs`, `shaders/` |
+| JS facade `Scene` (cdylib bundle; example `examples/js-scene`) | ✅ | `rswebgl-scene/src/js/` |
+| PBR shader variants, full glTF materials, lights, transparency (E5a) | ✅ | `rswebgl-scene/src/{pbr.rs,lighting/}`, `shaders/` |
 | IBL: HDR decode, GPU bake, BRDF LUT, background (E5b) | ✅ | `rswebgl-scene/src/{environment,hdr,brdf_lut}.rs` |
 | Material extensions: ior, specular, transmission, volume, clearcoat, dispersion (E5c, factors) | ✅ | `rswebgl-gltf/src/material.rs`, `rswebgl-scene/shaders/pbr.frag` |
 | Scene API v2: materials by name/property, clones, options objects, renderFrame, picking, shader preludes | ✅ | `rswebgl-scene/src/{js,pick,shader}*` |
-| Screen-space transmission, extension textures; viewer (E5d) | ⬜ |  |
+| Screen-space transmission, extension textures; viewer (E5d) | ✅ | `rswebgl-scene/src/output.rs`, `examples/viewer` |

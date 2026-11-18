@@ -58,9 +58,8 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
   document.addEventListener("visibilitychange", () => Trace.instant(`page ${document.visibilityState}`));
 
   function gpuName() {
-    const gl = /** @type {WebGL2RenderingContext | null} */ (canvas.getContext("webgl2"));
-    const info = gl?.getExtension("WEBGL_debug_renderer_info");
-    return info && gl ? `${gl.getParameter(info.UNMASKED_VENDOR_WEBGL)} / ${gl.getParameter(info.UNMASKED_RENDERER_WEBGL)}` : "unknown";
+    const info = ctx?.gpuInfo();
+    return info?.unmaskedRenderer ? `${info.unmaskedVendor} / ${info.unmaskedRenderer}` : "unknown";
   }
 
   // The device, the page's settings and what it shows: every report's metadata.
@@ -132,7 +131,7 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     const sync = () => {
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
       gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-      ctx?.invalidateState(); // the library's GL state cache saw none of this
+      ctx?.resetGlState(); // the library's GL state cache saw none of this
     };
     for (const id of ["cost-measure", "trace-record"]) $(id).disabled = true;
     /** @type {[string, number][]} */
@@ -193,9 +192,11 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     await time(`${scene.shadingModel()} shading`);
     scene.setShadingModel(shading);
     if (scene.taa()) {
+      const samples = scene.samples();
       scene.setTaa(false);
       scene.setSamples(0);
       await time("no TAA, no MSAA");
+      scene.setSamples(samples);
       scene.setTaa(true);
     }
     // FXAA's own cost: without it if on, else with it.
@@ -205,7 +206,6 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
       scene.setFxaa(true);
     } else if (scene.hdr()) {
       scene.setFxaa(true);
-      await scene.whenReady();
       await time("+ FXAA");
       scene.setFxaa(false);
     }

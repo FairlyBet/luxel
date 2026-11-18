@@ -31,20 +31,20 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 
 ## Docs and the viewer
 
-- [ ] npm README: broken KTX2 transcoder URL; setQuality "contact shadows";
-  getter list; no shadows/effects section; FXAA missing.
-- [ ] README: point lights cast shadows too; AO, contact, ground shadow.
-- [ ] TODO.md: contact shadows of the "brightest directional"; instantiate
+- [x] npm README: broken KTX2 transcoder URL; setQuality "contact shadows";
+  getter list; no shadows/effects section; FXAA missing. — and a Shadows and occlusion section, the getter rule, error names
+- [x] README: point lights cast shadows too; AO, contact, ground shadow.
+- [x] TODO.md: contact shadows of the "brightest directional"; instantiate
   exists; KHR_node_visibility and gpuInfo done; dequantized attributes;
   branded handles; "Planned 7".
-- [ ] examples/js-scene README: `render(camera, pass)` → `renderFrame`.
-- [ ] docs/review-plan.md "Carried into phase 2" mostly fixed;
+- [x] examples/js-scene README: `render(camera, pass)` → `renderFrame`.
+- [x] docs/review-plan.md "Carried into phase 2" mostly fixed;
   review-phase2.md "Nothing here is fixed yet", getter style done, quantized
-  attributes done; PROGRESS.md and docs/design status lines stale.
-- [ ] viewer: redundant `invalidate()` after setters; `coarse` ×4;
+  attributes done; PROGRESS.md and docs/design status lines stale. — carried items marked with their commits; PROGRESS.md and the design docs' status lines current
+- [x] viewer: redundant `invalidate()` after setters; `coarse` ×4;
   profiling.js hand-rolls gpuInfo, leaves `setSamples(0)`, extra
   whenReady; stale MSAA comment; HDR checkbox not synced; orbit hand-rolled
-  beside `rswebgl/orbit`.
+  beside `rswebgl/orbit`. — invalidate() calls and helper gone, one `coarse`, gpuInfo / resetGlState in profiling.js, samples restored, HDR box synced, comment fixed; the hand-rolled orbit stays (the viewer's pkg has no orbit.js)
 
 ## Foundation, ECS, glTF
 

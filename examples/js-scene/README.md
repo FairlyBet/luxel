@@ -1,7 +1,7 @@
 # js-scene
 
 A glTF model in a scene, driven from plain JS through the `Scene` facade of
-`rswebgl-scene`: entities are plain numbers, one `scene.render(camera, pass)`
+`rswebgl-scene`: entities are plain numbers, one `scene.renderFrame(camera)`
 per frame does transforms, frustum culling and the draw list. The model's
 glTF nodes become entities you can find by name, move and hide.
 

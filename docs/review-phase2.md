@@ -2,7 +2,8 @@
 
 Four read-only reviews (foundation + ECS, core, glTF, scene + JS API), each
 claim checked against the code, merged and grouped into pieces of work.
-Effort S / M / L; value H / M / L. Nothing here is fixed yet: pick from it.
+Effort S / M / L; value H / M / L. Items 1–7 are done (each says what is
+left); after them came the style / architecture review (review-style.md).
 
 ## 1. Loading (glTF) — H, M — done
 
@@ -200,7 +201,8 @@ Not done from this item:
 - environment from KTX2, cube maps or EXR;
 - fog;
 - setters returning the clamped value;
-- one getter style (`isHdr` vs `ambientOcclusion`).
+- ~~one getter style (`isHdr` vs `ambientOcclusion`)~~ — done (1fdeb77:
+  a setting's getter mirrors its setter).
 
 Known limit: glass sees the background fill without auto exposure or tone
 mapping undone, so a white fill looks light grey through clear glass.
@@ -221,8 +223,9 @@ HDR target).
 
 Post-processing hooks (bloom is in TODO), material extension hooks
 (`onBeforeCompile`-like), layers / render order, multiple viewports and
-offscreen full-quality renders, zero-copy JS views of storages, quantized
-vertex attributes kept on the GPU, `KHR_xmp_json_ld`, pbrSpecularGlossiness,
+offscreen full-quality renders, zero-copy JS views of storages, plain files'
+positions and skin weights below f32 on the GPU (quantized files already
+stay as stored), `KHR_xmp_json_ld`, pbrSpecularGlossiness,
 multiple glTF scenes, WebXR.
 
 ## Suggested order

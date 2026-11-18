@@ -149,8 +149,9 @@ shows, or the page behind a transparent canvas.
 ## Quality, resolution, screenshots
 
 `scene.setQuality("low" | "medium" | "high")` sets antialiasing, shadow
-map size, ambient occlusion and contact shadows, transmission resolution and
-a pixel-ratio cap together; each can still be set after.
+map size, ambient occlusion (on in "high"), transmission resolution and a
+pixel-ratio cap together; each can still be set after. Contact shadows stay
+off in every preset (`setContactShadows` turns them on).
 
 With auto-resize on, the canvas's drawing buffer can be scaled:
 - `ctx.defaultFramebuffer().setResolutionScale(0.75)` draws fewer pixels;
@@ -171,7 +172,7 @@ at, before loading such a model (three.js' conventions: a directory with
 import { setDracoDecoderPath, setKtx2TranscoderPath } from "rswebgl";
 
 setDracoDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
-setKtx2TranscoderPath("https://cdn.jsdelivr.net/npm/three.170.0/examples/jsm/libs/basis/");
+setKtx2TranscoderPath("https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/basis/");
 ```
 
 ## Antialiasing
@@ -179,6 +180,26 @@ setKtx2TranscoderPath("https://cdn.jsdelivr.net/npm/three.170.0/examples/jsm/lib
 The scene's HDR target is multisampled by default (`scene.setSamples(4)`).
 `scene.setTaa(true)` switches to temporal antialiasing, which also smooths
 shading and thin geometry; pair it with `scene.setSharpening(0.5)`.
+`scene.setFxaa(true)` is the cheap one for phones (with `setSamples(0)`);
+with TAA it covers what TAA leaves out (glass and transparent meshes).
+
+## Shadows and occlusion
+
+- Lights cast shadow maps with `castShadow: true` in `setLight`:
+  directional (with cascades), spot and point lights;
+  `scene.setShadowMapSize(2048)` sets their resolution.
+- `scene.setAmbientOcclusion({})` darkens creases and contacts (GTAO);
+  options `radius`, `intensity`, …, or `null` to turn it off.
+- `scene.setGroundShadow({})`: a soft shadow on an invisible ground under
+  the model, for scenes lit by their environment alone.
+- `scene.setContactShadows({})`: short screen-space shadows where things
+  touch, of the light giving the most light at the scene's centre. Off by
+  default: they show only the start of a long shadow and change with the
+  view.
+
+Each takes its options or `null`, and its getter
+(`ambientOcclusion()`, `groundShadow()`, `contactShadows()`) gives them
+back (defaults filled in) or `null`.
 
 ## Context loss
 
@@ -228,13 +249,23 @@ catches a texture passed where an entity goes. Handles are freed explicitly
 `cameras`, `lights`, `materials` and `children` return `Handles<T>`: a
 `Uint32Array` whose elements read as `T`.
 
-Most setters have a getter that reads the value back, often in the shape
-the setter takes:
+A setting's getter has its setter's name without `set`, and reads the
+value back in the shape the setter takes:
 - `camera(e)` and `light(e)` give the options of `setCamera` and
   `setLight`;
+- `ambientOcclusion()`, `contactShadows()` and `groundShadow()` give their
+  options, or `null` when off;
+- flags: `hdr()`, `taa()`, `fxaa()`, `autoExposure()`, `reverseZ()`,
+  `dither()`, `restoreModels()`, `gpuProfiling()`;
 - also `exposure()`, `environmentIntensity()`, `backgroundFill()`,
-  `visible(e)`, `localMatrix(e)`, `bounds(e)`, `animationSpeed(root)` and
-  `materialVariant(root)`.
+  `cameraAspect(e)`, `visible(e)`, `localMatrix(e)`, `bounds(e)`,
+  `animationSpeed(root)` and `materialVariant(root)`.
+
+`isX` / `hasX` ask about a state rather than a setting: `isAlive(e)`,
+`isShown(e)`, `hasEnvironment()`, `isLost()`.
+
+A setter's error names it: `"setLight: \"intensity\" must be a finite
+number"`.
 
 `visible(e)` is `e`'s own flag. `isShown(e)` also counts hidden ancestors,
 as glTF's `KHR_node_visibility` does.

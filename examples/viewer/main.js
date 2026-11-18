@@ -94,8 +94,11 @@ const status = (/** @type {string} */ text, error = false) => {
   $("status").classList.toggle("error", error);
 };
 
-// The scene does its own antialiasing (MSAA on its HDR target), and needs no
-// depth buffer on the canvas: with HDR off it draws into a target of its own.
+// A phone (a touch screen): cheaper settings below.
+const coarse = matchMedia("(pointer: coarse)").matches;
+// The scene does its own antialiasing (TAA on desktops, FXAA on phones),
+// and needs no depth buffer on the canvas: with HDR off it draws into a
+// target of its own.
 const options = new ContextOptions();
 options.antialias = false;
 options.depth = false;
@@ -104,7 +107,7 @@ const fb = ctx.defaultFramebuffer();
 fb.setClearColor(0.05, 0.05, 0.06, 1);
 const scene = new Scene(ctx);
 // Phones: a half-size copy of the scene behind glass (memory, time).
-if (matchMedia("(pointer: coarse)").matches) scene.setTransmissionResolution(0.5);
+if (coarse) scene.setTransmissionResolution(0.5);
 // GPU time per pass, where the browser exposes timer queries.
 const gpuTiming = scene.setGpuProfiling(true);
 // The Profiling panel: traces to download or send to the serving computer.
@@ -212,7 +215,6 @@ const light = scene.spawn();
 let lightIntensity = 2;
 // Shadows from the key light: on desktops; phones keep the frame cheaper
 // (and a smaller map when turned on).
-const coarse = matchMedia("(pointer: coarse)").matches;
 let castShadow = !coarse;
 // Phones: a smaller map, 16-bit (a quarter of the desktop's memory).
 if (coarse) {
@@ -238,23 +240,19 @@ const setContact = () =>
 setContact();
 $("contact-shadows").addEventListener("change", () => {
   setContact();
-  invalidate();
 });
 const setAo = () => scene.setAmbientOcclusion($("ambient-occlusion").checked ? {} : null);
 setAo();
 $("ambient-occlusion").addEventListener("change", () => {
   setAo();
-  invalidate();
 });
 const setGround = () => scene.setGroundShadow($("ground-shadow").checked ? {} : null);
 setGround();
 $("ground-shadow").addEventListener("change", () => {
   setGround();
-  invalidate();
 });
 $("shadow-freeze").addEventListener("change", () => {
   scene.setShadowsFrozen($("shadow-freeze").checked);
-  invalidate();
 });
 // The HUD's shadow maps: in use, their memory, how many the last frame drew.
 const shadowInfo = () =>
@@ -263,7 +261,6 @@ const shadowInfo = () =>
     : "";
 $("shadow-cascades").addEventListener("change", () => {
   scene.setShadowCascadeDebug($("shadow-cascades").checked);
-  invalidate();
 });
 
 // Orbit with one pointer, zoom with the wheel or two; a tap picks.
@@ -363,7 +360,6 @@ async function load(
     const problems = warnings();
     if (root) scene.despawn(root);
     root = scene.addModel(model);
-    invalidate();
     modelLabel = label;
     modelUrl = typeof source === "string" ? source : source.name;
     const [cx, cy, cz, r] = scene.modelBounds(root);
@@ -379,7 +375,6 @@ async function load(
     applySemantics();
     status(`Compiling shaders for ${label}…`);
     await scene.whenReady();
-    invalidate();
     if (current()) {
       const time = `${label}: ${((performance.now() - t0) / 1000).toFixed(1)} s`;
       if (problems.length) {
@@ -589,8 +584,9 @@ $("samples").addEventListener("change", () => {
 // Phones: FXAA (MSAA, even 2×, and TAA cost too much on the Mali test
 // phone). Desktops: TAA (FXAA for the glass drawn after it). MSAA 4×
 // without HDR output.
+$("hdr").checked = scene.hdr();
 if (scene.hdr()) {
-  $("samples").value = matchMedia("(pointer: coarse)").matches ? "fxaa" : "taa";
+  $("samples").value = coarse ? "fxaa" : "taa";
   $("samples").dispatchEvent(new Event("change"));
 }
 $("resolution").addEventListener("change", () => {
@@ -604,7 +600,7 @@ slider("spec-aa", (v) => v.toFixed(2), (v) => scene.setSpecularAntialiasing(v, M
 // Glass behind glass: depth-peeled transmission layers.
 $("glass-layers").addEventListener("change", () => scene.setTransmissionLayers(Number($("glass-layers").value)));
 // Desktops: four (glass behind glass seen through); phones: the fast one.
-if (!matchMedia("(pointer: coarse)").matches) {
+if (!coarse) {
   $("glass-layers").value = "4";
   $("glass-layers").dispatchEvent(new Event("change"));
 }
@@ -781,8 +777,6 @@ let lastStats = 0;
 // spike. "Idle redraw" keeps drawing whole frames instead, which keeps the
 // clocks (and the power) up.
 let still = false;
-// What the scene can't see changing on its own.
-const invalidate = () => scene.invalidate();
 
 // "gpu 1.20 ms  (opaque 0.90 late 0.10 present 0.20)", or why there's none.
 function gpuLine() {
