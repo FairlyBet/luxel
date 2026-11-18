@@ -135,16 +135,33 @@ impl Scene {
         Ok(())
     }
 
-    /// Whether contact shadows are on.
-    #[wasm_bindgen(js_name = contactShadows)]
-    pub fn contact_shadows(&self) -> bool {
-        self.contact_shadows.is_some()
+    /// The contact shadows' options as `setContactShadows` takes them, or
+    /// null when they are off.
+    #[wasm_bindgen(js_name = contactShadows, unchecked_return_type = "ContactShadowsOptions | null")]
+    pub fn contact_shadows(&self) -> JsValue {
+        self.contact_shadows.map_or(JsValue::NULL, |c| {
+            super::getters::object(&[
+                ("length", c.length.into()),
+                ("thickness", c.thickness.into()),
+                ("intensity", c.intensity.into()),
+                ("steps", c.steps.into()),
+            ])
+        })
     }
 
-    /// Whether ambient occlusion is on.
-    #[wasm_bindgen(js_name = ambientOcclusion)]
-    pub fn ambient_occlusion(&self) -> bool {
-        self.ambient_occlusion.is_some()
+    /// The ambient occlusion's options as `setAmbientOcclusion` takes them,
+    /// or null when it is off.
+    #[wasm_bindgen(js_name = ambientOcclusion, unchecked_return_type = "AmbientOcclusionOptions | null")]
+    pub fn ambient_occlusion(&self) -> JsValue {
+        self.ambient_occlusion.map_or(JsValue::NULL, |a| {
+            super::getters::object(&[
+                ("radius", a.radius.into()),
+                ("thickness", a.thickness.into()),
+                ("intensity", a.intensity.into()),
+                ("power", a.power.into()),
+                ("halfResolution", a.half_resolution.into()),
+            ])
+        })
     }
 
     /// HDR rendering on or off (on by default where the device renders
@@ -165,8 +182,8 @@ impl Scene {
         self.hdr_wanted
     }
 
-    #[wasm_bindgen(js_name = isHdr)]
-    pub fn is_hdr(&self) -> bool {
+    /// Whether HDR output is on (`setHdr`).
+    pub fn hdr(&self) -> bool {
         self.hdr_wanted
     }
 
@@ -219,8 +236,8 @@ impl Scene {
         on
     }
 
-    #[wasm_bindgen(js_name = isTaa)]
-    pub fn is_taa(&self) -> bool {
+    /// Whether TAA is on (`setTaa`; needs HDR output).
+    pub fn taa(&self) -> bool {
         self.taa && self.hdr_wanted
     }
 
@@ -242,11 +259,11 @@ impl Scene {
         {
             self.give_up_fxaa(&e);
         }
-        self.is_fxaa()
+        self.fxaa()
     }
 
-    #[wasm_bindgen(js_name = isFxaa)]
-    pub fn is_fxaa(&self) -> bool {
+    /// Whether FXAA is on (`setFxaa`; needs HDR output).
+    pub fn fxaa(&self) -> bool {
         self.fxaa && self.hdr_wanted
     }
 
@@ -266,11 +283,12 @@ impl Scene {
         {
             self.give_up_auto_exposure(&e);
         }
-        self.is_auto_exposure()
+        self.auto_exposure()
     }
 
-    #[wasm_bindgen(js_name = isAutoExposure)]
-    pub fn is_auto_exposure(&self) -> bool {
+    /// Whether auto exposure is on (`setAutoExposure`; needs HDR output).
+    #[wasm_bindgen(js_name = autoExposure)]
+    pub fn auto_exposure(&self) -> bool {
         self.auto_exposure && self.hdr_wanted
     }
 

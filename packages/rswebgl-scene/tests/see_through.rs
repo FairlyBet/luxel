@@ -92,7 +92,7 @@ async fn glass_shows_transparent_meshes_behind_it() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return; // glass sees a scene copy only with the HDR target
     }
     scene.set_tone_mapping("none").unwrap();
@@ -171,7 +171,7 @@ async fn openpbr_transmission_color_without_depth_tints_the_surface() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return;
     }
     scene.set_tone_mapping("none").unwrap();
@@ -228,7 +228,7 @@ async fn openpbr_native_glass_is_not_tinted_by_its_base_color() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return;
     }
     scene.set_tone_mapping("none").unwrap();

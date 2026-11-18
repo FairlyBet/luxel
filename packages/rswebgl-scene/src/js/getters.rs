@@ -13,7 +13,7 @@ use crate::render::Visible;
 use crate::transform::Transform;
 
 // A plain object from (key, value) pairs.
-fn object(pairs: &[(&str, JsValue)]) -> JsValue {
+pub(super) fn object(pairs: &[(&str, JsValue)]) -> JsValue {
     let o = js_sys::Object::new();
     for (k, v) in pairs {
         let _ = js_sys::Reflect::set(&o, &(*k).into(), v);
@@ -58,15 +58,15 @@ impl Scene {
     }
 
     /// Whether reverse-Z is on (`setReverseZ`).
-    #[wasm_bindgen(js_name = isReverseZ)]
-    pub fn is_reverse_z(&self) -> bool {
+    #[wasm_bindgen(js_name = reverseZ)]
+    pub fn reverse_z(&self) -> bool {
         self.ctx.reverse_z()
     }
 
     /// Whether models are fetched again after a context loss
     /// (`setRestoreModels`).
-    #[wasm_bindgen(js_name = restoresModels)]
-    pub fn restores_models(&self) -> bool {
+    #[wasm_bindgen(js_name = restoreModels)]
+    pub fn restore_models(&self) -> bool {
         self.restore_models
     }
 

@@ -245,10 +245,19 @@ impl Scene {
         Ok(())
     }
 
-    /// Whether the ground shadow is on.
-    #[wasm_bindgen(js_name = groundShadow)]
-    pub fn ground_shadow(&self) -> bool {
-        self.renderer.ground_shadow().is_some()
+    /// The ground shadow's options as `setGroundShadow` takes them, or null
+    /// when it is off.
+    #[wasm_bindgen(js_name = groundShadow, unchecked_return_type = "GroundShadowOptions | null")]
+    pub fn ground_shadow(&self) -> JsValue {
+        self.renderer.ground_shadow().map_or(JsValue::NULL, |g| {
+            super::getters::object(&[
+                ("darkness", g.darkness.into()),
+                ("blur", g.blur.into()),
+                ("opacity", g.opacity.into()),
+                ("reach", g.reach.into()),
+                ("size", g.size.into()),
+            ])
+        })
     }
 
     /// Whether the last frame drew the ground shadow again (its casters

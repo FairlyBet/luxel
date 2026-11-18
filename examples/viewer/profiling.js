@@ -192,18 +192,18 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     scene.setShadingModel(shading === "openpbr" ? "gltf" : "openpbr");
     await time(`${scene.shadingModel()} shading`);
     scene.setShadingModel(shading);
-    if (scene.isTaa()) {
+    if (scene.taa()) {
       scene.setTaa(false);
       scene.setSamples(0);
       await time("no TAA, no MSAA");
       scene.setTaa(true);
     }
     // FXAA's own cost: without it if on, else with it.
-    if (scene.isFxaa()) {
+    if (scene.fxaa()) {
       scene.setFxaa(false);
       await time("no FXAA");
       scene.setFxaa(true);
-    } else if (scene.isHdr()) {
+    } else if (scene.hdr()) {
       scene.setFxaa(true);
       await scene.whenReady();
       await time("+ FXAA");

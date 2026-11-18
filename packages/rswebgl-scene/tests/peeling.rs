@@ -103,7 +103,7 @@ async fn peeled_glass_sees_the_glass_behind_it() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return; // peeling needs the HDR target
     }
     scene.set_tone_mapping("none").unwrap();

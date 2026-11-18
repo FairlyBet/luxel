@@ -121,7 +121,7 @@ const profiling = createProfiling({
     const d = {
       model: modelLabel,
       modelUrl,
-      hdr: String(scene.isHdr()),
+      hdr: String(scene.hdr()),
       shading: scene.shadingModel(),
       drawn: String(scene.drawn()),
       drawCalls: String(scene.drawCalls()),
@@ -589,7 +589,7 @@ $("samples").addEventListener("change", () => {
 // Phones: FXAA (MSAA, even 2×, and TAA cost too much on the Mali test
 // phone). Desktops: TAA (FXAA for the glass drawn after it). MSAA 4×
 // without HDR output.
-if (scene.isHdr()) {
+if (scene.hdr()) {
   $("samples").value = matchMedia("(pointer: coarse)").matches ? "fxaa" : "taa";
   $("samples").dispatchEvent(new Event("change"));
 }
@@ -824,7 +824,7 @@ function frame(/** @type {number} */ now) {
     $("fps").style.color = fpsShown >= 55 ? "var(--good)" : fpsShown >= 30 ? "var(--warn)" : "var(--bad)";
     $("frame").textContent = `frame ${avg.toFixed(1)} ms (worst ${worst.toFixed(0)})  cpu ${cpu.toFixed(2)} ms`;
     $("info").textContent =
-      `\n${canvas.width}×${canvas.height}${still ? "  still" : ""}  ${scene.isHdr() ? (scene.isTaa() ? (scene.isFxaa() ? "HDR TAA+FXAA" : "HDR TAA") : scene.isFxaa() ? "HDR FXAA" : "HDR") : "direct"}  ${scene.shadingModel()}\n` +
+      `\n${canvas.width}×${canvas.height}${still ? "  still" : ""}  ${scene.hdr() ? (scene.taa() ? (scene.fxaa() ? "HDR TAA+FXAA" : "HDR TAA") : scene.fxaa() ? "HDR FXAA" : "HDR") : "direct"}  ${scene.shadingModel()}\n` +
       `drawn ${scene.drawn()} in ${scene.drawCalls()} calls  culled ${scene.culled()}  pending ${scene.pending()}  moving ${scene.movingMeshes()}${shadowInfo()}\n` +
       `variants ${scene.shaderVariantCount()}  entities ${scene.entityCount()}  file lights ${root ? scene.lights(root).length : 0}  compressed: ${compression}
 ` +

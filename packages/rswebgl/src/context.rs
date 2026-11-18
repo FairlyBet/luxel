@@ -441,6 +441,18 @@ impl Context {
         self.core.validate.set(v);
     }
 
+    /// Whether uniform blocks are checked (`setValidateUniformBlocks`).
+    #[wasm_bindgen(js_name = validateUniformBlocks)]
+    pub fn validate_uniform_blocks(&self) -> bool {
+        self.core.validate.get().blocks
+    }
+
+    /// Whether unset uniforms are reported (`setValidateUniforms`).
+    #[wasm_bindgen(js_name = validateUniforms)]
+    pub fn validate_uniforms(&self) -> bool {
+        self.core.validate.get().uniforms
+    }
+
     #[wasm_bindgen(js_name = defaultFramebuffer)]
     pub fn default_framebuffer(&self) -> DefaultFramebuffer {
         self.core.default_fb.handle()

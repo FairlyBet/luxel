@@ -81,7 +81,7 @@ async fn center(auto: bool, frames: usize) -> Option<u8> {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         assert!(
             !scene.set_auto_exposure(true),
             "auto exposure needs the HDR target"

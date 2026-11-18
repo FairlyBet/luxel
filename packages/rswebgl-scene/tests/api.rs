@@ -946,7 +946,7 @@ async fn hdr_blends_light_and_direct_blends_colors() {
     let mut s = setup().await;
     s.scene.set_visible(s.root, false);
     half_white_overlay(&mut s);
-    assert!(s.scene.is_hdr());
+    assert!(s.scene.hdr());
     let hdr = s.frame().await[1];
     assert!((hdr[0] as i32 - 188).abs() <= 1, "{hdr:?}");
     assert!(!s.scene.set_hdr(false));
@@ -1263,7 +1263,7 @@ async fn render_frame_times_its_passes_on_the_gpu() {
             break;
         }
     }
-    let hdr = s.scene.is_hdr();
+    let hdr = s.scene.hdr();
     for pass in ["opaque", "late", "present"] {
         let ms = key(&timings, pass);
         if pass == "opaque" || hdr {
@@ -1358,14 +1358,14 @@ async fn quality_presets() {
     let mut s = setup().await;
     s.scene.set_hdr(true);
     s.scene.set_quality("high").unwrap();
-    assert!(s.scene.is_taa() && s.scene.ambient_occlusion());
+    assert!(s.scene.taa() && !s.scene.ambient_occlusion().is_null());
     // Contact shadows only when asked for.
-    assert!(!s.scene.contact_shadows());
+    assert!(s.scene.contact_shadows().is_null());
     assert_eq!(s.scene.shadow_map_size(), 2048);
     assert_eq!(s.ctx.default_framebuffer().max_pixel_ratio(), 2.0);
     s.frame().await;
     s.scene.set_quality("low").unwrap();
-    assert!(!s.scene.is_taa() && s.scene.is_fxaa() && !s.scene.ambient_occlusion());
+    assert!(!s.scene.taa() && s.scene.fxaa() && s.scene.ambient_occlusion().is_null());
     assert_eq!(s.scene.shadow_map_size(), 1024);
     s.frame().await;
     assert!(s.scene.set_quality("ultra").is_err());
@@ -1632,7 +1632,38 @@ async fn getters_read_back_the_setters() {
     assert_eq!(s.scene.auto_exposure_options(), vec![0.2, -2.0, 2.0, 1.0]);
     assert!(!s.scene.dither());
     s.scene.set_restore_models(false);
-    assert!(!s.scene.restores_models());
+    assert!(!s.scene.restore_models());
+    s.ctx.set_validate_uniforms(true);
+    assert!(s.ctx.validate_uniforms());
+    s.ctx.set_validate_uniform_blocks(false);
+    assert!(!s.ctx.validate_uniform_blocks());
+
+    // Effects with options: their options read back (defaults filled in),
+    // go back into the setter, and null once off.
+    s.scene
+        .set_ambient_occlusion(json(r#"{ "radius": 0.5, "halfResolution": true }"#))
+        .unwrap();
+    let ao = s.scene.ambient_occlusion();
+    assert_eq!(get(&ao, "radius").as_f64(), Some(0.5));
+    assert_eq!(get(&ao, "halfResolution"), JsValue::TRUE);
+    assert_eq!(get(&ao, "intensity").as_f64(), Some(1.0));
+    s.scene.set_ambient_occlusion(ao).unwrap();
+    assert_eq!(get(&s.scene.ambient_occlusion(), "radius").as_f64(), Some(0.5));
+    s.scene.set_ambient_occlusion(JsValue::NULL).unwrap();
+    assert!(s.scene.ambient_occlusion().is_null());
+    s.scene.set_contact_shadows(json(r#"{ "steps": 8 }"#)).unwrap();
+    let c = s.scene.contact_shadows();
+    assert_eq!(get(&c, "steps").as_f64(), Some(8.0));
+    s.scene.set_contact_shadows(c).unwrap();
+    s.scene.set_contact_shadows(JsValue::NULL).unwrap();
+    assert!(s.scene.contact_shadows().is_null());
+    s.scene.set_ground_shadow(json(r#"{ "opacity": 0.5 }"#)).unwrap();
+    let g = s.scene.ground_shadow();
+    assert_eq!(get(&g, "opacity").as_f64(), Some(0.5));
+    s.scene.set_ground_shadow(g).unwrap();
+    assert_eq!(get(&s.scene.ground_shadow(), "opacity").as_f64(), Some(0.5));
+    s.scene.set_ground_shadow(JsValue::NULL).unwrap();
+    assert!(s.scene.ground_shadow().is_null());
 
     let kids = s.scene.children(s.root);
     assert_eq!(kids.len(), 3);
@@ -1710,7 +1741,7 @@ async fn background_colors_and_gradients_show_as_given() {
 #[wasm_bindgen_test]
 async fn taa_edges_over_a_fill_have_no_fringe() {
     let mut s = setup().await;
-    if !s.scene.is_hdr() {
+    if !s.scene.hdr() {
         return;
     }
     s.scene.set_taa(true);

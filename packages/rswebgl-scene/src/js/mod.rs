@@ -1078,6 +1078,12 @@ impl Scene {
         self.profiler.is_some()
     }
 
+    /// Whether GPU timing is on (`setGpuProfiling`).
+    #[wasm_bindgen(js_name = gpuProfiling)]
+    pub fn gpu_profiling(&self) -> bool {
+        self.profiler.is_some()
+    }
+
     /// GPU milliseconds per pass of recent frames, averaged: `opaque` (with
     /// the MSAA resolve), `late` (transmissive and transparent) and
     /// `present` (tone mapping) with HDR output; `opaque` alone without.

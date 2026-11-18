@@ -91,7 +91,7 @@ async fn fxaa_smooths_edges() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         assert!(!scene.set_fxaa(true), "FXAA needs the HDR target");
         return;
     }
@@ -112,7 +112,7 @@ async fn fxaa_smooths_edges() {
     assert_eq!(between(&aliased), 0);
 
     assert!(scene.set_fxaa(true));
-    assert!(scene.is_fxaa());
+    assert!(scene.fxaa());
     let smooth = frame(&gl, &mut scene, camera).await;
     assert!(
         between(&smooth) > 8,
@@ -171,7 +171,7 @@ async fn fxaa_with_taa_leaves_the_opaque_scene_alone() {
             .dyn_into()
             .unwrap();
         let mut scene = Scene::new(&ctx).expect("scene");
-        if !scene.is_hdr() {
+        if !scene.hdr() {
             return None;
         }
         scene.set_tone_mapping("none").unwrap();

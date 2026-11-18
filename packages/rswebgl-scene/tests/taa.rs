@@ -134,7 +134,7 @@ async fn taa_smooths_edges_and_follows_the_camera() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return; // TAA needs the HDR target
     }
     scene.set_tone_mapping("none").unwrap();
@@ -204,7 +204,7 @@ async fn taa_follows_moving_meshes() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return;
     }
     scene.set_tone_mapping("none").unwrap();
@@ -270,7 +270,7 @@ async fn taa_moving_detail_follows_motion_vectors() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return;
     }
     scene.set_tone_mapping("none").unwrap();
@@ -342,7 +342,7 @@ async fn taa_keeps_transparent_meshes_from_lagging() {
         .dyn_into()
         .unwrap();
     let mut scene = Scene::new(&ctx).expect("scene");
-    if !scene.is_hdr() {
+    if !scene.hdr() {
         return;
     }
     scene.set_tone_mapping("none").unwrap();
