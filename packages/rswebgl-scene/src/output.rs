@@ -390,6 +390,9 @@ pub struct HdrOutput {
     grab_fb1: FramebufferId,
     // Its depth (the opaque scene's, for transparent meshes drawn into it).
     grab_depth: RenderbufferId,
+    // Whether the grab framebuffer is complete with it (some devices
+    // refuse the pair: transparent meshes behind glass then go without).
+    grab_depth_complete: bool,
     grab: TextureId,
     grab_size: (i32, i32),
     // The copy's share of the target's size (`set_transmission_scale`).
@@ -553,6 +556,7 @@ impl HdrOutput {
             grab: TextureId::NULL,
             grab_fb1: FramebufferId::NULL,
             grab_depth: RenderbufferId::NULL,
+            grab_depth_complete: false,
             grab_size: (0, 0),
             grab_scale: 1.0,
             color: TextureId::NULL,
@@ -984,11 +988,11 @@ impl HdrOutput {
             };
             match ctx.create_renderbuffer(format, gw, gh) {
                 Ok(rb) => {
+                    // Kept either way (freed with the targets), so an
+                    // incomplete pair isn't made again every frame.
                     ctx.framebuffer_attach_depth_renderbuffer(self.grab_fb, rb);
-                    if !ctx.is_framebuffer_complete(self.grab_fb) {
-                        return false;
-                    }
                     self.grab_depth = rb;
+                    self.grab_depth_complete = ctx.is_framebuffer_complete(self.grab_fb);
                 }
                 Err(e) => {
                     rswebgl::console::error_once(&format!(
@@ -997,6 +1001,9 @@ impl HdrOutput {
                     return false;
                 }
             }
+        }
+        if !self.grab_depth_complete {
+            return false;
         }
         ctx.blit_framebuffer(
             self.fb,
@@ -1572,6 +1579,7 @@ impl HdrOutput {
             ctx.destroy_renderbuffer(self.grab_depth);
         }
         self.grab_depth = RenderbufferId::NULL;
+        self.grab_depth_complete = false;
         if !self.grab.is_null() {
             ctx.destroy_texture(self.grab);
         }

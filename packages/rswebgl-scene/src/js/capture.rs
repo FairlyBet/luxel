@@ -61,8 +61,8 @@ impl Scene {
             q if q.is_nan() => JsValue::UNDEFINED,
             q => q.clamp(0.0, 1.0).into(),
         };
-        let taa = self.taa && self.hdr_wanted;
-        let frames = options::u32_or(&opts, "frames", if taa { 30 } else { 1 })?.clamp(1, 256);
+        let taa = self.taa();
+        let frames = options::u32_or(&opts, "frames", if taa { super::on_demand::TAA_SETTLE } else { 1 })?.clamp(1, 256);
 
         let resized = (w, h) != (old_w, old_h);
         if resized {

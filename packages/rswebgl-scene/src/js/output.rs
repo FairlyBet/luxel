@@ -231,7 +231,7 @@ impl Scene {
             }
         }
         // Its shader compiling from now (whenReady waits for it).
-        let on = self.taa && self.hdr_wanted;
+        let on = self.taa();
         self.renderer.set_motion_vectors(&self.ctx, on);
         on
     }
@@ -581,9 +581,12 @@ impl Scene {
             match crate::occlusion::Occlusion::new(&self.ctx) {
                 Ok(o) => self.occlusion = Some(o),
                 Err(e) => {
+                    // Both off for good: their passes are one (else they'd
+                    // be compiled again every frame).
                     if !self.ctx.is_lost() {
                         console::error_once(&format!("[rswebgl-scene] ambient occlusion: {e}"));
                         self.ambient_occlusion = None;
+                        self.contact_shadows = None;
                     }
                     return;
                 }

@@ -71,6 +71,20 @@ pub const MORPH_BASE_UNIFORM: &str = "u_morph_base";
 /// The frame's instance texture (slot 0): three RGBA32F texels per instance.
 pub const INSTANCES_TEXTURE: &str = "u_instances";
 
+// The lighting block's fields in order, and where the ones written alone
+// sit in the cached copy.
+const LIGHTING_FIELDS: [&str; 6] = [
+    "u_environment",
+    "u_lighting",
+    "u_output",
+    "u_shading",
+    "u_fill_a",
+    "u_fill_b",
+];
+const LIGHTING_VECS: usize = LIGHTING_FIELDS.len();
+const LIGHTING_ENVIRONMENT: usize = 0;
+const LIGHTING_SHADING: usize = 3;
+
 /// Name of the lighting block, bound next to the frame block in slot 0
 /// (the lights themselves are in `LIGHTS_BLOCK`):
 ///
@@ -82,7 +96,8 @@ pub const INSTANCES_TEXTURE: &str = "u_instances";
 ///                         // (radians about +Y), w last specular mip
 ///     vec4 u_output;      // x shows (1) or leaves linear radiance (0), y tone
 ///                         // mapper, z 1 with a scene copy, w its last mip
-///     vec4 u_shading;     // x specular AA variance, y its threshold
+///     vec4 u_shading;     // x specular AA variance, y its threshold, z the
+///                         // glass peel mode, w 1 under reverse-Z
 ///     vec4 u_fill_a;      // the background fill: rgb a color (display
 ///     vec4 u_fill_b;      // values), w its kind (0 none); b the second
 /// };
@@ -189,8 +204,9 @@ struct Object {
 pub struct SceneRenderer {
     frame_ubo: UniformBufferId,
     lighting_ubo: UniformBufferId,
-    // What the lighting block holds, to write it only when it changes.
-    lighting: Vec<Vec4>,
+    // What the lighting block holds (`LIGHTING_*` order), to write it only
+    // when it changes; None until the first write.
+    lighting: Option<[Vec4; LIGHTING_VECS]>,
     env_intensity: Vec3,
     exposure: f32,
     // Specular antialiasing (variance, threshold).
@@ -352,7 +368,7 @@ impl SceneRenderer {
         let renderer = Self {
             frame_ubo,
             lighting_ubo,
-            lighting: Vec::new(),
+            lighting: None,
             env_intensity: Vec3::splat(DEFAULT_ENV_INTENSITY),
             exposure: 1.0,
             specular_aa: (0.0, 0.2),
@@ -617,7 +633,8 @@ impl SceneRenderer {
             &(proj * view).to_cols_array(),
         );
         // The cached block too, so the next frame's bias rewrites it.
-        if let Some(env) = self.lighting.first_mut() {
+        if let Some(cached) = &mut self.lighting {
+            let env = &mut cached[LIGHTING_ENVIRONMENT];
             env.w = 0.0;
             let e = *env;
             ctx.ubo_set_vec4(self.lighting_ubo, "u_environment", e.x, e.y, e.z, e.w);
@@ -688,8 +705,8 @@ impl SceneRenderer {
         let reverse = if ctx.reverse_z() { 1.0 } else { 0.0 };
         let (v, t) = self.specular_aa;
         ctx.ubo_set_vec4(self.lighting_ubo, "u_shading", v, t, mode as f32, reverse);
-        if let Some(cached) = self.lighting.last_mut() {
-            *cached = Vec4::new(v, t, mode as f32, reverse);
+        if let Some(cached) = &mut self.lighting {
+            cached[LIGHTING_SHADING] = Vec4::new(v, t, mode as f32, reverse);
         }
         // Off: back to a texture that lives as long as the renderer (a layer's
         // goes with its target, and a destroyed one would leave whatever
@@ -1343,7 +1360,7 @@ impl SceneRenderer {
     fn write_lighting(&mut self, ctx: &Context) {
         let last_mip = (self.environment().specular_mips() - 1) as f32;
         let reverse = if ctx.reverse_z() { 1.0 } else { 0.0 };
-        let data = vec![
+        let data = [
             // w: the material maps' LOD bias (TAA sharpens them back).
             self.env_intensity.extend(self.mip_bias),
             Vec4::new(0.0, self.exposure, self.env_rotation, last_mip),
@@ -1367,19 +1384,14 @@ impl SceneRenderer {
             self.fill[0],
             self.fill[1],
         ];
-        if data == self.lighting {
+        if self.lighting == Some(data) {
             return;
         }
         let ubo = self.lighting_ubo;
-        let [env, params, output, shading] = [data[0], data[1], data[2], data[3]];
-        ctx.ubo_set_vec4(ubo, "u_environment", env.x, env.y, env.z, env.w);
-        ctx.ubo_set_vec4(ubo, "u_lighting", params.x, params.y, params.z, params.w);
-        ctx.ubo_set_vec4(ubo, "u_output", output.x, output.y, output.z, output.w);
-        ctx.ubo_set_vec4(ubo, "u_shading", shading.x, shading.y, shading.z, shading.w);
-        let (fa, fb) = (data[4], data[5]);
-        ctx.ubo_set_vec4(ubo, "u_fill_a", fa.x, fa.y, fa.z, fa.w);
-        ctx.ubo_set_vec4(ubo, "u_fill_b", fb.x, fb.y, fb.z, fb.w);
-        self.lighting = data;
+        for (name, v) in LIGHTING_FIELDS.iter().zip(data) {
+            ctx.ubo_set_vec4(ubo, name, v.x, v.y, v.z, v.w);
+        }
+        self.lighting = Some(data);
     }
 
     // Camera matrices into the frame block; the view and view-projection for

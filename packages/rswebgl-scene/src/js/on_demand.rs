@@ -22,7 +22,7 @@ use super::Scene;
 
 /// Frames TAA takes to settle after a change: its 8-frame jitter cycle a
 /// few times over.
-const TAA_SETTLE: u32 = 30;
+pub(super) const TAA_SETTLE: u32 = 30;
 
 /// What `needsRender` keeps between frames.
 #[derive(Default)]
@@ -81,6 +81,7 @@ impl Scene {
         let fb = self.ctx.default_framebuffer();
         let size = (fb.width(), fb.height());
         let generation = self.ctx.generation();
+        let settle = if self.taa() { TAA_SETTLE } else { 1 };
         let d = &mut self.on_demand;
         let changed = d.invalidated
             || self.world.changed_since(d.observed)
@@ -91,11 +92,7 @@ impl Scene {
         if changed {
             d.invalidated = false;
             d.content = content;
-            d.settle = if self.taa && self.hdr_wanted {
-                TAA_SETTLE
-            } else {
-                1
-            };
+            d.settle = settle;
         }
         // Writes from here on are newer.
         d.observed = self.world.advance_tick();
@@ -121,6 +118,7 @@ impl Scene {
             || self.env_pending.is_some()
             || !self.pending_variants.is_empty()
             || !self.reloads.borrow().is_empty()
-            || self.auto_exposure
+            // As drawn: without HDR output it does nothing.
+            || self.auto_exposure()
     }
 }
