@@ -8,13 +8,11 @@
 
 use glam::Mat4;
 use rswebgl::context::Context;
-use rswebgl::draw::{DrawCommand, DrawMode, Viewport};
 use rswebgl::error::Error;
 use rswebgl::ids::{
-    FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, StateId, TextureId, VertexArrayId,
+    FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, StateId, TextureId,
 };
-use rswebgl::param::{GROUP_SLOTS, ParamLayoutBuilder};
-use rswebgl::pass::Pass;
+use rswebgl::param::ParamLayoutBuilder;
 use rswebgl::render_state::{BlendFactor, RenderState};
 use rswebgl::shader_source::ShaderSource;
 use rswebgl::texture::{
@@ -22,7 +20,6 @@ use rswebgl::texture::{
 };
 use rswebgl::uniform_buffer::UniformType;
 
-use crate::environment::FULLSCREEN_VERT;
 
 const GTAO_FRAG: &str = include_str!("../shaders/gtao.frag");
 const DENOISE_FRAG: &str = include_str!("../shaders/gtao_denoise.frag");
@@ -103,7 +100,7 @@ impl Occlusion {
     pub fn new(ctx: &Context) -> Result<Self, Error> {
         let mut undo = rswebgl::undo::Undo::new(ctx);
         let prefix = "#version 300 es\n";
-        let vert = ShaderSource::plain("fullscreen.vert", &format!("{prefix}{FULLSCREEN_VERT}"));
+        let vert = crate::fullscreen::vertex(prefix);
         let mut make = |name: &str, frag: &str, layout: ParamLayoutBuilder| {
             let f = ShaderSource::plain(name, &format!("{prefix}{frag}"));
             let program = ctx.create_program_from(&vert, &f)?;
@@ -287,19 +284,7 @@ impl Occlusion {
         fb: FramebufferId,
         (w, h): (i32, i32),
     ) {
-        let mut pass = Pass::new(fb);
-        pass.set_viewport(&Viewport::new(0, 0, w, h));
-        let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-        groups[0] = group;
-        pass.push_groups_with_key(
-            0,
-            program,
-            state,
-            VertexArrayId::NULL,
-            groups,
-            &DrawCommand::arrays(DrawMode::Triangles, 0, 3),
-        );
-        ctx.render(&pass);
+        ctx.render(&crate::fullscreen::pass(fb, (w, h), program, state, group));
     }
 
     fn allocate(&mut self, ctx: &Context, (w, h): (i32, i32)) -> Result<(), Error> {

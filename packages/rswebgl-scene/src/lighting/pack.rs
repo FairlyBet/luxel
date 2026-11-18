@@ -16,7 +16,7 @@ use super::ShadowSlot;
 use super::light::Light;
 use super::maps::MAX_SHADOW_VIEWS;
 use super::views::ShadowView;
-use crate::render::{Visible, hidden};
+use crate::render::hidden;
 use crate::transform::WorldMatrix;
 
 /// Lights the block holds; more are left out (reported once).
@@ -86,9 +86,7 @@ impl LightsBlock {
         if let (Some(storage), Some(worlds)) =
             (world.storage::<Light>(), world.storage::<WorldMatrix>())
         {
-            let any_hidden = world
-                .storage::<Visible>()
-                .is_some_and(|v| v.data().iter().any(|v| !v.0));
+            let any_hidden = crate::render::any_hidden(world);
             for (e, light) in storage.iter() {
                 let Some(m) = worlds.get(e) else {
                     continue;

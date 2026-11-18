@@ -7,7 +7,7 @@ use rswebgl_ecs::{Entity, World};
 
 use crate::camera::Camera;
 use crate::culling::Bounds;
-use crate::render::{MeshRenderer, Visible, hidden};
+use crate::render::{MeshRenderer, hidden};
 use crate::transform::WorldMatrix;
 
 /// A ray: `origin + t·dir`, `t ≥ 0`.
@@ -102,9 +102,7 @@ pub fn pick_bounds(world: &World, camera: Entity, ndc: Vec2) -> Option<Hit> {
     let meshes = world.storage::<MeshRenderer>()?;
     let worlds = world.storage::<WorldMatrix>()?;
     let bounds = world.storage::<Bounds>()?;
-    let any_hidden = world
-        .storage::<Visible>()
-        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    let any_hidden = crate::render::any_hidden(world);
     let mut best: Option<(f32, Entity)> = None;
     for (e, _) in meshes.iter() {
         let (Some(m), Some(b)) = (worlds.get(e), bounds.get(e)) else {

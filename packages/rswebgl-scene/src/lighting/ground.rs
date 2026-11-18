@@ -20,7 +20,7 @@ use rswebgl::ids::{
     FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, StateId, TextureId, UniformBufferId,
     VertexArrayId,
 };
-use rswebgl::param::{GROUP_SLOTS, ParamLayoutBuilder};
+use rswebgl::param::ParamLayoutBuilder;
 use rswebgl::pass::Pass;
 use rswebgl::render_state::{BlendFactor, DepthFunc, RenderState};
 use rswebgl::shader_source::ShaderSource;
@@ -31,7 +31,6 @@ use rswebgl::uniform_buffer::{UboLayout, UniformType};
 use rswebgl::vao_builder::{AttrKind, VaoBuilder};
 
 use super::views::ShadowView;
-use crate::environment::FULLSCREEN_VERT;
 use crate::render::FRAME_BLOCK;
 use crate::shader::create_scene_program;
 
@@ -144,7 +143,7 @@ impl Ground {
         }
 
         let prefix = "#version 300 es\n";
-        let vert = ShaderSource::plain("fullscreen.vert", &format!("{prefix}{FULLSCREEN_VERT}"));
+        let vert = crate::fullscreen::vertex(prefix);
         let frag = ShaderSource::plain("ground_darkness.frag", &format!("{prefix}{DARKNESS_FRAG}"));
         let darkness = ctx.create_program_from(&vert, &frag)?;
         undo.push(move |c| c.destroy_program(darkness));
@@ -367,19 +366,13 @@ impl Ground {
         fb: FramebufferId,
     ) {
         let side = self.size as i32;
-        let mut pass = Pass::new(fb);
-        pass.set_viewport(&Viewport::new(0, 0, side, side));
-        let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-        groups[0] = group;
-        pass.push_groups_with_key(
-            0,
+        ctx.render(&crate::fullscreen::pass(
+            fb,
+            (side, side),
             program,
             self.fullscreen_state,
-            VertexArrayId::NULL,
-            groups,
-            &DrawCommand::arrays(DrawMode::Triangles, 0, 3),
-        );
-        ctx.render(&pass);
+            group,
+        ));
     }
 
     // The depth and darkness textures and their framebuffers, `size`².

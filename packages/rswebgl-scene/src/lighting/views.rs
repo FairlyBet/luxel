@@ -18,7 +18,6 @@ use super::settings::{LightShadow, ShadowCaster};
 use crate::camera::{Camera, Projection};
 use crate::culling::Bounds;
 use crate::model::Skin;
-use crate::render::Visible;
 use crate::render::hidden;
 use crate::transform::WorldMatrix;
 
@@ -489,9 +488,7 @@ pub(crate) fn caster_bounds(world: &World) -> Option<(Vec3, Vec3)> {
     let worlds = world.storage::<WorldMatrix>()?;
     let bounds = world.storage::<Bounds>();
     let skins = world.storage::<Skin>();
-    let any_hidden = world
-        .storage::<Visible>()
-        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    let any_hidden = crate::render::any_hidden(world);
     let mut lo = Vec3::splat(f32::INFINITY);
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
     for (e, _) in casters.iter() {
@@ -539,9 +536,7 @@ pub(crate) fn caster_bounds(world: &World) -> Option<(Vec3, Vec3)> {
 pub(crate) fn key_light(world: &World) -> Option<(rswebgl_ecs::Entity, Vec4)> {
     let lights = world.storage::<Light>()?;
     let worlds = world.storage::<WorldMatrix>()?;
-    let any_hidden = world
-        .storage::<Visible>()
-        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    let any_hidden = crate::render::any_hidden(world);
     let centre = caster_bounds(world).map_or(Vec3::ZERO, |(lo, hi)| (lo + hi) * 0.5);
     let mut best: Option<(f32, rswebgl_ecs::Entity, Vec4)> = None;
     for (e, light) in lights.iter() {
@@ -592,9 +587,7 @@ pub(crate) fn ground_bounds(world: &World) -> Option<(Vec3, Vec3)> {
     ) else {
         return out;
     };
-    let any_hidden = world
-        .storage::<Visible>()
-        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    let any_hidden = crate::render::any_hidden(world);
     for (e, _) in meshes.iter() {
         let (Some(b), Some(m)) = (bounds.get(e), worlds.get(e)) else {
             continue;

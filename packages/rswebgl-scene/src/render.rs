@@ -22,7 +22,8 @@ use rswebgl_ecs::{Entity, Tick, World};
 use crate::animation::MorphWeights;
 use crate::camera::Camera;
 use crate::culling::{Bounds, Frustum};
-use crate::environment::{Environment, FULLSCREEN_VERT, brdf_lut_texture};
+use crate::environment::{Environment, brdf_lut_texture};
+use crate::fullscreen::FULLSCREEN_VERT;
 use crate::gpu_pick::{GpuPicker, PickView};
 use crate::instances::{Batches, Dest, Instances, ProgramKind};
 use crate::lighting::{CasterDraw, LIGHTS_BLOCK, LightingSystem};
@@ -361,7 +362,8 @@ impl SceneRenderer {
         // Until a frame grabs the scene: any valid texture (not sampled).
         ctx.param_set_texture_by_name(frame_group, "u_scene_color", brdf_lut);
         ctx.param_set_texture_by_name(frame_group, "u_peel_depth", brdf_lut);
-        // Made last: nothing after it can fail.
+        // Made last: after it only fields of the layouts above are looked
+        // up, which fail for a misspelt name alone (every test would).
         let lights = LightingSystem::new(ctx, frame_layout, frame_group, lighting_ubo)?;
         let mut skybox_state = RenderState::new();
         skybox_state.depth_mask = false;
@@ -800,9 +802,7 @@ impl SceneRenderer {
         let bounds = world.storage::<Bounds>();
         let reloading = world.storage::<Reloading>().filter(|r| !r.is_empty());
         // Ancestors are walked per mesh only while something is hidden.
-        let any_hidden = world
-            .storage::<Visible>()
-            .is_some_and(|v| v.data().iter().any(|v| !v.0));
+        let any_hidden = crate::render::any_hidden(world);
         for (e, mesh) in meshes.iter() {
             if any_hidden && hidden(world, e) {
                 continue;
@@ -1530,9 +1530,7 @@ impl SceneRenderer {
             world.storage::<WorldMatrix>(),
         ) {
             let bounds = world.storage::<Bounds>();
-            let any_hidden = world
-                .storage::<Visible>()
-                .is_some_and(|v| v.data().iter().any(|v| !v.0));
+            let any_hidden = crate::render::any_hidden(world);
             for (e, mesh) in storage.iter() {
                 if mesh.vao.is_null() || (any_hidden && hidden(world, e)) {
                     continue;
@@ -1594,6 +1592,14 @@ impl SceneRenderer {
             keep
         });
     }
+}
+
+// Whether anything is hidden (`Visible(false)`): without, `hidden` needn't
+// be asked per entity.
+pub(crate) fn any_hidden(world: &World) -> bool {
+    world
+        .storage::<Visible>()
+        .is_some_and(|v| v.data().iter().any(|v| !v.0))
 }
 
 // Whether `e` or an ancestor has `Visible(false)`. Bounded against a

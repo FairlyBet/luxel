@@ -21,8 +21,8 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
   `lighting.last_mut()`, which is now `u_fill_b`. — the cache is now named fields.
 - [x] output.rs: an incomplete grab framebuffer leaks its new depth
   renderbuffer every frame.
-- [ ] Leaks on error part way: `HdrOutput::new`, `AutoExposure::new`,
-  `set_fxaa`, `DirectTarget::new`, `SceneRenderer::new`'s lights (no Undo).
+- [x] Leaks on error part way: `HdrOutput::new`, `AutoExposure::new`,
+  `set_fxaa`, `DirectTarget::new`, `SceneRenderer::new`'s lights (no Undo). — Undo in AutoExposure::new, set_fxaa, HdrOutput::new, DirectTarget::new (`fullscreen::program`); SceneRenderer's lights: only field lookups follow (a misspelt name alone fails) — the comment says so
 - [x] on_demand.rs: `needsRender` reads the raw `auto_exposure` (stays true
   with auto exposure set but HDR off). — and `taa && hdr_wanted` by hand ×3 now `taa()`; capture's 30 is `TAA_SETTLE`.
 - [-] options `numbers()` trusts `length` (a huge length loops). — dropped: collecting stops at the first missing element.
@@ -130,9 +130,9 @@ changed. Status: [x] done, [ ] to do, [-] dropped (why).
 
 ## Scene: rendering
 
-- [ ] Fullscreen pass boilerplate ×9, program triple by hand, fullscreen
-  vertex source ×6, `FULLSCREEN_VERT` in environment.rs → fullscreen.rs.
-- [ ] `any_hidden` scan ×10 → one helper.
+- [x] Fullscreen pass boilerplate ×9, program triple by hand, fullscreen
+  vertex source ×6, `FULLSCREEN_VERT` in environment.rs → fullscreen.rs. — `fullscreen.rs`: `FULLSCREEN_VERT`, `vertex(prefix)`, `pass(…)`, `program(…)` with Undo; the skybox draws into the scene's pass (left)
+- [x] `any_hidden` scan ×10 → one helper. — `render::any_hidden`
 - [ ] output.rs (1636 lines): AutoExposure, Taa, Fxaa, PeelTargets split out.
 - [ ] destroy conventions: `lost` / `live` / self-checking / pair.
 - [ ] Depth format choice ×4 (one re-implements `depth_format()`);

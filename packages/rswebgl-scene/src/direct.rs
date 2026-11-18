@@ -8,14 +8,12 @@
 //! the last frame (`Scene::present_frame`).
 
 use rswebgl::context::Context;
-use rswebgl::draw::{DrawCommand, DrawMode, Viewport};
 use rswebgl::error::Error;
 use rswebgl::framebuffer::{ClearMask, InvalidateMask};
 use rswebgl::ids::{
     FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, RenderbufferId, StateId, TextureId,
-    VertexArrayId,
 };
-use rswebgl::param::{GROUP_SLOTS, ParamLayoutBuilder};
+use rswebgl::param::ParamLayoutBuilder;
 use rswebgl::pass::Pass;
 use rswebgl::render_state::RenderState;
 use rswebgl::renderbuffer::RenderbufferFormat;
@@ -24,7 +22,6 @@ use rswebgl::texture::{
     TextureFormat, TextureMagFilter, TextureMinFilter, TextureTarget, TextureWrap,
 };
 
-use crate::environment::FULLSCREEN_VERT;
 
 // Texel for pixel: the target is the canvas's size.
 const COPY_FRAG: &str = "precision highp float;
@@ -57,14 +54,20 @@ pub(crate) struct DirectTarget {
 impl DirectTarget {
     pub fn new(ctx: &Context) -> Result<Self, Error> {
         let prefix = "#version 300 es\n";
-        let vert = ShaderSource::plain("fullscreen.vert", &format!("{prefix}{FULLSCREEN_VERT}"));
+        let vert = crate::fullscreen::vertex(prefix);
         let frag = ShaderSource::plain("direct_copy.frag", &format!("{prefix}{COPY_FRAG}"));
-        let program = ctx.create_program_from(&vert, &frag)?;
-        let layout = ctx.create_param_layout(&ParamLayoutBuilder::new().texture("u_color"))?;
-        let group = ctx.create_param_group(layout)?;
+        let mut undo = rswebgl::undo::Undo::new(ctx);
+        let (program, layout, group) = crate::fullscreen::program(
+            ctx,
+            &mut undo,
+            &vert,
+            &frag,
+            &ParamLayoutBuilder::new().texture("u_color"),
+        )?;
         let mut state = RenderState::new();
         state.depth_test = false;
         state.depth_mask = false;
+        undo.keep();
         Ok(Self {
             program,
             layout,
@@ -138,19 +141,13 @@ impl DirectTarget {
     pub fn present(&self, ctx: &Context) {
         let (w, h) = self.size;
         ctx.param_set_texture_by_name(self.group, "u_color", self.color);
-        let mut pass = Pass::to_default();
-        pass.set_viewport(&Viewport::new(0, 0, w, h));
-        let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-        groups[0] = self.group;
-        pass.push_groups_with_key(
-            0,
+        ctx.render(&crate::fullscreen::pass(
+            FramebufferId::NULL,
+            (w, h),
             self.program,
             self.state,
-            VertexArrayId::NULL,
-            groups,
-            &DrawCommand::arrays(DrawMode::Triangles, 0, 3),
-        );
-        ctx.render(&pass);
+            self.group,
+        ));
     }
 
     fn allocate(

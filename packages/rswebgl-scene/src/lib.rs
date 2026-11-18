@@ -35,6 +35,7 @@ mod culling;
 mod direct;
 mod environment;
 mod framing;
+mod fullscreen;
 mod gpu_pick;
 mod hdr;
 mod hierarchy;

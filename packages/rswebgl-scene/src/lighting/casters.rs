@@ -10,7 +10,7 @@ use rswebgl_ecs::{Entity, World};
 use super::settings::ShadowCaster;
 use super::views::ShadowView;
 use crate::culling::{Bounds, Frustum};
-use crate::render::{MeshRenderer, Reloading, Visible, hidden};
+use crate::render::{MeshRenderer, Reloading, hidden};
 use crate::transform::WorldMatrix;
 
 /// A caster to draw into shadow map `view`.
@@ -47,9 +47,7 @@ pub(crate) fn cull(
     let mut waiting = 0;
     let bounds = world.storage::<Bounds>();
     let reloading = world.storage::<Reloading>().filter(|r| !r.is_empty());
-    let any_hidden = world
-        .storage::<Visible>()
-        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    let any_hidden = crate::render::any_hidden(world);
     let reverse = ctx.reverse_z();
     for (i, view) in views.iter().enumerate() {
         let frustum = Frustum::from_view_proj_depth(&view.view_proj, reverse);

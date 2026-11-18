@@ -28,7 +28,6 @@ use std::rc::Rc;
 
 use crate::hdr::RgbeImage;
 
-pub(crate) const FULLSCREEN_VERT: &str = include_str!("../shaders/fullscreen.vert");
 const BAKE_FRAG: &str = include_str!("../shaders/env_bake.frag");
 
 // RGBA16F storage filled from f32 data (allowed for half-float formats).
@@ -201,7 +200,7 @@ impl EnvBaker {
         let program = |mode: &str| -> Result<ProgramId, Error> {
             let head = format!("#version 300 es\n#define {mode}\n");
             ctx.create_program(
-                &format!("{head}{FULLSCREEN_VERT}"),
+                &format!("{head}{}", crate::fullscreen::FULLSCREEN_VERT),
                 &format!("{head}{BAKE_FRAG}"),
             )
         };

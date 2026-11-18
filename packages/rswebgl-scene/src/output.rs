@@ -13,14 +13,13 @@
 
 use glam::Vec4;
 use rswebgl::context::Context;
-use rswebgl::draw::{DrawCommand, DrawMode, Viewport};
+use rswebgl::draw::Viewport;
 use rswebgl::error::Error;
 use rswebgl::framebuffer::{ClearMask, InvalidateMask};
 use rswebgl::ids::{
     FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, RenderbufferId, StateId, TextureId,
-    VertexArrayId,
 };
-use rswebgl::param::{GROUP_SLOTS, ParamField, ParamLayoutBuilder};
+use rswebgl::param::{ParamField, ParamLayoutBuilder};
 use rswebgl::pass::Pass;
 use rswebgl::profiler::GpuProfiler;
 use rswebgl::render_state::RenderState;
@@ -31,7 +30,6 @@ use rswebgl::texture::{
 };
 use rswebgl::uniform_buffer::UniformType;
 
-use crate::environment::FULLSCREEN_VERT;
 use crate::shader::chunk;
 
 const PRESENT_FRAG: &str = include_str!("../shaders/present.frag");
@@ -118,12 +116,18 @@ impl AutoExposure {
     const SIZE: i32 = 243;
 
     fn new(ctx: &Context, vert: &ShaderSource) -> Result<Self, Error> {
+        // What is made, freed again if a later step fails.
+        let undo = std::cell::RefCell::new(rswebgl::undo::Undo::new(ctx));
         let program = |define: &str, name: &str, layout: ParamLayoutBuilder| -> Result<_, Error> {
             let frag =
                 ShaderSource::plain(name, &format!("#version 300 es\n{define}{EXPOSURE_FRAG}"));
             let p = ctx.create_program_from(vert, &frag)?;
+            undo.borrow_mut().push(move |c| c.destroy_program(p));
             let l = ctx.create_param_layout(&layout)?;
-            Ok((p, l, ctx.create_param_group(l)?))
+            undo.borrow_mut().push(move |c| c.destroy_param_layout(l));
+            let g = ctx.create_param_group(l)?;
+            undo.borrow_mut().push(move |c| c.destroy_param_group(g));
+            Ok((p, l, g))
         };
         let begin = program(
             "#define EXPOSURE_BEGIN\n",
@@ -155,8 +159,10 @@ impl AutoExposure {
                 TextureMinFilter::Nearest,
                 TextureMagFilter::Nearest,
             )?;
+            undo.borrow_mut().push(move |c| c.destroy_texture(t));
             ctx.texture_storage_2d(t, 1, &TextureFormat::rgba16f(), size, size);
             let fb = ctx.create_framebuffer(size, size)?;
+            undo.borrow_mut().push(move |c| c.destroy_framebuffer(fb));
             ctx.framebuffer_attach_color_texture_2d(fb, 0, t, 0);
             Ok((t, fb))
         };
@@ -168,7 +174,7 @@ impl AutoExposure {
             size /= 3;
         }
         let result = [target(1)?, target(1)?];
-        Ok(Self {
+        let made = Self {
             f_source_size: ctx.param_field(begin.1, "u_source_size")?,
             f_target_size: ctx.param_field(begin.1, "u_target_size")?,
             f_adjust: ctx.param_field(end.1, "u_adjust")?,
@@ -188,7 +194,9 @@ impl AutoExposure {
             min_luminance: 0.05,
             max_luminance: 10_000.0,
             speed: 0.5,
-        })
+        };
+        undo.into_inner().keep();
+        Ok(made)
     }
 
     // Shrinks `source` (`w`×`h`) to 1×1 and eases the result (`now_ms`).
@@ -201,14 +209,8 @@ impl AutoExposure {
         h: i32,
         now_ms: f64,
     ) {
-        let fullscreen = DrawCommand::arrays(DrawMode::Triangles, 0, 3);
         let draw = |fb: FramebufferId, size: i32, program: ProgramId, group: ParamGroupId| {
-            let mut pass = Pass::new(fb);
-            pass.set_viewport(&Viewport::new(0, 0, size, size));
-            let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-            groups[0] = group;
-            pass.push_groups_with_key(0, program, state, VertexArrayId::NULL, groups, &fullscreen);
-            ctx.render(&pass);
+            ctx.render(&crate::fullscreen::pass(fb, (size, size), program, state, group));
         };
         // First step: the image into the luminance buffer.
         let (p, _, g) = self.begin;
@@ -473,10 +475,15 @@ impl HdrOutput {
             return Err("HDR output: this device can't render to half-float targets".into());
         }
         let prefix = "#version 300 es\n";
-        let vert = ShaderSource::plain("fullscreen.vert", &format!("{prefix}{FULLSCREEN_VERT}"));
+        let vert = crate::fullscreen::vertex(prefix);
         let frag = ShaderSource::assemble(prefix, &[], "present.frag", PRESENT_FRAG, chunk)?;
-        let program = ctx.create_program_from(&vert, &frag)?;
-        let layout = ctx.create_param_layout(
+        // What is made, freed again if a later step fails.
+        let mut undo = rswebgl::undo::Undo::new(ctx);
+        let (program, layout, group) = crate::fullscreen::program(
+            ctx,
+            &mut undo,
+            &vert,
+            &frag,
             &ParamLayoutBuilder::new()
                 .texture("u_hdr")
                 .texture("u_coverage")
@@ -489,11 +496,13 @@ impl HdrOutput {
                 .texture("u_auto_exposure")
                 .uniform("u_auto_grey", UniformType::F32),
         )?;
-        let group = ctx.create_param_group(layout)?;
         let taa = if taa {
             let frag = ShaderSource::plain("taa.frag", &format!("{prefix}{TAA_FRAG}"));
-            let program = ctx.create_program_from(&vert, &frag)?;
-            let layout = ctx.create_param_layout(
+            let (program, layout, group) = crate::fullscreen::program(
+                ctx,
+                &mut undo,
+                &vert,
+                &frag,
                 &ParamLayoutBuilder::new()
                     .texture("u_current")
                     .texture("u_history")
@@ -508,25 +517,25 @@ impl HdrOutput {
             )?;
             let copy_frag =
                 ShaderSource::plain("taa_copy.frag", &format!("{prefix}{TAA_COPY_FRAG}"));
-            let copy_program = ctx.create_program_from(&vert, &copy_frag)?;
-            let copy_layout =
-                ctx.create_param_layout(&ParamLayoutBuilder::new().texture("u_source").texture("u_coverage"))?;
+            let copy = crate::fullscreen::program(
+                ctx,
+                &mut undo,
+                &vert,
+                &copy_frag,
+                &ParamLayoutBuilder::new().texture("u_source").texture("u_coverage"),
+            )?;
             let mut copy_state = RenderState::new();
             copy_state.depth_test = false;
             copy_state.depth_mask = false;
             Some(Taa {
                 program,
                 layout,
-                group: ctx.create_param_group(layout)?,
+                group,
                 f_reproject: ctx.param_field(layout, "u_reproject")?,
                 f_taa: ctx.param_field(layout, "u_taa")?,
                 f_jitter: ctx.param_field(layout, "u_jitter")?,
                 f_auto_grey: ctx.param_field(layout, "u_auto_grey")?,
-                copy: (
-                    copy_program,
-                    copy_layout,
-                    ctx.create_param_group(copy_layout)?,
-                ),
+                copy,
                 copy_state: ctx.render_state(&copy_state),
                 history: [(TextureId::NULL, FramebufferId::NULL); 2],
                 motions: [TextureId::NULL; 2],
@@ -540,14 +549,18 @@ impl HdrOutput {
         };
         let grab_down = {
             let frag = ShaderSource::plain("grab_down.frag", &format!("{prefix}{GRAB_DOWN_FRAG}"));
-            let program = ctx.create_program_from(&vert, &frag)?;
-            let layout = ctx.create_param_layout(&ParamLayoutBuilder::new().texture("u_source"))?;
-            (program, layout, ctx.create_param_group(layout)?)
+            crate::fullscreen::program(
+                ctx,
+                &mut undo,
+                &vert,
+                &frag,
+                &ParamLayoutBuilder::new().texture("u_source"),
+            )?
         };
         let mut state = RenderState::new();
         state.depth_test = false;
         state.depth_mask = false;
-        Ok(Self {
+        let made = Self {
             fb: FramebufferId::NULL,
             color_rb: RenderbufferId::NULL,
             depth_rb: RenderbufferId::NULL,
@@ -585,7 +598,9 @@ impl HdrOutput {
             key_rb: RenderbufferId::NULL,
             opaque_fb: FramebufferId::NULL,
             opaque_resolve_fb: FramebufferId::NULL,
-        })
+        };
+        undo.keep();
+        Ok(made)
     }
 
     /// Whether its GPU objects belong to an earlier context generation.
@@ -634,10 +649,7 @@ impl HdrOutput {
             a.destroy(ctx, true);
             return Ok(());
         }
-        let vert = ShaderSource::plain(
-            "fullscreen.vert",
-            &format!("#version 300 es\n{FULLSCREEN_VERT}"),
-        );
+        let vert = crate::fullscreen::vertex("#version 300 es\n");
         self.auto = Some(AutoExposure::new(ctx, &vert)?);
         Ok(())
     }
@@ -693,9 +705,11 @@ impl HdrOutput {
             return Ok(());
         }
         let prefix = "#version 300 es\n";
-        let vert = ShaderSource::plain("fullscreen.vert", &format!("{prefix}{FULLSCREEN_VERT}"));
+        let vert = crate::fullscreen::vertex(prefix);
         let frag = ShaderSource::plain("fxaa.frag", &format!("{prefix}{FXAA_FRAG}"));
+        let mut undo = rswebgl::undo::Undo::new(ctx);
         let program = ctx.create_program_from(&vert, &frag)?;
+        undo.push(move |c| c.destroy_program(program));
         let layout = ctx.create_param_layout(
             &ParamLayoutBuilder::new()
                 .texture("u_ldr")
@@ -704,8 +718,10 @@ impl HdrOutput {
                 .uniform("u_texel", UniformType::Vec2)
                 .uniform("u_masked", UniformType::F32),
         )?;
+        undo.push(move |c| c.destroy_param_layout(layout));
         let group = ctx.create_param_group(layout)?;
-        self.fxaa = Some(Fxaa {
+        undo.push(move |c| c.destroy_param_group(group));
+        let fxaa = Fxaa {
             program,
             layout,
             group,
@@ -713,7 +729,9 @@ impl HdrOutput {
             f_masked: ctx.param_field(layout, "u_masked")?,
             ldr: (TextureId::NULL, FramebufferId::NULL),
             size: (0, 0),
-        });
+        };
+        undo.keep();
+        self.fxaa = Some(fxaa);
         Ok(())
     }
 
@@ -786,39 +804,26 @@ impl HdrOutput {
         ctx.param_set_floats(taa.group, taa.f_jitter, &[jitter.x, jitter.y]);
         ctx.param_set_texture_by_name(taa.group, "u_auto_exposure", auto_tex);
         ctx.param_set_f32(taa.group, taa.f_auto_grey, auto_grey);
-        let viewport = Viewport::new(0, 0, w, h);
-        let fullscreen = DrawCommand::arrays(DrawMode::Triangles, 0, 3);
-        let mut pass = Pass::new(out_fb);
-        pass.set_viewport(&viewport);
-        let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-        groups[0] = taa.group;
-        pass.push_groups_with_key(
-            0,
+        ctx.render(&crate::fullscreen::pass(
+            out_fb,
+            (w, h),
             taa.program,
             self.state,
-            VertexArrayId::NULL,
-            groups,
-            &fullscreen,
-        );
-        ctx.render(&pass);
+            taa.group,
+        ));
         taa.current = next;
         taa.reset = false;
         // Back into the target: what the late meshes draw over.
         let (copy_program, _, copy_group) = taa.copy;
         ctx.param_set_texture_by_name(copy_group, "u_source", out_tex);
         ctx.param_set_texture_by_name(copy_group, "u_coverage", taa.motions[next]);
-        let mut pass = Pass::new(resolve_fb);
-        pass.set_viewport(&viewport);
-        groups[0] = copy_group;
-        pass.push_groups_with_key(
-            0,
+        ctx.render(&crate::fullscreen::pass(
+            resolve_fb,
+            (w, h),
             copy_program,
             taa.copy_state,
-            VertexArrayId::NULL,
-            groups,
-            &fullscreen,
-        );
-        ctx.render(&pass);
+            copy_group,
+        ));
     }
 
     /// Samples per pixel actually used (0: no multisampling).
@@ -950,19 +955,9 @@ impl HdrOutput {
         ctx.texture_set_base_level(self.grab, 0);
         ctx.texture_set_max_level(self.grab, 0);
         ctx.param_set_texture_by_name(group, "u_source", self.grab);
-        let mut pass = Pass::new(self.grab_fb1);
-        pass.set_viewport(&Viewport::new(0, 0, (gw / 2).max(1), (gh / 2).max(1)));
+        let half = ((gw / 2).max(1), (gh / 2).max(1));
+        let mut pass = crate::fullscreen::pass(self.grab_fb1, half, program, self.state, group);
         pass.set_clear(&ClearMask::color()); // every texel written
-        let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-        groups[0] = group;
-        pass.push_groups_with_key(
-            0,
-            program,
-            self.state,
-            VertexArrayId::NULL,
-            groups,
-            &DrawCommand::arrays(DrawMode::Triangles, 0, 3),
-        );
         ctx.render(&pass);
         // The rest from level 1 (box), then sampled whole again.
         ctx.texture_set_base_level(self.grab, 1);
@@ -1263,22 +1258,17 @@ impl HdrOutput {
             },
             None => None,
         };
-        let mut pass = ldr.map_or_else(Pass::to_default, Pass::new);
-        pass.set_viewport(&Viewport::new(0, 0, cw, ch));
+        let mut pass = crate::fullscreen::pass(
+            ldr.unwrap_or(FramebufferId::NULL),
+            (cw, ch),
+            self.program,
+            self.state,
+            self.group,
+        );
         if ldr.is_some() {
             // Every pixel is written: nothing to load on tiled GPUs.
             pass.set_clear(&ClearMask::color());
         }
-        let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-        groups[0] = self.group;
-        pass.push_groups_with_key(
-            0,
-            self.program,
-            self.state,
-            VertexArrayId::NULL,
-            groups,
-            &DrawCommand::arrays(DrawMode::Triangles, 0, 3),
-        );
         let mut profiler = profiler;
         if let Some(p) = profiler.as_deref_mut() {
             p.time(&mut pass, "present");
@@ -1302,18 +1292,8 @@ impl HdrOutput {
             f.f_masked,
             if resolved.is_some() { 1.0 } else { 0.0 },
         );
-        let mut pass = Pass::to_default();
-        pass.set_viewport(&Viewport::new(0, 0, cw, ch));
-        let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
-        groups[0] = f.group;
-        pass.push_groups_with_key(
-            0,
-            f.program,
-            self.state,
-            VertexArrayId::NULL,
-            groups,
-            &DrawCommand::arrays(DrawMode::Triangles, 0, 3),
-        );
+        let mut pass =
+            crate::fullscreen::pass(FramebufferId::NULL, (cw, ch), f.program, self.state, f.group);
         if let Some(p) = profiler {
             p.time(&mut pass, "fxaa");
         }

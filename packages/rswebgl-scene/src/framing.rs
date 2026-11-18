@@ -15,9 +15,7 @@ use crate::transform::{Transform, WorldMatrix};
 pub fn world_bounds(world: &World, root: Entity) -> Option<(Vec3, Vec3)> {
     let bounds = world.storage::<Bounds>()?;
     let worlds = world.storage::<WorldMatrix>()?;
-    let any_hidden = world
-        .storage::<crate::render::Visible>()
-        .is_some_and(|v| v.data().iter().any(|v| !v.0));
+    let any_hidden = crate::render::any_hidden(world);
     let mut out: Option<(Vec3, Vec3)> = None;
     for e in descendants(world, root) {
         let (Some(b), Some(m)) = (bounds.get(e), worlds.get(e)) else {

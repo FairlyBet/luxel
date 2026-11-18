@@ -55,7 +55,7 @@ use views::{
 };
 
 use crate::camera::Camera;
-use crate::render::{FRAME_SLOT, LIGHTING_BLOCK, MATERIAL_SLOT, OBJECT_SLOT, Visible, hidden};
+use crate::render::{FRAME_SLOT, LIGHTING_BLOCK, MATERIAL_SLOT, OBJECT_SLOT, hidden};
 use crate::transform::WorldMatrix;
 
 /// Name of the lights block, bound next to the frame and lighting blocks
@@ -489,9 +489,7 @@ impl LightingSystem {
         };
         let ShadowOptions { map_size, depth16 } = self.options;
         let reverse = ctx.reverse_z();
-        let any_hidden = world
-            .storage::<Visible>()
-            .is_some_and(|v| v.data().iter().any(|v| !v.0));
+        let any_hidden = crate::render::any_hidden(world);
         // Each shadowing light's views, placed; the most layers the lights
         // could ask for (a directional light's every cascade).
         let mut planned: Vec<(Entity, ShadowSlot, Vec<ShadowView>)> = Vec::new();
