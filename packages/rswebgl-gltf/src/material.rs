@@ -825,9 +825,11 @@ pub(crate) fn doc_maps(mat: &gltf::Material) -> [Option<DocMap>; MAP_COUNT] {
     ]
 }
 
-/// Translate one glTF material's data.
+/// Translate one glTF material's data; what glTF doesn't say (OpenPBR's
+/// own parameters) is `default_material`'s.
 pub fn translate(mat: &gltf::Material) -> Material {
     let pbr = mat.pbr_metallic_roughness();
+    let maps = doc_maps(mat);
     Material {
         name: mat.name().map(str::to_owned),
         base_color_factor: pbr.base_color_factor(),
@@ -841,9 +843,8 @@ pub fn translate(mat: &gltf::Material) -> Material {
         },
         alpha_cutoff: mat.alpha_cutoff().unwrap_or(0.5),
         double_sided: mat.double_sided(),
-        maps: doc_maps(mat).map(|m| m.map_or((-1, 0), |m| (m.texture as i32, m.tex_coord))),
-        uv_sets: [0, 1],
-        uv_transforms: doc_maps(mat).map(|m| m.map_or(UV_IDENTITY, |m| m.transform)),
+        maps: maps.map(|m| m.map_or((-1, 0), |m| (m.texture as i32, m.tex_coord))),
+        uv_transforms: maps.map(|m| m.map_or(UV_IDENTITY, |m| m.transform)),
         normal_scale: mat.normal_texture().map_or(1.0, |i| i.scale()),
         occlusion_strength: mat.occlusion_texture().map_or(1.0, |i| i.strength()),
         emissive_strength: mat.emissive_strength().unwrap_or(1.0),
@@ -869,16 +870,6 @@ pub fn translate(mat: &gltf::Material) -> Material {
             0.0,
         ),
         dispersion: ext_f32(mat, "KHR_materials_dispersion", "dispersion", 0.0),
-        base_weight: 1.0,
-        diffuse_roughness: 0.0,
-        coat_ior: 1.5,
-        coat_color: [1.0; 3],
-        coat_darkening: 0.0, // glTF's clearcoat leaves the base unchanged (Khronos)
-        coat_anisotropy: 0.0,
-        subsurface_weight: 0.0,
-        subsurface_color: [0.8; 3],
-        subsurface_radius: 1.0,
-        subsurface_radius_scale: [1.0, 0.5, 0.25],
         sheen_color: ext_vec3(mat, "KHR_materials_sheen", "sheenColorFactor", [0.0; 3]),
         sheen_roughness: ext_f32(mat, "KHR_materials_sheen", "sheenRoughnessFactor", 0.0),
         iridescence: ext_f32(mat, "KHR_materials_iridescence", "iridescenceFactor", 0.0),
@@ -916,8 +907,7 @@ pub fn translate(mat: &gltf::Material) -> Material {
             "diffuseTransmissionColorFactor",
             [1.0; 3],
         ),
-        transmission_tint: [1.0; 3],
-        openpbr_native: false,
+        ..default_material()
     }
 }
 
@@ -968,7 +958,7 @@ pub fn default_material() -> Material {
         diffuse_roughness: 0.0,
         coat_ior: 1.5,
         coat_color: [1.0; 3],
-        // As `translate`: glTF's clearcoat leaves the base as it is.
+        // glTF's clearcoat leaves the base as it is (Khronos).
         coat_darkening: 0.0,
         coat_anisotropy: 0.0,
         subsurface_weight: 0.0,
