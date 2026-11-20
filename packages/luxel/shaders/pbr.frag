@@ -19,7 +19,7 @@
 
 // The model's scale per axis, from the vertex stage (volume thickness is in
 // mesh units: surface.glsl).
-flat in vec3 v_model_scale;
+in vec3 v_model_scale;
 
 #include "brdf.glsl"
 #include "eon.glsl"

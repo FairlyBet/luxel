@@ -797,6 +797,11 @@ impl HdrOutput {
                     ctx.framebuffer_attach_depth_renderbuffer(self.grab_fb, rb);
                     self.grab_depth = rb;
                     self.grab_depth_complete = ctx.framebuffer_is_complete(self.grab_fb);
+                    if !self.grab_depth_complete {
+                        // Refused as a pair: the copy goes on without depth
+                        // (left attached, every blit into it would fail).
+                        ctx.framebuffer_detach_depth(self.grab_fb);
+                    }
                 }
                 Err(e) => {
                     luxel_gl::console::error_once(&format!(

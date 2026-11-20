@@ -475,7 +475,9 @@ impl Scene {
     }
 
     /// No background — no environment, color or gradient: the canvas's
-    /// clear color shows.
+    /// clear color shows. With HDR output it is light in the scene (exposed
+    /// and tone mapped like the rest; its alpha is what makes the canvas
+    /// transparent): for an exact color use `setBackgroundColor`.
     #[wasm_bindgen(js_name = clearBackground)]
     pub fn clear_background(&mut self) {
         self.invalidate();

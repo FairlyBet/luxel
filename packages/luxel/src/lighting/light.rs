@@ -99,13 +99,19 @@ pub(crate) fn key_light(world: &luxel_ecs::World) -> Option<(luxel_ecs::Entity, 
     let any_hidden = crate::render::any_hidden(world);
     let centre = caster_bounds(world).map_or(Vec3::ZERO, |(lo, hi)| (lo + hi) * 0.5);
     let mut best: Option<(f32, luxel_ecs::Entity, Vec4)> = None;
+    // Among the lights the block holds (the first MAX_LIGHTS shown).
+    let mut shaded = 0;
     for (e, light) in lights.iter() {
-        if any_hidden && hidden(world, e) {
-            continue;
-        }
         let Some(m) = worlds.get(e) else {
             continue;
         };
+        if any_hidden && hidden(world, e) {
+            continue;
+        }
+        shaded += 1;
+        if shaded > super::pack::MAX_LIGHTS {
+            break;
+        }
         let power = light.intensity * light.color.max_element();
         // It shines down its −Z.
         let forward = (-m.0.z_axis.truncate()).normalize_or(Vec3::NEG_Z);
@@ -141,6 +147,25 @@ mod key_light_tests {
     use crate::lighting::settings::ShadowCaster;
     use crate::transform::WorldMatrix;
     use luxel_ecs::World;
+
+    // Past MAX_LIGHTS a light isn't shaded, so it can't be the key either.
+    #[test]
+    fn the_key_light_is_one_the_shaders_have() {
+        let mut world = World::new();
+        let mut last = None;
+        for i in 0..=crate::lighting::MAX_LIGHTS {
+            let e = world.spawn();
+            let bright = i == crate::lighting::MAX_LIGHTS;
+            world.insert(
+                e,
+                Light::directional(Vec3::ONE, if bright { 1e5 } else { 1.0 }),
+            );
+            world.insert(e, WorldMatrix(Mat4::IDENTITY));
+            last = Some(e);
+        }
+        let key = key_light(&world).map(|(e, _)| e);
+        assert!(key.is_some() && key != last, "{key:?}");
+    }
 
     #[test]
     fn the_key_light_gives_the_most_light_at_the_middle() {

@@ -11,6 +11,10 @@
 //! `#line <line> <source>`: a compile log's `ERROR: 3:12:` names file 3, line
 //! 12, which [`ShaderSource::describe_log`] (and the program's error report)
 //! turns into `ERROR: color.glsl:12:`.
+//!
+//! "Once" is by text, not by the preprocessor: the first `#include` of a
+//! name is where it lands, even inside an `#if` that turns out false (the
+//! later ones are dropped all the same). Keep includes outside `#if` blocks.
 
 use crate::error::{Error, err};
 

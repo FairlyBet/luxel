@@ -509,16 +509,23 @@ impl LightingSystem {
         // light's every cascade), in layer areas.
         let mut could = 0.0;
         let area = |side: u32| (side as f32 / map_size as f32).powi(2);
+        // The lights the block holds, in its order (`LightsBlock::write`):
+        // those past MAX_LIGHTS aren't shaded, so get no maps either.
+        let mut shaded = 0;
         for (e, light) in lights.iter() {
-            let Some(&s) = settings.get(e) else {
-                continue;
-            };
             let Some(m) = worlds.get(e) else {
                 continue;
             };
             if any_hidden && hidden(world, e) {
                 continue;
             }
+            shaded += 1;
+            if shaded > pack::MAX_LIGHTS {
+                break;
+            }
+            let Some(&s) = settings.get(e) else {
+                continue;
+            };
             let (mut views, splits, kind, side) = match (light.kind, camera) {
                 (LightKind::Point, _) => {
                     let side = s.side(map_size / 2, map_size);

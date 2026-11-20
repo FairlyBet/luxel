@@ -20,7 +20,9 @@
 // - the opaque scene only: transmissive and transparent meshes draw after
 //   the resolve, unjittered — refraction turns the jitter into jumps of
 //   several pixels, and their motion isn't the depth's — so no reactive
-//   mask is needed;
+//   mask is needed. They depth-test against the jittered opaque depth,
+//   so where one passes behind an opaque silhouette its edge can shift a
+//   pixel with the jitter (no unjittered depth to test against);
 // - Godot's velocity disocclusion (get_factor_disocclusion, after
 //   elopezr's "Temporal AA and the quest for the Holy Trail"): where the
 //   motion differs from what the history's pixel moved by last frame, the

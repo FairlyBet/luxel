@@ -175,7 +175,7 @@ pub fn spawn_model(
         world.insert(
             root,
             ModelAnimations {
-                clips: model.animations().into(),
+                clips: model.animations().clone(),
                 nodes: by_index,
                 playing: None,
                 fade: None,

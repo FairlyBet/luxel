@@ -351,7 +351,8 @@ pub struct Model {
     pub(crate) buffers: Vec<BufferId>,
     pub(crate) morph_textures: Vec<TextureId>,
     pub(crate) skins: Vec<Skin>,
-    pub(crate) animations: Vec<Animation>,
+    // Shared with every copy spawned from the model (never edited).
+    pub(crate) animations: std::rc::Rc<[Animation]>,
     pub(crate) mesh_count: usize,
     pub(crate) center: [f32; 3],
     pub(crate) radius: f32,
@@ -610,7 +611,7 @@ impl Model {
     }
 
     /// The animations, in file order.
-    pub fn animations(&self) -> &[Animation] {
+    pub fn animations(&self) -> &std::rc::Rc<[Animation]> {
         &self.animations
     }
 
@@ -1010,7 +1011,7 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
         buffers: geometry.buffers().collect(),
         morph_textures: geometry.morph_textures().collect(),
         skins: read_skins(&document, &buffers),
-        animations: animation::read_animations(&document, &buffers),
+        animations: animation::read_animations(&document, &buffers).into(),
         mesh_count: geometry.mesh_count(),
         center,
         radius,

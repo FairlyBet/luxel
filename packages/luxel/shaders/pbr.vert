@@ -34,7 +34,7 @@ out vec4 v_tangent; // world xyz, w = handedness
 out vec4 v_color;
 #endif
 // The model's scale per axis (the volume's thickness is in mesh units).
-flat out vec3 v_model_scale;
+out vec3 v_model_scale; // not flat: ANGLE emulates flat varyings (a geometry pass on D3D)
 
 #ifdef HAS_SKIN
 // Skinning (after three.js skinning_* chunks): four joints and their weights
