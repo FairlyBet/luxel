@@ -1886,3 +1886,58 @@ async fn a_rebake_during_the_first_bake_keeps_intensity_one() {
     assert_eq!(s.scene.environment_intensity(), vec![3.0, 3.0, 3.0]);
     s.scene.destroy();
 }
+
+// A model that can't be fetched again after a loss: whenReady says so, and
+// render on demand settles (its meshes stay out of frames).
+#[wasm_bindgen_test]
+async fn a_failed_reload_rejects_when_ready_and_settles() {
+    let mut s = setup().await;
+    s.frame().await;
+    assert!(s.ctx.simulate_context_loss());
+    let generation = s.ctx.generation();
+    for _ in 0..100 {
+        if s.ctx.generation() != generation {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    let global = js_sys::global();
+    let fetch = js_sys::Reflect::get(&global, &"fetch".into()).unwrap();
+    let offline = js_sys::Function::new_no_args("return Promise.reject(new TypeError('offline'))");
+    js_sys::Reflect::set(&global, &"fetch".into(), &offline).unwrap();
+    let console = js_sys::Reflect::get(&global, &"console".into()).unwrap();
+    let original = js_sys::Reflect::get(&console, &"error".into()).unwrap();
+    js_sys::Reflect::set(
+        &console,
+        &"error".into(),
+        &js_sys::Function::new_no_args(""),
+    )
+    .unwrap();
+    assert!(s.ctx.simulate_context_restore());
+    for _ in 0..200 {
+        if !s.ctx.is_lost() {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    s.scene.render_frame(s.camera);
+    let ready = wasm_bindgen_futures::JsFuture::from(s.scene.when_ready()).await;
+    js_sys::Reflect::set(&global, &"fetch".into(), &fetch).unwrap();
+    let message = js_sys::Reflect::get(&ready.expect_err("rejects"), &"message".into())
+        .unwrap()
+        .as_string()
+        .unwrap_or_default();
+    assert!(message.contains("couldn't be reloaded"), "{message}");
+    let mut settled = false;
+    for _ in 0..50 {
+        s.scene.render_frame(s.camera);
+        if !s.scene.needs_render(None) {
+            settled = true;
+            break;
+        }
+    }
+    js_sys::Reflect::set(&console, &"error".into(), &original).unwrap();
+    assert!(settled, "needsRender settles");
+    assert_eq!(s.scene.pending(), 0);
+    s.scene.destroy();
+}

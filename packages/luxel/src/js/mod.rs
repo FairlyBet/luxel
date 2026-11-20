@@ -1004,7 +1004,9 @@ impl Scene {
     /// the images of the models added (`Model.whenLoaded`). After a context
     /// loss, for what the scene reloads too: its models (fetched again, with
     /// their images) and `loadTexture` textures. Rejects (ContextLostError)
-    /// when the context is lost, or was while it waited.
+    /// when the context is lost, or was while it waited; rejects with the
+    /// reason when a model couldn't be fetched again (its meshes stay out of
+    /// frames: despawn it, or add it again).
     #[wasm_bindgen(js_name = whenReady)]
     #[wasm_bindgen(unchecked_return_type = "Promise<void>")]
     pub fn when_ready(&mut self) -> js_sys::Promise {
@@ -1040,7 +1042,13 @@ impl Scene {
             }
             ready.await;
             for task in restoring {
-                let _ = wasm_bindgen_futures::JsFuture::from(task).await;
+                // A reload that failed (not for a loss since: that's
+                // reported below) is the app's to handle.
+                if let Err(e) = wasm_bindgen_futures::JsFuture::from(task).await
+                    && !lost()
+                {
+                    return Err(e);
+                }
             }
             if let Some(environment) = environment {
                 environment.await;

@@ -301,8 +301,9 @@ impl Scene {
             let (ctx, inbox, alive) = (self.ctx.clone(), self.reloads.clone(), self.alive.clone());
             let in_flight = self.reloads_in_flight.clone();
             in_flight.set(in_flight.get() + 1);
-            // Settles once the model is back and its images are in (or it
-            // failed): `whenReady` waits for it.
+            // Settles once the model is back and its images are in, or
+            // rejects with why it couldn't be: `whenReady` waits for it and
+            // passes a failure on (the app can despawn it and add it again).
             let task = wasm_bindgen_futures::future_to_promise(async move {
                 let result = luxel_gltf::load_request(&ctx, request).await;
                 in_flight.set(in_flight.get().saturating_sub(1));
@@ -314,11 +315,17 @@ impl Scene {
                     return Ok(JsValue::UNDEFINED);
                 }
                 let images = result.as_ref().ok().map(|m| m.when_loaded());
+                let failed = result.as_ref().err().map(|e| e.to_string());
                 inbox.borrow_mut().push((root, result));
                 if let Some(images) = images {
                     let _ = wasm_bindgen_futures::JsFuture::from(images).await;
                 }
-                Ok(JsValue::UNDEFINED)
+                match failed {
+                    Some(e) => {
+                        Err(Error::from(format!("a model couldn't be reloaded: {e}")).into())
+                    }
+                    None => Ok(JsValue::UNDEFINED),
+                }
             });
             self.restore_tasks.push(task);
         }
