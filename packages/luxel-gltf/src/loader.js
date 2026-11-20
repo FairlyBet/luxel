@@ -20,6 +20,37 @@
 // its relative URIs resolve under it, then are looked up in `files`.
 const FILES_BASE = "https://files.invalid/";
 
+// AbortSignal.any where the browser has it (Safari 17.4, Chrome 116,
+// Firefox 124), else the same by hand: aborted when any of `list` is.
+function anySignal(list) {
+  if (AbortSignal.any) return AbortSignal.any(list);
+  const c = new AbortController();
+  for (const s of list) {
+    if (s.aborted) {
+      c.abort(s.reason);
+      break;
+    }
+    s.addEventListener("abort", () => c.abort(s.reason), { once: true });
+  }
+  return c.signal;
+}
+
+// `s` with each %XX decoded where it can be: a bare "%" (a file named
+// "50%.png") stays as it is instead of failing the whole path.
+function decodePath(s) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s.replace(/(%[0-9A-Fa-f]{2})+/g, (run) => {
+      try {
+        return decodeURIComponent(run);
+      } catch {
+        return run;
+      }
+    });
+  }
+}
+
 export class Fetcher {
   constructor(options) {
     const o = options ?? {};
@@ -27,13 +58,11 @@ export class Fetcher {
     // both combined). Kept out of `request`, which a reload reuses.
     const { signal: inRequest, ...request } = o.request ?? {};
     const signals = [o.signal, inRequest].filter(Boolean);
-    this.signal =
-      signals.length > 1 && AbortSignal.any ? AbortSignal.any(signals) : (signals[0] ?? null);
+    this.signal = signals.length > 1 ? anySignal(signals) : (signals[0] ?? null);
     this.request = request;
     // The load's own: stops what's still running once the load has failed.
     this.stop = new AbortController();
-    this.fetchSignal =
-      this.signal && AbortSignal.any ? AbortSignal.any([this.signal, this.stop.signal]) : (this.signal ?? this.stop.signal);
+    this.fetchSignal = this.signal ? anySignal([this.signal, this.stop.signal]) : this.stop.signal;
     this.resolveUrl = typeof o.resolveUrl === "function" ? o.resolveUrl : null;
     this.onProgress = typeof o.onProgress === "function" ? o.onProgress : null;
     this.files = filesMap(o.files);
@@ -153,12 +182,15 @@ export class Fetcher {
       if (done) break;
       chunks.push(value);
       length += value.byteLength;
-      const grow = Math.max(0, length - counted);
+      // A size not announced counts in the total only once it's known (at
+      // the end): `total` doesn't run along with `loaded` meanwhile.
+      const grow = expected > 0 ? Math.max(0, length - counted) : 0;
       counted += grow;
       this.count(value.byteLength, grow);
     }
+    if (expected === 0) this.count(0, length);
     // Less arrived than announced: the total comes down to it.
-    if (counted > length) this.count(0, length - counted);
+    else if (counted > length) this.count(0, length - counted);
     const out = new Uint8Array(length);
     let at = 0;
     for (const c of chunks) {
@@ -182,7 +214,7 @@ export class Fetcher {
     if (!this.files.size) return null;
     let path;
     try {
-      path = decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
+      path = decodePath(new URL(url).pathname.replace(/^\//, ""));
     } catch {
       return null;
     }

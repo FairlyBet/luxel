@@ -33,9 +33,17 @@ pub async fn resolve_buffers(
     }
     let mut out = Vec::with_capacity(list.len());
     for (buffer, fetch) in list.iter().zip(external) {
-        let length = buffer["byteLength"].as_u64().unwrap_or(0) as usize;
+        let length = usize::try_from(buffer["byteLength"].as_u64().unwrap_or(0))
+            .map_err(|_| JsValue::from_str("buffer: byteLength too large"))?;
         if is_fallback(buffer) {
-            out.push(vec![0; length]);
+            // Zeros the meshopt decode fills: a length the page can't hold
+            // is an error, not an allocation abort.
+            let mut zeros = Vec::new();
+            zeros
+                .try_reserve_exact(length)
+                .map_err(|_| JsValue::from_str("buffer: byteLength too large"))?;
+            zeros.resize(length, 0);
+            out.push(zeros);
             continue;
         }
         let data = match buffer["uri"].as_str() {
@@ -49,6 +57,13 @@ pub async fn resolve_buffers(
                 (None, None) => return Err("buffer: not requested".into()),
             },
         };
+        if data.len() < length {
+            crate::fetch::warn(format!(
+                "buffer {}: {} bytes where byteLength says {length}",
+                out.len(),
+                data.len()
+            ));
+        }
         out.push(data);
     }
     Ok(out)

@@ -77,20 +77,28 @@ pub(crate) fn read_floats(a: &gltf::Accessor, buffers: &[Vec<u8>]) -> Option<Vec
     // A count the file can't back (or that overflows) is an error, not an
     // allocation abort.
     let total = count.checked_mul(n)?;
+    // A view is checked to back the count before anything is allocated
+    // (an allocatable but unbacked count was allocated, zeroed, dropped).
+    let backed = match a.view() {
+        Some(view) => {
+            let data = view_bytes(&view, buffers)?;
+            let stride = view.stride().unwrap_or(n * size);
+            let offset = a.offset();
+            let end = (count.max(1) - 1)
+                .checked_mul(stride)
+                .and_then(|v| v.checked_add(offset))
+                .and_then(|v| v.checked_add(n * size));
+            if count > 0 && end.is_none_or(|end| end > data.len()) {
+                return None;
+            }
+            Some((data, stride, offset))
+        }
+        None => None,
+    };
     let mut out = Vec::new();
     out.try_reserve_exact(total).ok()?;
     out.resize(total, 0.0f32);
-    if let Some(view) = a.view() {
-        let data = view_bytes(&view, buffers)?;
-        let stride = view.stride().unwrap_or(n * size);
-        let offset = a.offset();
-        let end = (count.max(1) - 1)
-            .checked_mul(stride)
-            .and_then(|v| v.checked_add(offset))
-            .and_then(|v| v.checked_add(n * size));
-        if count > 0 && end.is_none_or(|end| end > data.len()) {
-            return None;
-        }
+    if let Some((data, stride, offset)) = backed {
         for i in 0..count {
             for c in 0..n {
                 out[i * n + c] =

@@ -1016,7 +1016,8 @@ async fn openpbr_parameter_names() {
     set(&mut s, "specular_roughness", "0.25").unwrap();
     assert_eq!(get(&s, "roughnessFactor"), [0.25]);
     set(&mut s, "thin_film_thickness", "0.4").unwrap();
-    assert_eq!(get(&s, "iridescenceThickness"), [400.0]);
+    assert_eq!(get(&s, "iridescenceThicknessMaximum"), [400.0]);
+    assert_eq!(get(&s, "iridescenceThickness"), [400.0], "the old name");
     assert_eq!(get(&s, "thin_film_thickness"), [0.4]);
     set(&mut s, "transmission_dispersion_abbe_number", "40").unwrap();
     assert_eq!(get(&s, "dispersion"), [0.5]);

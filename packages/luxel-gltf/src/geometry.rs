@@ -247,6 +247,16 @@ impl GeometryCache {
             }
         }
 
+        // Nothing readable to draw (no vertices, or positions that don't
+        // read): left out, or its ±∞ / NaN box would spoil the model's.
+        let finite_box = (0..3).all(|k| {
+            aabb_min[k].is_finite() && aabb_max[k].is_finite() && aabb_min[k] <= aabb_max[k]
+        });
+        if vertex_count == 0 || !finite_box {
+            crate::fetch::warn("primitive skipped: no readable POSITION".into());
+            return None;
+        }
+
         let vao = match ctx.create_vertex_array() {
             Ok(v) => v,
             Err(e) => {
@@ -855,8 +865,29 @@ fn spec_types(primitive: &gltf::Primitive) -> Result<(), String> {
             }
             Semantic::Joints(_) => check("JOINTS", &a, &[D::Vec4], &[T::U8, T::U16])?,
             Semantic::Weights(_) => check("WEIGHTS", &a, &[D::Vec4], &[T::F32, T::U8, T::U16])?,
+            // (Normalized or not: KHR_mesh_quantization's integer forms too.)
+            Semantic::Positions | Semantic::Normals => check(
+                "POSITION / NORMAL",
+                &a,
+                &[D::Vec3],
+                &[T::F32, T::I8, T::U8, T::I16, T::U16],
+            )?,
+            Semantic::Tangents => check("TANGENT", &a, &[D::Vec4], &[T::F32, T::I8, T::I16])?,
+            Semantic::TexCoords(_) => check(
+                "TEXCOORD",
+                &a,
+                &[D::Vec2],
+                &[T::F32, T::I8, T::U8, T::I16, T::U16],
+            )?,
             _ => {}
         }
+    }
+    // Every attribute has a value per vertex.
+    let positions = primitive
+        .get(&gltf::Semantic::Positions)
+        .map_or(0, |p| p.count());
+    if let Some((s, _)) = primitive.attributes().find(|(_, a)| a.count() < positions) {
+        return Err(format!("{s:?} has fewer values than POSITION"));
     }
     Ok(())
 }

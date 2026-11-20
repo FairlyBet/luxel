@@ -682,7 +682,8 @@ pub fn decode_views(json: &serde_json::Value, buffers: &mut [Vec<u8>]) -> Result
                 index
             ));
         };
-        let offset = get("byteOffset").unwrap_or(0) as usize;
+        let offset = usize::try_from(get("byteOffset").unwrap_or(0))
+            .map_err(|_| format!("meshopt: bufferView {index} byteOffset too large"))?;
         let mode = match ext.get("mode").and_then(serde_json::Value::as_str) {
             Some("ATTRIBUTES") => Mode::Attributes,
             Some("TRIANGLES") => Mode::Triangles,
@@ -697,18 +698,22 @@ pub fn decode_views(json: &serde_json::Value, buffers: &mut [Vec<u8>]) -> Result
             Some("COLOR") => Filter::Color,
             Some(f) => return Err(format!("meshopt: filter {f}")),
         };
-        let source = buffers
-            .get(buffer as usize)
-            .and_then(|b| b.get(offset..offset + length as usize))
+        // Checked arithmetic: offsets from the file can't wrap.
+        let source = usize::try_from(buffer)
+            .ok()
+            .zip(usize::try_from(length).ok())
+            .and_then(|(buffer, length)| Some((buffers.get(buffer)?, offset.checked_add(length)?)))
+            .and_then(|(b, end)| b.get(offset..end))
             .ok_or_else(|| format!("meshopt: bufferView {} source out of range", index))?
             .to_vec();
         let target = crate::buffers::json_view(view)
             .and_then(|(b, range)| buffers.get_mut(b)?.get_mut(range))
             .ok_or_else(|| format!("meshopt: bufferView {} out of range", index))?;
+        let too_large = |_| format!("meshopt: bufferView {index} count or byteStride too large");
         decode(
             target,
-            count as usize,
-            stride as usize,
+            usize::try_from(count).map_err(too_large)?,
+            usize::try_from(stride).map_err(too_large)?,
             &source,
             mode,
             filter,

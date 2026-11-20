@@ -54,6 +54,7 @@ pub fn build_draw_list(
     nodes: &mut Vec<SceneNode>,
 ) -> ([f32; 3], f32) {
     let mut bounds = Aabb::new();
+    let mut hidden_bounds = Aabb::new();
     // Nodes walked already: glTF's graph is a forest, but nothing stops a
     // file from making a cycle (endless recursion) or giving a node two
     // parents.
@@ -73,10 +74,16 @@ pub fn build_draw_list(
                 nodes,
                 &mut bounds,
                 &mut visited,
+                true,
+                &mut hidden_bounds,
             );
         }
     }
 
+    // Nothing shown: the hidden parts' box rather than none.
+    if bounds.is_empty() {
+        bounds = hidden_bounds;
+    }
     if bounds.is_empty() {
         ([0.0, 0.0, 0.0], 1.0)
     } else {
@@ -100,6 +107,10 @@ fn walk(
     nodes: &mut Vec<SceneNode>,
     bounds: &mut Aabb,
     visited: &mut [bool],
+    // Shown (no KHR_node_visibility-hidden ancestor), and the box of the
+    // hidden parts: the model's bounds are the shown ones, else all.
+    shown: bool,
+    hidden_bounds: &mut Aabb,
 ) {
     if std::mem::replace(&mut visited[node.index()], true) {
         return crate::fetch::warn(format!(
@@ -117,6 +128,12 @@ fn walk(
         } => Some((translation, rotation, scale)),
         gltf::scene::Transform::Matrix { .. } => None,
     };
+    let visible = node
+        .extension_value("KHR_node_visibility")
+        .and_then(|v| v.get("visible"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let shown_here = shown && visible;
     nodes.push(SceneNode {
         trs,
         index: node.index() as u32,
@@ -129,11 +146,7 @@ fn walk(
             .weights()
             .or_else(|| node.mesh().and_then(|m| m.weights()))
             .map(<[f32]>::to_vec),
-        visible: node
-            .extension_value("KHR_node_visibility")
-            .and_then(|v| v.get("visible"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true),
+        visible,
     });
 
     if let Some(mesh) = node.mesh() {
@@ -157,7 +170,12 @@ fn walk(
             let world = world * *local_instance;
             let det_negative = world.determinant() < 0.0;
             for geo in prims {
-                expand_world_aabb(bounds, &world, geo.aabb_min, geo.aabb_max);
+                let into = if shown_here {
+                    &mut *bounds
+                } else {
+                    &mut *hidden_bounds
+                };
+                expand_world_aabb(into, &world, geo.aabb_min, geo.aabb_max);
                 let mat = usize::try_from(geo.material).map_or(&default, |i| &materials[i]);
                 let state = material::render_state_for(mat, det_negative);
                 out.push(DrawItem {
@@ -175,7 +193,12 @@ fn walk(
                     attributes: skin_bits(geo.attributes),
                     aabb_min: geo.aabb_min,
                     aabb_max: geo.aabb_max,
-                    skin: node.skin().map_or(-1, |s| s.index() as i32),
+                    // Only a primitive with joints follows the skin.
+                    skin: if geo.attributes & (crate::ATTR_SKIN | crate::ATTR_SKIN8) != 0 {
+                        node.skin().map_or(-1, |s| s.index() as i32)
+                    } else {
+                        -1
+                    },
                     morph_texture: geo.morph.map_or(TextureId::NULL, |m| m.texture),
                     morph_targets: geo.morph.map_or(0, |m| m.targets),
                     variants: geo.variants.clone(),
@@ -205,6 +228,8 @@ fn walk(
             nodes,
             bounds,
             visited,
+            shown_here,
+            hidden_bounds,
         );
     }
 }
@@ -244,8 +269,16 @@ fn gpu_instances(
         .filter_map(|a| a.as_ref())
         .map(|a| a.count())
         .max()?;
-    for a in [&t, &r, &s].into_iter().flatten() {
-        if a.data_type() != gltf::accessor::DataType::F32 || a.count() != count {
+    use gltf::accessor::DataType as T;
+    // Floats; a rotation may also be normalized bytes / shorts.
+    let rotation_ok =
+        |a: &gltf::Accessor| a.normalized() && matches!(a.data_type(), T::I8 | T::I16);
+    for (a, is_rotation) in [(&t, false), (&r, true), (&s, false)]
+        .into_iter()
+        .filter_map(|(a, rot)| a.as_ref().map(|a| (a, rot)))
+    {
+        let typed = a.data_type() == T::F32 || (is_rotation && rotation_ok(a));
+        if !typed || a.count() != count {
             crate::fetch::warn(format!(
                 "node {}: EXT_mesh_gpu_instancing with non-float or \
                  mismatched attributes isn't supported; drawn once",

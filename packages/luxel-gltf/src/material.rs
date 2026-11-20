@@ -140,7 +140,7 @@ impl Material {
     /// TEXCOORD set index used by the base-color texture (`TEXCOORD_n`).
     #[wasm_bindgen(getter, js_name = baseColorUv)]
     pub fn base_color_uv(&self) -> u32 {
-        self.maps[BASE_COLOR_MAP].1
+        self.set_of(BASE_COLOR_MAP)
     }
     #[wasm_bindgen(getter, js_name = metallicRoughnessTexture)]
     pub fn metallic_roughness_texture(&self) -> i32 {
@@ -161,19 +161,19 @@ impl Material {
     /// TEXCOORD set of each map (`TEXCOORD_n`); 0 when the map is absent.
     #[wasm_bindgen(getter, js_name = metallicRoughnessUv)]
     pub fn metallic_roughness_uv(&self) -> u32 {
-        self.maps[METALLIC_ROUGHNESS_MAP].1
+        self.set_of(METALLIC_ROUGHNESS_MAP)
     }
     #[wasm_bindgen(getter, js_name = normalUv)]
     pub fn normal_uv(&self) -> u32 {
-        self.maps[NORMAL_MAP].1
+        self.set_of(NORMAL_MAP)
     }
     #[wasm_bindgen(getter, js_name = occlusionUv)]
     pub fn occlusion_uv(&self) -> u32 {
-        self.maps[OCCLUSION_MAP].1
+        self.set_of(OCCLUSION_MAP)
     }
     #[wasm_bindgen(getter, js_name = emissiveUv)]
     pub fn emissive_uv(&self) -> u32 {
-        self.maps[EMISSIVE_MAP].1
+        self.set_of(EMISSIVE_MAP)
     }
     /// `normalTexture.scale` (1 without a normal map).
     #[wasm_bindgen(getter, js_name = normalScale)]
@@ -255,11 +255,6 @@ impl Material {
     #[wasm_bindgen(getter, js_name = openPbrNative)]
     pub fn openpbr_native(&self) -> bool {
         self.openpbr_native
-    }
-    /// Sets what its parameters mean (see `openPbrNative`).
-    #[wasm_bindgen(setter, js_name = openPbrNative)]
-    pub fn set_openpbr_native(&mut self, native: bool) {
-        self.openpbr_native = native;
     }
 
     /// `KHR_materials_iridescence` factor (0: no thin film).
@@ -347,7 +342,7 @@ pub const PROPERTIES: [Property; PROPERTY_COUNT] = [
     prop("sheenRoughnessFactor", "u_sheen_roughness", 1),
     prop("iridescenceFactor", "u_iridescence", 1),
     prop("iridescenceIor", "u_iridescence_ior", 1),
-    prop("iridescenceThickness", "u_iridescence_thickness", 1),
+    prop("iridescenceThicknessMaximum", "u_iridescence_thickness", 1),
     prop("anisotropyStrength", "u_anisotropy_strength", 1),
     prop("anisotropyRotation", "u_anisotropy_rotation", 1),
     prop("clearcoatNormalScale", "u_clearcoat_normal_scale", 1),
@@ -415,17 +410,65 @@ impl Material {
         ]
     }
 
+    // `values_mut` read-only (no clone of the whole material per read).
+    fn values(&self) -> [&[f32]; PROPERTY_COUNT] {
+        [
+            &self.base_color_factor,
+            std::slice::from_ref(&self.metallic),
+            std::slice::from_ref(&self.roughness),
+            &self.emissive,
+            std::slice::from_ref(&self.emissive_strength),
+            std::slice::from_ref(&self.normal_scale),
+            std::slice::from_ref(&self.occlusion_strength),
+            std::slice::from_ref(&self.alpha_cutoff),
+            std::slice::from_ref(&self.ior),
+            std::slice::from_ref(&self.specular),
+            &self.specular_color,
+            std::slice::from_ref(&self.transmission),
+            std::slice::from_ref(&self.thickness),
+            &self.attenuation_color,
+            std::slice::from_ref(&self.attenuation_distance),
+            std::slice::from_ref(&self.clearcoat),
+            std::slice::from_ref(&self.clearcoat_roughness),
+            std::slice::from_ref(&self.dispersion),
+            std::slice::from_ref(&self.base_weight),
+            std::slice::from_ref(&self.diffuse_roughness),
+            std::slice::from_ref(&self.coat_ior),
+            &self.coat_color,
+            std::slice::from_ref(&self.coat_darkening),
+            std::slice::from_ref(&self.coat_anisotropy),
+            std::slice::from_ref(&self.subsurface_weight),
+            &self.subsurface_color,
+            std::slice::from_ref(&self.subsurface_radius),
+            &self.subsurface_radius_scale,
+            &self.sheen_color,
+            std::slice::from_ref(&self.sheen_roughness),
+            std::slice::from_ref(&self.iridescence),
+            std::slice::from_ref(&self.iridescence_ior),
+            std::slice::from_ref(&self.iridescence_thickness),
+            std::slice::from_ref(&self.anisotropy_strength),
+            std::slice::from_ref(&self.anisotropy_rotation),
+            std::slice::from_ref(&self.clearcoat_normal_scale),
+            std::slice::from_ref(&self.iridescence_thickness_min),
+            std::slice::from_ref(&self.diffuse_transmission),
+            &self.diffuse_transmission_color,
+            &self.transmission_tint,
+        ]
+    }
+
     /// The property named `name` (see `PROPERTIES`), or None for an unknown
     /// name.
     pub fn property(&self, name: &str) -> Option<Vec<f32>> {
+        let name = canonical(name);
         let i = PROPERTIES.iter().position(|p| p.name == name)?;
-        Some(self.clone().values_mut()[i].to_vec())
+        Some(self.values()[i].to_vec())
     }
 
     /// Sets a property; `values` must have its length (4 for
     /// `baseColorFactor`, 3 for colors, 1 otherwise). An infinite
     /// `attenuationDistance` means no absorption (stored as 0).
     pub fn set_property(&mut self, name: &str, values: &[f32]) -> Result<(), String> {
+        let name = canonical(name);
         let i = PROPERTIES
             .iter()
             .position(|p| p.name == name)
@@ -448,18 +491,16 @@ impl Material {
     /// Writes every numeric property into `group` (a group of a
     /// `Model::material_layout`).
     pub fn write_properties(&self, ctx: &Context, group: ParamGroupId) {
-        for (p, v) in PROPERTIES.iter().zip(self.clone().values_mut()) {
+        for (p, v) in PROPERTIES.iter().zip(self.values()) {
             ctx.param_set_floats_by_name(group, p.uniform, v);
         }
     }
 
     /// Writes one property into `group`.
     pub fn write_property(&self, ctx: &Context, group: ParamGroupId, name: &str) {
-        if let (Some(p), Some(v)) = (
-            PROPERTIES.iter().find(|p| p.name == name),
-            self.property(name),
-        ) {
-            ctx.param_set_floats_by_name(group, p.uniform, &v);
+        let name = canonical(name);
+        if let Some(i) = PROPERTIES.iter().position(|p| p.name == name) {
+            ctx.param_set_floats_by_name(group, PROPERTIES[i].uniform, self.values()[i]);
         }
     }
 }
@@ -660,8 +701,25 @@ pub const MAP_NAMES: [&str; MAP_COUNT] = {
 pub const EXTERNAL_TEXTURE: i32 = i32::MAX;
 
 impl Material {
+    /// Sets what its parameters mean (see `openPbrNative`). Not for JS (a
+    /// material there is a copy): the scene's `setMaterialSemantics`.
+    pub fn set_openpbr_native(&mut self, native: bool) {
+        self.openpbr_native = native;
+    }
+
+    // The TEXCOORD set map `slot` reads (0 without the map).
+    fn set_of(&self, slot: usize) -> u32 {
+        let (tex, uv) = self.maps[slot];
+        if tex < 0 {
+            0
+        } else {
+            self.uv_sets[(uv as usize).min(1)]
+        }
+    }
+
     /// Map `slot` (an index into `MAP_SLOTS`): its texture index (−1 none,
-    /// `EXTERNAL_TEXTURE` for the app's) and TEXCOORD set.
+    /// `EXTERNAL_TEXTURE` for the app's) and the UV slot it reads (`uv_sets`
+    /// says which TEXCOORD set that is).
     pub fn map(&self, slot: usize) -> Option<(i32, u32)> {
         self.maps.get(slot).copied()
     }
@@ -1347,5 +1405,15 @@ mod tests {
         plain.maps[0] = (0, 1);
         assert_eq!(assign_uv_slots(&mut plain), [0, 1]);
         assert_eq!(plain.maps[0], (0, 1));
+    }
+}
+
+// A property's name as `PROPERTIES` has it: the extension's own
+// (`iridescenceThicknessMaximum`; the first releases said
+// `iridescenceThickness`, still taken).
+fn canonical(name: &str) -> &str {
+    match name {
+        "iridescenceThickness" => "iridescenceThicknessMaximum",
+        n => n,
     }
 }

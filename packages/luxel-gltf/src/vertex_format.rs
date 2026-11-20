@@ -140,7 +140,10 @@ pub(crate) fn choose(kind: Kind, file: Option<Comp>, normalized: bool, values: &
         _ => {
             let within = |lo: f32| values.iter().all(|v| (lo..=1.0).contains(v));
             match kind {
-                Kind::Direction => Format::SNORM16,
+                // Past ±1 (an unnormalized normal) a snorm would clamp each
+                // component apart and turn the direction.
+                Kind::Direction if within(-1.0) => Format::SNORM16,
+                Kind::Direction => Format::F32,
                 Kind::Unit if within(0.0) => Format::UNORM16,
                 Kind::Unit | Kind::Exact => Format::F32,
             }
@@ -185,9 +188,16 @@ fn encode(out: &mut [u8], x: f32, f: Format) {
     };
     match f.comp {
         Comp::F32 => out.copy_from_slice(&x.to_le_bytes()),
-        Comp::I8 => out[0] = q(127.0, -127.0, 127.0) as i8 as u8,
+        // Normalized: symmetric (−127 reads as −1 as −128 does); else the
+        // type's whole range.
+        Comp::I8 => {
+            out[0] = q(127.0, if f.normalized { -127.0 } else { -128.0 }, 127.0) as i8 as u8
+        }
         Comp::U8 => out[0] = q(255.0, 0.0, 255.0) as u8,
-        Comp::I16 => out.copy_from_slice(&(q(32767.0, -32767.0, 32767.0) as i16).to_le_bytes()),
+        Comp::I16 => {
+            let lo = if f.normalized { -32767.0 } else { -32768.0 };
+            out.copy_from_slice(&(q(32767.0, lo, 32767.0) as i16).to_le_bytes())
+        }
         Comp::U16 => out.copy_from_slice(&(q(65535.0, 0.0, 65535.0) as u16).to_le_bytes()),
     }
 }

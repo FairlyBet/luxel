@@ -186,7 +186,8 @@ class Pool {
   spawn() {
     const worker = new Worker(this.url);
     const slot = { worker, load: 0 };
-    worker.postMessage({ type: 'init', wasm: this.wasm.slice(0) });
+    // (Structured clone copies it: no slice needed.)
+    worker.postMessage({ type: 'init', wasm: this.wasm });
     worker.onmessage = (e) => {
       const job = this.jobs.get(e.data.id);
       if (!job) return;
@@ -267,15 +268,15 @@ function pool(kind) {
 
 // Transcodes a .ktx2 file: { width, height, alpha, format (Basis'
 // transcoder format), levels: [{ data, width, height }] }.
+// `bytes` is the caller's own copy (an exact-size buffer), handed over.
 export function ktx2Transcode(bytes, srgb, config) {
-  const copy = bytes.slice();
-  return pool('ktx2').then((p) => p.run({ bytes: copy.buffer, srgb, config }, [copy.buffer]));
+  return pool('ktx2').then((p) => p.run({ bytes: bytes.buffer, srgb, config }, [bytes.buffer]));
 }
 
 // Decodes a Draco mesh: { count, attributes: [{ data, components }],
 // index: Uint32Array }, the attributes as `attributes` asks
 // ([{ id, componentType }]).
+// `bytes` as for ktx2Transcode.
 export function dracoDecode(bytes, attributes) {
-  const copy = bytes.slice();
-  return pool('draco').then((p) => p.run({ bytes: copy.buffer, attributes }, [copy.buffer]));
+  return pool('draco').then((p) => p.run({ bytes: bytes.buffer, attributes }, [bytes.buffer]));
 }

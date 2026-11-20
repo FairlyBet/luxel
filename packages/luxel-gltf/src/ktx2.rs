@@ -85,6 +85,11 @@ pub(crate) fn load(
     mips: bool,
     on_load: js_sys::Function,
 ) {
+    // Nothing to upload into (a loss, or the model destroyed while the
+    // file downloaded): not transcoded for nothing.
+    if ctx.is_lost() || !ctx.texture_is_valid(out) {
+        return luxel_gl::texture::failed_later(on_load);
+    }
     let ctx = ctx.clone();
     let config = config(&ctx);
     let job = ktx2_transcode(&Uint8Array::from(bytes.as_slice()), srgb, &config);

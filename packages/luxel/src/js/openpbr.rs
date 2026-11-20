@@ -19,7 +19,7 @@
 //! | coat_roughness_anisotropy | coatAnisotropy |
 //! | subsurface_weight, subsurface_color, subsurface_radius, subsurface_radius_scale | subsurfaceWeight, subsurfaceColor, subsurfaceRadius, subsurfaceRadiusScale |
 //! | fuzz_weight, fuzz_color, fuzz_roughness | sheenColorFactor = weight × color, sheenRoughnessFactor |
-//! | thin_film_weight, thin_film_thickness (µm), thin_film_ior | iridescenceFactor, iridescenceThickness (nm), iridescenceIor |
+//! | thin_film_weight, thin_film_thickness (µm), thin_film_ior | iridescenceFactor, iridescenceThicknessMaximum (nm), iridescenceIor |
 //! | emission_luminance, emission_color | emissiveStrength, emissiveFactor |
 //!
 //! Emission is radiance in the scene's units, as glTF's (not photometric
@@ -146,7 +146,7 @@ pub fn get(m: &Material, name: &str, last_fuzz: Fuzz) -> Option<Vec<f32>> {
         }
         "fuzz_weight" => vec![fuzz(m, last_fuzz).0],
         "fuzz_color" => fuzz(m, last_fuzz).1.to_vec(),
-        "thin_film_thickness" => vec![prop(m, "iridescenceThickness")[0] / 1000.0],
+        "thin_film_thickness" => vec![prop(m, "iridescenceThicknessMaximum")[0] / 1000.0],
         "thin_film_ior" => prop(m, "iridescenceIor"),
         "emission_luminance" => prop(m, "emissiveStrength"),
         "emission_color" => prop(m, "emissiveFactor"),
@@ -243,7 +243,7 @@ pub fn set(
             vec![("sheenColorFactor", values.iter().map(|c| c * w).collect())]
         }),
         "thin_film_thickness" => {
-            want(1).map(|()| vec![("iridescenceThickness", vec![values[0] * 1000.0])])
+            want(1).map(|()| vec![("iridescenceThicknessMaximum", vec![values[0] * 1000.0])])
         }
         "thin_film_ior" => want(1).map(|()| vec![("iridescenceIor", values.to_vec())]),
         "emission_luminance" => want(1).map(|()| vec![("emissiveStrength", values.to_vec())]),

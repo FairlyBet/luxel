@@ -5,8 +5,8 @@
 //! Why: glTF samples occlusion from a texture's R and metallic-roughness from
 //! another's G/B. Authoring tools often already share one image (then nothing to
 //! do — we keep the single texture). When they're *separate*, combining them into
-//! one texture means a material samples one texture/one unit instead of two, and
-//! we hold one GPU texture instead of two.
+//! one texture means we hold one GPU texture instead of two (the shader still
+//! samples occlusion and metallic-roughness through their own slots).
 //!
 //! Packing is conservative — it only fires when a texture is used *exclusively*
 //! as occlusion (resp. metallic-roughness) and the occlusion↔MR pairing is 1:1.
@@ -132,7 +132,8 @@ pub fn build_texture_set(
             }
             let (on_load, cell) =
                 crate::compress::after_load(ctx, kinds[&key].flatten(), empty_callback());
-            let tex = build_texture(ctx, t, buffers, load, space, needs_mips[&key], on_load)?;
+            let mips = needs_mips[&key].then_some(true);
+            let tex = build_texture(ctx, t, buffers, load, space, mips, on_load)?;
             cell.set(tex);
             let j = textures.len() as i32;
             remap[i][space as usize] = j;
@@ -252,8 +253,15 @@ fn plan_orm_pairs(doc: &gltf::Document, tex_count: usize) -> Vec<(usize, usize)>
 
     let mut accepted: Vec<(usize, usize)> = Vec::new();
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    // KTX2 sources stay as they are: packing would transcode them only to
+    // repack them uncompressed.
+    let ktx2 = |i: usize| {
+        doc.textures()
+            .nth(i)
+            .is_some_and(|t| crate::textures::is_ktx2(&t.source()))
+    };
     for &(o, m) in &candidates {
-        if rejected.contains(&o) || rejected.contains(&m) {
+        if rejected.contains(&o) || rejected.contains(&m) || ktx2(o) || ktx2(m) {
             continue;
         }
         if seen.insert((o, m)) {
@@ -316,7 +324,7 @@ fn build_packed_orm(
         buffers,
         load,
         false,
-        false,
+        Some(false), // read once, by the pack
         source_callback(&join, &packer, Source::Occlusion),
     )?;
     let mr_src = build_texture(
@@ -325,7 +333,7 @@ fn build_packed_orm(
         buffers,
         load,
         false,
-        false,
+        Some(false),
         source_callback(&join, &packer, Source::MetallicRoughness),
     )?;
 
@@ -405,7 +413,16 @@ fn on_source_loaded(
         return;
     }
     if w <= 0 || h <= 0 {
-        console::error("[luxel-gltf] ORM sources failed to load; packed texture left empty");
+        // Neither loaded: a 1×1 "no texture" (1 in every channel) rather
+        // than an empty one (black: fully occluded, smooth, dielectric).
+        console::error("[luxel-gltf] ORM sources failed to load; packed as no texture");
+        let mut spec = PackSpec::new();
+        for c in [Channel::R, Channel::G, Channel::B, Channel::A] {
+            spec.set_constant(c, 1.0);
+        }
+        if let Err(e) = packer.pack_into(output, &spec, 1, 1, false, false) {
+            console::error(&format!("[luxel-gltf] ORM pack failed: {e}"));
+        }
         free_sources();
         return;
     }

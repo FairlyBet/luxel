@@ -20,8 +20,9 @@ extern "C" {
     #[derive(Clone)]
     pub type Fetcher;
 
-    #[wasm_bindgen(js_name = makeFetcher)]
-    pub(crate) fn make_fetcher(options: &JsValue) -> Fetcher;
+    // Throws for options it can't take (a signal that isn't one, ...).
+    #[wasm_bindgen(js_name = makeFetcher, catch)]
+    pub(crate) fn make_fetcher(options: &JsValue) -> Result<Fetcher, JsValue>;
 
     #[wasm_bindgen(method)]
     fn main(this: &Fetcher, source: &JsValue, base_url: &JsValue) -> js_sys::Promise;

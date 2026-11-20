@@ -500,6 +500,15 @@ impl Model {
     /// `fresh`'s own groups are freed. An error (and nothing changed but
     /// `fresh` freed) if the file no longer matches.
     pub fn adopt(&mut self, ctx: &Context, fresh: Model) -> Result<(), Error> {
+        // Only a model lost with its context takes over a load made after
+        // (a live one's objects would be replaced and leak).
+        if !self.is_lost(ctx) || fresh.is_lost(ctx) {
+            fresh.destroy(ctx);
+            return Err(
+                "adopt: only a model lost with its context takes over a reload made after it"
+                    .into(),
+            );
+        }
         let same = self.items.len() == fresh.items.len()
             && self.textures.len() == fresh.textures.len()
             && self.samplers.len() == fresh.samplers.len()
@@ -728,7 +737,7 @@ impl LoadRequest {
         Self {
             source: url.into(),
             base_url: JsValue::UNDEFINED,
-            fetcher: fetch::make_fetcher(&JsValue::UNDEFINED),
+            fetcher: fetch::make_fetcher(&JsValue::UNDEFINED).expect("a fetcher without options"),
             options: LoadOptions::current(),
         }
     }
@@ -741,6 +750,9 @@ impl LoadRequest {
             || js_sys::ArrayBuffer::is_view(&source);
         if !ok {
             return Err("loadModel: the source is a URL, a File / Blob or bytes".into());
+        }
+        if !(options.is_undefined() || options.is_null() || options.is_object()) {
+            return Err("loadModel: the options are an object".into());
         }
         let get = |k: &str| {
             if options.is_object() {
@@ -757,6 +769,12 @@ impl LoadRequest {
             v.as_bool()
                 .ok_or_else(|| format!("loadModel: {k} is true or false").into())
         };
+        for k in ["resolveUrl", "onProgress"] {
+            let v = get(k);
+            if !(v.is_undefined() || v.is_function()) {
+                return Err(format!("loadModel: {k} is a function").into());
+            }
+        }
         let base_url = get("baseUrl");
         if !(base_url.is_undefined() || base_url.is_string()) {
             return Err("loadModel: baseUrl is a string".into());
@@ -788,7 +806,8 @@ impl LoadRequest {
         Ok(Self {
             source,
             base_url,
-            fetcher: fetch::make_fetcher(options),
+            fetcher: fetch::make_fetcher(options)
+                .map_err(|e| Error::from(format!("loadModel: {}", fetch::message(&e))))?,
             options: LoadOptions {
                 vertex_compression: flag("vertexCompression", now.vertex_compression)?,
                 texture_compression: flag("textureCompression", now.texture_compression)?,
@@ -925,7 +944,7 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
     draco::decode(&mut json, &mut buffers).await?;
     let document = {
         let _s = tracing::info_span!("gltf.document").entered();
-        document(&json, &load.loading)?
+        document(json, &load.loading)?
     };
     // Aborted while the files downloaded (or decoded): nothing is made.
     if fetcher.aborted() {
@@ -1060,7 +1079,9 @@ fn split(bytes: &[u8]) -> Result<(serde_json::Value, Option<Vec<u8>>), Error> {
         let json = serde_json::from_slice(&glb.json);
         (json, glb.bin.map(|b| b.into_owned()))
     } else {
-        (serde_json::from_slice(bytes), None)
+        // A UTF-8 byte order mark (some exporters write one) isn't JSON.
+        let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+        (serde_json::from_slice(text), None)
     };
     let json = json.map_err(|e| format!("glTF parse failed: {e}"))?;
     Ok((json, blob))
@@ -1070,9 +1091,9 @@ fn split(bytes: &[u8]) -> Result<(serde_json::Value, Option<Vec<u8>>), Error> {
 // `extensionsRequired` first, which would otherwise reject them as
 // unsupported. Problems the loader can go past are warnings (`tolerated`);
 // any other rejects the file.
-fn document(json: &serde_json::Value, loading: &fetch::Loading) -> Result<gltf::Document, Error> {
+fn document(json: serde_json::Value, loading: &fetch::Loading) -> Result<gltf::Document, Error> {
     let mut root: gltf::json::Root =
-        serde_json::from_value(json.clone()).map_err(|e| format!("glTF parse failed: {e}"))?;
+        serde_json::from_value(json).map_err(|e| format!("glTF parse failed: {e}"))?;
     root.extensions_required
         .retain(|e| !HANDLED_EXTENSIONS.contains(&e.as_str()));
     // The gltf crate's validation indexes accessors by a primitive's
@@ -1283,6 +1304,11 @@ fn fill_material_groups(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_byte_order_mark_is_skipped() {
+        assert!(super::split(b"\xEF\xBB\xBF{\"asset\":{\"version\":\"2.0\"}}").is_ok());
+    }
+
     use super::*;
 
     // Every extension we implement may be required; an unknown one still fails.
@@ -1303,7 +1329,7 @@ mod tests {
         for name in HANDLED_EXTENSIONS.iter().chain(&crate_parsed) {
             assert!(
                 document(
-                    &split(doc(name).as_bytes()).unwrap().0,
+                    split(doc(name).as_bytes()).unwrap().0,
                     &fetch::Loading::default()
                 )
                 .is_ok(),
@@ -1311,7 +1337,7 @@ mod tests {
             );
         }
         let unknown = split(doc("EXT_unknown_extension").as_bytes()).unwrap().0;
-        assert!(document(&unknown, &fetch::Loading::default()).is_err());
+        assert!(document(unknown, &fetch::Loading::default()).is_err());
     }
 
     // A texture's source: WebP before AVIF where the browser decodes them,

@@ -555,3 +555,20 @@ async fn an_alpha_only_map_shares_the_color_copy() {
     assert_eq!(model.warnings(), Vec::<String>::new());
     model.destroy(&ctx);
 }
+
+// Options of the wrong kind are refused, not silently dropped.
+#[wasm_bindgen_test]
+fn bad_load_options_are_refused() {
+    let url: JsValue = "x.gltf".into();
+    for options in [
+        JsValue::from_str("cors"),
+        object(&[("resolveUrl", js_sys::Object::new().into())]),
+        object(&[("onProgress", JsValue::from(3))]),
+    ] {
+        assert!(
+            LoadRequest::from_js(url.clone(), &options).is_err(),
+            "{options:?}"
+        );
+    }
+    assert!(LoadRequest::from_js(url, &JsValue::UNDEFINED).is_ok());
+}

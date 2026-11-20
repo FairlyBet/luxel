@@ -28,8 +28,9 @@ use crate::fetch::{Load, message, resolve_url};
 /// Create one GPU texture for `tex` and kick off its async image load.
 ///
 /// `srgb` picks the internal format (sRGB for color roles, linear for data);
-/// `force_mips` builds mipmaps even if this texture's own sampler doesn't
-/// need them (another texture sharing the image does).
+/// `mips`: Some(true) builds mipmaps even if this texture's own sampler
+/// doesn't need them (another texture sharing the image does), Some(false)
+/// never (a transient source only read once), None as its sampler says.
 /// `on_load` is the luxel-gl image-load callback (`on_load(width, height)`); pass
 /// an empty function for fire-and-forget, or a real one to join on completion
 /// (used by ORM packing to learn the decoded size). It comes exactly once and
@@ -43,13 +44,27 @@ pub(crate) fn build_texture(
     buffers: &[Vec<u8>],
     load: &Load,
     srgb: bool,
-    force_mips: bool,
+    mips: Option<bool>,
     on_load: js_sys::Function,
 ) -> Result<TextureId, Error> {
     let base = load.base.as_str();
     let sampler = tex.sampler();
-    let (min, mips) = min_filter(sampler.min_filter());
-    let generate_mipmaps = mips || force_mips;
+    let (min, sampler_mips) = min_filter(sampler.min_filter());
+    let generate_mipmaps = mips.unwrap_or(sampler_mips);
+    // Without mips, a mipmap filter would sample an incomplete texture.
+    let min = if generate_mipmaps {
+        min
+    } else {
+        match min {
+            TextureMinFilter::NearestMipmapNearest | TextureMinFilter::NearestMipmapLinear => {
+                TextureMinFilter::Nearest
+            }
+            TextureMinFilter::LinearMipmapNearest | TextureMinFilter::LinearMipmapLinear => {
+                TextureMinFilter::Linear
+            }
+            m => m,
+        }
+    };
     let mag = mag_filter(sampler.mag_filter());
 
     let out = ctx.create_texture(TextureTarget::Texture2D, min, mag)?;
@@ -168,7 +183,7 @@ pub(crate) fn build_texture(
 }
 
 // Whether an image is a KTX2 file (by its type, or its URI's extension).
-fn is_ktx2(image: &gltf::Image) -> bool {
+pub(crate) fn is_ktx2(image: &gltf::Image) -> bool {
     match image.source() {
         gltf::image::Source::View { mime_type, .. } => mime_type == "image/ktx2",
         gltf::image::Source::Uri { uri, mime_type } => {
@@ -177,7 +192,7 @@ fn is_ktx2(image: &gltf::Image) -> bool {
                 || uri
                     .split(['?', '#'])
                     .next()
-                    .is_some_and(|p| p.ends_with(".ktx2"))
+                    .is_some_and(|p| p.to_ascii_lowercase().ends_with(".ktx2"))
         }
     }
 }

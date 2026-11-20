@@ -123,6 +123,7 @@ pub(crate) fn read_animations(doc: &gltf::Document, buffers: &[Vec<u8>]) -> Vec<
                     || components == 0
                     || values.len() != times.len() * per_key * components
                 {
+                    skip("no keyframes, or its values don't match its times");
                     continue;
                 }
                 channels.push(AnimationChannel {
