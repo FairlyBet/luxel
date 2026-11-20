@@ -147,7 +147,11 @@ void main() {
     vec4 original = texelFetch(u_current, px, 0);
     original.rgb = finite(original.rgb);
     if (u_taa.x > 0.5) {
-        frag_color = vec4(original.rgb, 1.0 / MIN_HISTORY_BLEND_RATE);
+        // −1: one frame in; a still pixel then averages its frames evenly
+        // (1/n) until that reaches the minimum rate — starting at the
+        // minimum, the reset frame's single sample kept most of the weight
+        // for dozens of frames.
+        frag_color = vec4(original.rgb, -1.0);
         frag_motion = vec4(0.0, 0.0, original.a, 0.0);
         return;
     }
@@ -230,8 +234,16 @@ void main() {
 
     // Confidence grows while the pixel holds still, resets when it moves.
     float confidence = texelFetch(u_history, px, 0).a;
-    confidence = still ? min(confidence + 10.0, 1000.0) : 1.0;
-    float factor = clamp(1.0 / confidence, MIN_HISTORY_BLEND_RATE, DEFAULT_HISTORY_BLEND_RATE);
+    float factor;
+    if (still && confidence < 0.0) {
+        // Frames since a reset (−n): this one the (n+1)th.
+        float n = 1.0 - confidence;
+        factor = 1.0 / n;
+        confidence = factor <= MIN_HISTORY_BLEND_RATE ? 1.0 / MIN_HISTORY_BLEND_RATE : -n;
+    } else {
+        confidence = still ? min(max(confidence, 1.0) + 10.0, 1000.0) : 1.0;
+        factor = clamp(1.0 / confidence, MIN_HISTORY_BLEND_RATE, DEFAULT_HISTORY_BLEND_RATE);
+    }
     // Disocclusion: the history's pixel moved otherwise last frame.
     vec2 prev_motion = texelFetch(u_prev_motion, then, 0).xy;
     float disocclusion = (length((prev_motion - motion) * size) - DISOCCLUSION_THRESHOLD) * DISOCCLUSION_SCALE;

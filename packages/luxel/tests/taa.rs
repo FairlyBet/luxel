@@ -177,6 +177,67 @@ async fn taa_smooths_edges_and_follows_the_camera() {
     s.scene.destroy();
 }
 
+// After a reset TAA averages its frames evenly: the settle frames the
+// on-demand loop draws (30) come out close to the converged picture,
+// instead of the reset frame's single sample keeping most of the weight.
+#[wasm_bindgen_test]
+async fn taa_converges_within_the_settle_frames() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    if !scene.hdr() {
+        return;
+    }
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    assert!(scene.set_taa(true));
+    let mut s = Setup { gl, scene, camera };
+    let settled = s.frames(30).await;
+    let converged = s.frames(200).await;
+    let edges: Vec<(u8, u8)> = settled
+        .iter()
+        .zip(&converged)
+        .filter(|&(_, &c)| c > 20 && c < 235)
+        .map(|(&a, &b)| (a, b))
+        .collect();
+    assert!(edges.len() > 8, "{} edge pixels", edges.len());
+    let diff = edges
+        .iter()
+        .map(|&(a, b)| (a as f32 - b as f32).abs())
+        .sum::<f32>()
+        / edges.len() as f32;
+    assert!(
+        diff < 8.0,
+        "edges after 30 frames differ from converged by {diff:.1}"
+    );
+    s.scene.destroy();
+}
+
 // Radiance past half floats' range lands in the HDR target as infinity:
 // the resolve keeps it the brightest value, not NaN that blacks the
 // pixel out and spreads through the history.
