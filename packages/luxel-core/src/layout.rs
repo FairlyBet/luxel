@@ -148,6 +148,19 @@ enum FieldKind {
     StructArray(Vec<FieldDef>, u32),
 }
 
+fn count_elements(fields: &[FieldDef]) -> u64 {
+    fields.iter().fold(0u64, |n, f| {
+        n.saturating_add(match &f.kind {
+            FieldKind::Scalar(_) => 1,
+            FieldKind::Array(_, count) => *count as u64,
+            FieldKind::Struct(members) => count_elements(members),
+            FieldKind::StructArray(members, count) => {
+                count_elements(members).saturating_mul(*count as u64)
+            }
+        })
+    })
+}
+
 #[derive(Clone, Debug)]
 struct FieldDef {
     name: String,
@@ -207,6 +220,14 @@ impl LayoutBuilder {
             name: name.into(),
             kind,
         });
+    }
+
+    /// How many primitive fields `build` would lay out (saturating): each
+    /// takes at least 4 bytes, so a layout with more than `limit / 4` can't
+    /// fit `limit` bytes — checked before building, which allocates one
+    /// field per element.
+    pub fn element_count(&self) -> u64 {
+        count_elements(&self.fields)
     }
 
     pub fn build(&self, rule: LayoutRule) -> Layout {
@@ -441,6 +462,22 @@ fn emit(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn element_counts_saturate() {
+        let one = LayoutBuilder::new().field("x", FieldType::Vec4);
+        assert_eq!(one.element_count(), 1);
+        let huge = LayoutBuilder::new()
+            .array("a", FieldType::Vec4, u32::MAX)
+            .struct_array(
+                "s",
+                &LayoutBuilder::new().array("b", FieldType::F32, u32::MAX),
+                u32::MAX,
+            );
+        // Counted without building (or overflowing): far past any block.
+        assert!(huge.element_count() > (u32::MAX as u64) * 2);
+    }
+
     use super::*;
     use FieldType::*;
     use LayoutRule::*;

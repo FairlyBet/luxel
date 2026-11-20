@@ -328,3 +328,16 @@ fn a_bad_block_range_is_refused() {
     });
     assert!(errors.is_empty(), "{errors:?}");
 }
+
+// A uniform block too large to fit fails at once (a bad count from JS used
+// to hang the tab building one field per element first).
+#[wasm_bindgen_test]
+fn a_huge_uniform_block_fails_at_once() {
+    let f = fixture();
+    let layout = UboLayout::new().array("a", UniformType::Vec4, u32::MAX);
+    assert!(
+        f.ctx
+            .create_uniform_buffer(&layout, BufferUsage::StaticDraw)
+            .is_err()
+    );
+}

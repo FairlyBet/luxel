@@ -263,6 +263,15 @@ impl Context {
         usage: BufferUsage,
     ) -> Result<UniformBufferId, Error> {
         self.check_alive()?;
+        // A count from JS (say −1 as 4294967295) would hang or exhaust
+        // memory building one field per element before the size check.
+        let max = limits::max_uniform_block_size();
+        let elements = layout.builder.element_count();
+        if elements > (max / 4) as u64 {
+            return Err(err!(
+                "uniform block of {elements} fields can't fit MAX_UNIFORM_BLOCK_SIZE ({max} bytes)"
+            ));
+        }
         let layout = layout.builder.build(LayoutRule::Std140);
         let size = layout.size();
         validate_block_size(size, limits::max_uniform_block_size())?;

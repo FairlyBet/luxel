@@ -348,3 +348,30 @@ fn a_pass_scissor_clips_its_draws() {
     f.ctx.render(&pass);
     assert_eq!(read_quads(&f.gl), [RED; 3]);
 }
+
+// Sampler arrays of two types (unsupported: parked) each park on a unit of
+// their own, apart from the named samplers: the draw isn't refused by GL
+// (two sampler types on one unit fail every draw).
+#[wasm_bindgen_test]
+fn parked_sampler_arrays_of_two_types_draw() {
+    let f = fixture();
+    let frag = "#version 300 es
+precision highp float;
+uniform sampler2D u_flat[2];
+uniform highp samplerCube u_cubes[2];
+uniform sampler2D u_named;
+out vec4 c;
+void main() {
+    c = vec4(1.0, 0.0, 0.0, 1.0)
+      + 0.0 * (texture(u_flat[0], vec2(0.5)) + texture(u_flat[1], vec2(0.5))
+             + texture(u_cubes[0], vec3(1.0)) + texture(u_cubes[1], vec3(1.0))
+             + texture(u_named, vec2(0.5)));
+}
+";
+    let program = f.ctx.create_program(VERT, frag).expect("program");
+    let mut pass = canvas_pass();
+    push_quad(&f, &mut pass, program, default_state(&f), 1);
+    f.ctx.render(&pass);
+    assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
+    assert_eq!(read_quads(&f.gl)[1], RED);
+}

@@ -142,6 +142,9 @@ fn reflect(gl: &Gl, raw: &WebGlProgram) -> Reflection {
 
     let mut uniforms = Vec::new();
     let mut samplers = Vec::new();
+    // Units of named samplers, from 0; parked ones (type, unit), from the top.
+    let mut next_unit = 0u32;
+    let mut parked_units: Vec<(u32, u32)> = Vec::new();
     let mut words = 0usize;
     for i in 0..count {
         // Block members are set through the block's buffer, not one by one.
@@ -173,13 +176,19 @@ fn reflect(gl: &Gl, raw: &WebGlProgram) -> Reflection {
                 words += w;
             }
             Some(GlUniform::Sampler) => {
-                // Left unbound (an array, or no unit left): parked on the
-                // last unit, nameless so nothing binds it, instead of GL's
-                // default 0 — two sampler types on one unit fail every draw.
-                let parked = ReflSampler {
-                    name: "".into(),
-                    unit: limits::max_combined_texture_units().saturating_sub(1),
-                    loc: loc.clone(),
+                // Left unbound (an array, or no unit left): parked on a unit
+                // from the top, nameless so nothing binds it, instead of GL's
+                // default 0 — two sampler types on one unit fail every draw,
+                // so each type parks on its own unit.
+                let max = limits::max_combined_texture_units();
+                let ty = info.type_();
+                let park = |parked: &mut Vec<(u32, u32)>| -> u32 {
+                    if let Some(&(_, u)) = parked.iter().find(|(t, _)| *t == ty) {
+                        return u;
+                    }
+                    let u = max.saturating_sub(1 + parked.len() as u32);
+                    parked.push((ty, u));
+                    u
                 };
                 if info.size() > 1 {
                     console::warn_once(&format!(
@@ -187,27 +196,38 @@ fn reflect(gl: &Gl, raw: &WebGlProgram) -> Reflection {
                     ));
                     // Every element parked: the ones past the first would
                     // otherwise stay on unit 0, beside another sampler.
-                    samplers.push(parked);
+                    let unit = park(&mut parked_units);
+                    samplers.push(ReflSampler {
+                        name: "".into(),
+                        unit,
+                        loc: loc.clone(),
+                    });
                     for k in 1..info.size() {
                         if let Some(loc) = gl.get_uniform_location(raw, &format!("{name}[{k}]")) {
                             samplers.push(ReflSampler {
                                 name: "".into(),
-                                unit: limits::max_combined_texture_units().saturating_sub(1),
+                                unit,
                                 loc,
                             });
                         }
                     }
                     continue;
                 }
-                let unit = samplers.len() as u32;
-                if unit >= limits::max_combined_texture_units() {
+                // Named samplers count up from 0, below the parked ones.
+                let unit = next_unit;
+                if unit + parked_units.len() as u32 >= max {
                     console::warn_once(&format!(
-                        "[luxel] sampler \"{name}\": all {} texture units are in use",
-                        limits::max_combined_texture_units()
+                        "[luxel] sampler \"{name}\": all {max} texture units are in use"
                     ));
-                    samplers.push(parked);
+                    let unit = park(&mut parked_units);
+                    samplers.push(ReflSampler {
+                        name: "".into(),
+                        unit,
+                        loc,
+                    });
                     continue;
                 }
+                next_unit += 1;
                 samplers.push(ReflSampler {
                     name: name.into(),
                     unit,
