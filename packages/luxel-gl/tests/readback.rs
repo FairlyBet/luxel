@@ -71,6 +71,21 @@ fn sync_read_of_the_canvas() {
     assert_eq!(&row[..4], &BLACK);
 }
 
+// A canvas read is checked against the drawing buffer, not the viewport (a
+// split view's other half is still there to read).
+#[wasm_bindgen_test]
+fn canvas_reads_reach_past_a_smaller_viewport() {
+    let f = fixture();
+    let fb = f.ctx.default_framebuffer();
+    fb.set_viewport(&luxel_gl::draw::Viewport::new(W / 2, 0, W / 2, H));
+    // Past the viewport's width (W / 2), inside the buffer.
+    let px = f.ctx.read_pixels(CANVAS, 0, W - 2, 1, 1, 1, ReadFormat::Rgba8);
+    let past = f.ctx.read_pixels(CANVAS, 0, W, 0, 1, 1, ReadFormat::Rgba8);
+    fb.set_viewport(&luxel_gl::draw::Viewport::new(0, 0, W, H));
+    px.expect("inside the drawing buffer");
+    assert!(past.is_err(), "outside the drawing buffer");
+}
+
 // The async read sees the canvas as it was when issued, even though the next
 // frame repaints it before the result arrives.
 #[wasm_bindgen_test]

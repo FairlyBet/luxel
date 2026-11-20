@@ -19,7 +19,9 @@ use luxel_gl::param::{GROUP_SLOTS, ParamField, ParamLayoutBuilder};
 use luxel_gl::pass::Pass;
 use luxel_gl::render_state::RenderState;
 use luxel_gl::uniform_buffer::UniformType;
-use luxel_gltf::{ATTR_MORPH_NORMAL, ATTR_MORPH_POSITION, ATTR_MORPH_TANGENT, ATTR_SKIN8};
+use luxel_gltf::{
+    ATTR_MORPH_NORMAL, ATTR_MORPH_POSITION, ATTR_MORPH_TANGENT, ATTR_SKIN, ATTR_SKIN8,
+};
 
 use crate::animation::MorphWeights;
 use crate::instances::Instances;
@@ -171,7 +173,13 @@ impl MotionVectors {
             model: *m,
             ..State::default()
         };
-        let skin = world.get::<Skin>(e);
+        // Skinned as the shading variant is: by the primitive's skin
+        // attributes (a Skin on a mesh without them isn't deformed).
+        let skin = world.get::<Skin>(e).filter(|_| {
+            world
+                .get::<Primitive>(e)
+                .is_some_and(|p| p.attributes & ATTR_SKIN != 0)
+        });
         if let Some(skin) = skin {
             now.joints
                 .extend(skin.joints.iter().enumerate().map(|(j, &joint)| {

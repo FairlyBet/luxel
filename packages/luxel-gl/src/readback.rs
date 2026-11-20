@@ -186,10 +186,12 @@ impl Context {
             if attachment != 0 {
                 return Err(err!("read: the canvas has only color attachment 0"));
             }
-            let d = &self.core.default_fb;
+            // The drawing buffer itself, not the viewport (a split view's
+            // pixels outside it are still there to read).
+            let size = self.core.default_fb.drawing_buffer_size();
             gl.bind_framebuffer(Gl::READ_FRAMEBUFFER, None);
             gl.read_buffer(Gl::BACK);
-            (d.width(), d.height())
+            (size[0], size[1])
         } else {
             let res = self.res();
             let Some(f) = res.framebuffers.get(fb.0) else {
