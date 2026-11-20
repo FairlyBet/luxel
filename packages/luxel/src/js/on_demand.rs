@@ -134,6 +134,7 @@ impl Scene {
     fn keeps_changing(&self) -> bool {
         crate::animation::animating(&self.world)
             || self.stats.pending > 0
+            || self.reloads_in_flight.get() > 0
             || self.env_pending.is_some()
             || !self.pending_variants.is_empty()
             || !self.reloads.borrow().is_empty()

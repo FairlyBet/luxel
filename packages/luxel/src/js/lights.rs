@@ -418,12 +418,10 @@ impl Scene {
             self.sync_context();
             // The bake comes back at the intensity it has now (or was to
             // get once baked), not the default a new environment starts at.
-            let keep = self
-                .env_intensity_after_bake
-                .unwrap_or_else(|| self.renderer.environment_intensity());
+            let keep = self.intensity_to_keep();
             let image = decode_hdr_rgbe(&bytes)?;
             self.start_environment(&image, size)?;
-            self.env_intensity_after_bake = Some(keep);
+            self.env_intensity_after_bake = keep;
         }
         Ok(())
     }
@@ -590,6 +588,18 @@ impl Scene {
 }
 
 impl Scene {
+    // The intensity a re-bake of the current environment should come back
+    // at: the one shown, or, while its first bake still runs, the one that
+    // bake was to get (None: the 1 a new environment starts at; the
+    // renderer still holds the previous environment's).
+    pub(crate) fn intensity_to_keep(&self) -> Option<Vec3> {
+        if self.env_pending.is_some() {
+            self.env_intensity_after_bake
+        } else {
+            Some(self.renderer.environment_intensity())
+        }
+    }
+
     // Starts baking `image` in the background (the bake shaders made on
     // first use), cancelling a bake still running.
     pub(crate) fn start_environment(&mut self, image: &RgbeImage, size: u32) -> Result<(), Error> {

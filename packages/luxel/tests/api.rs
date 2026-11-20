@@ -1857,3 +1857,32 @@ async fn taa_edges_over_a_fill_have_no_fringe() {
         fringe.first()
     );
 }
+
+// A new environment shows at intensity 1 even when re-baked before its
+// first bake landed (compact on/off): not at the previous environment's
+// (here the default's).
+#[wasm_bindgen_test]
+async fn a_rebake_during_the_first_bake_keeps_intensity_one() {
+    let mut s = setup().await;
+    let flat = luxel::encode_hdr(8, 4, &[0.5; 8 * 4 * 3]);
+    let shown = s.scene.environment_intensity();
+    s.scene.set_environment_hdr(&flat, 16).unwrap();
+    s.scene
+        .set_compact_environment(!s.scene.compact_environment())
+        .unwrap();
+    s.frame().await;
+    assert_eq!(
+        s.scene.environment_intensity(),
+        vec![1.0, 1.0, 1.0],
+        "was {shown:?}"
+    );
+    // An intensity set during a bake survives a re-bake too.
+    s.scene.set_environment_hdr(&flat, 16).unwrap();
+    s.scene.set_environment_intensity(3.0, 3.0, 3.0);
+    s.scene
+        .set_compact_environment(!s.scene.compact_environment())
+        .unwrap();
+    s.frame().await;
+    assert_eq!(s.scene.environment_intensity(), vec![3.0, 3.0, 3.0]);
+    s.scene.destroy();
+}

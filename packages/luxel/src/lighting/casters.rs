@@ -58,8 +58,12 @@ pub(crate) fn cull(
             if mesh.transparent || caster.program.is_null() || (any_hidden && hidden(world, e)) {
                 continue;
             }
-            if ctx.program_link_pending(caster.program) || reloading.is_some_and(|r| r.contains(e))
-            {
+            // A reloading mesh is out of the maps until it lands (its
+            // reload changes the content version, which redraws them).
+            if reloading.is_some_and(|r| r.contains(e)) {
+                continue;
+            }
+            if ctx.program_link_pending(caster.program) {
                 waiting += 1;
                 continue;
             }

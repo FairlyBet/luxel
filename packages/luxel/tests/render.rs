@@ -200,6 +200,7 @@ fn stats(drawn: usize, culled: usize, objects_written: usize) -> RenderStats {
         culled,
         objects_written,
         pending: 0,
+        reloading: 0,
         transmissive: 0,
         instanced: 0,
         moving: 0,

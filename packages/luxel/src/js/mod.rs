@@ -119,6 +119,8 @@ pub struct Scene {
     // False once destroyed: background work finishing later frees what it
     // made instead of handing it in.
     alive: std::rc::Rc<std::cell::Cell<bool>>,
+    // Model reloads started and not yet in `reloads` (a restore's fetches).
+    reloads_in_flight: std::rc::Rc<std::cell::Cell<u32>>,
     // What the last restore started (model reloads with their images,
     // texture reloads): `whenReady` waits for them too.
     restore_tasks: Vec<js_sys::Promise>,
@@ -226,6 +228,7 @@ impl Scene {
             profiler: None,
             reloads: Reloads::default(),
             alive: std::rc::Rc::new(std::cell::Cell::new(true)),
+            reloads_in_flight: Default::default(),
             hdr_wanted: crate::output::HdrOutput::supported(ctx),
             hdr: None,
             ambient_occlusion: None,
@@ -708,7 +711,7 @@ impl Scene {
                 self.apply_material(e);
                 // A model waiting for its reload (lost): out of frames
                 // until it lands, as its other copies.
-                if lost {
+                if lost && self.world.has::<crate::model::Primitive>(e) {
                     self.world.insert(e, crate::render::Reloading);
                 }
             }

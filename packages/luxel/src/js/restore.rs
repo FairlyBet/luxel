@@ -95,6 +95,7 @@ impl Scene {
             console::error(&format!("[luxel] restore: the renderer: {e}"));
         }
         // The bake shaders went with the old context; a bake in progress too.
+        let intensity = self.intensity_to_keep();
         if let Some(p) = self.env_pending.take() {
             p.cancel();
         }
@@ -102,13 +103,12 @@ impl Scene {
             baker.destroy();
         }
         if let Some((bytes, size)) = self.env_source.clone() {
-            let intensity = self.renderer.environment_intensity();
             let started = decode_hdr_rgbe(&bytes)
                 .map_err(Error::from)
                 .and_then(|img| self.start_environment(&img, size));
             match started {
                 // Baked over the next frames; the intensity survives its swap.
-                Ok(()) => self.env_intensity_after_bake = Some(intensity),
+                Ok(()) => self.env_intensity_after_bake = intensity,
                 Err(e) => console::error(&format!("[luxel] restore: the environment: {e}")),
             }
         }
@@ -294,27 +294,18 @@ impl Scene {
                     "[luxel] restore: models aren't fetched again \
                      (setRestoreModels(false)): their meshes stay out of frames until replaced",
                 );
-                for r in self.roots_of(root) {
-                    for e in self.own_entities(r) {
-                        if self.world.get::<MeshRenderer>(e).is_some() {
-                            self.world.insert(e, Reloading);
-                        }
-                    }
-                }
+                self.mark_reloading(root);
                 return;
             };
-            for r in self.roots_of(root) {
-                for e in self.own_entities(r) {
-                    if self.world.get::<MeshRenderer>(e).is_some() {
-                        self.world.insert(e, Reloading);
-                    }
-                }
-            }
+            self.mark_reloading(root);
             let (ctx, inbox, alive) = (self.ctx.clone(), self.reloads.clone(), self.alive.clone());
+            let in_flight = self.reloads_in_flight.clone();
+            in_flight.set(in_flight.get() + 1);
             // Settles once the model is back and its images are in (or it
             // failed): `whenReady` waits for it.
             let task = wasm_bindgen_futures::future_to_promise(async move {
                 let result = luxel_gltf::load_request(&ctx, request).await;
+                in_flight.set(in_flight.get().saturating_sub(1));
                 if !alive.get() {
                     // The scene was destroyed meanwhile.
                     if let Ok(model) = result {
@@ -330,6 +321,18 @@ impl Scene {
                 Ok(JsValue::UNDEFINED)
             });
             self.restore_tasks.push(task);
+        }
+    }
+
+    // The model's own meshes (its primitives: not the app's meshes parented
+    // under its nodes) leave frames until the reload lands.
+    fn mark_reloading(&mut self, root: Entity) {
+        for r in self.roots_of(root) {
+            for e in self.own_entities(r) {
+                if self.world.has::<MeshRenderer>(e) && self.world.has::<Primitive>(e) {
+                    self.world.insert(e, Reloading);
+                }
+            }
         }
     }
 

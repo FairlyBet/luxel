@@ -146,7 +146,8 @@ pub struct MeshRenderer {
 pub struct Visible(pub bool);
 
 /// A mesh whose GPU data is being rebuilt (its model reloading after a
-/// context loss): left out of frames, counted as pending, until removed.
+/// context loss): left out of frames (counted in `RenderStats::reloading`)
+/// until removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reloading;
 
@@ -167,6 +168,9 @@ pub struct RenderStats {
     /// Visible meshes left out because their shader is still compiling in
     /// the background (parallel compile); they appear once it links.
     pub pending: usize,
+    /// Visible meshes left out because their model is reloading after a
+    /// context loss (or waits for the app to replace it).
+    pub reloading: usize,
     /// Meshes drawn as instances of a batch (several identical meshes in
     /// one draw).
     pub instanced: usize,
@@ -827,7 +831,11 @@ impl SceneRenderer {
 
             // A shader still linking would stall the frame: skip the mesh until
             // it is done. Likewise one whose model is reloading.
-            if reloading.is_some_and(|r| r.contains(e)) || ctx.program_link_pending(mesh.program) {
+            if reloading.is_some_and(|r| r.contains(e)) {
+                self.stats.reloading += 1;
+                continue;
+            }
+            if ctx.program_link_pending(mesh.program) {
                 self.stats.pending += 1;
                 continue;
             }
