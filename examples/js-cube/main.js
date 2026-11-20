@@ -233,6 +233,10 @@ window.addEventListener("keydown", (e) => {
 });
 
 function frame(ms) {
+  requestAnimationFrame(frame);
+  // Lost: nothing can be created or drawn until it's back (a stale MSAA
+  // target would throw while rebuilding).
+  if (ctx.isLost()) return;
   const t = ms / 1000;
   const proj = perspective(Math.PI / 4, fb.width() / Math.max(1, fb.height()), 0.1, 100);
 
@@ -254,6 +258,5 @@ function frame(ms) {
     `programs ${s.programs}  states ${s.states}  vaos ${s.vertexArrays}\n` +
     `uniforms ${s.uniforms}  textures ${s.textures}  blocks ${s.blocks}`;
   s.free();
-  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
