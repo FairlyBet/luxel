@@ -279,6 +279,10 @@ async fn taa_follows_moving_meshes() {
     let mut img = Vec::new();
     for i in 1..=12 {
         s.scene.set_translation(root, i as f32 / 16.0, 0.0, 0.0);
+        // A render into a pass of the app's between frames (a mirror, a
+        // thumbnail) leaves the frames' motion history alone.
+        let mut side = luxel_gl::pass::Pass::to_default();
+        s.scene.render(s.camera, &mut side);
         img = s.frames(1).await;
         assert_eq!(s.scene.moving_meshes(), 1, "frame {i}");
     }

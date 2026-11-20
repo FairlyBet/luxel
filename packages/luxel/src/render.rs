@@ -221,6 +221,9 @@ pub struct SceneRenderer {
     last_view_proj: Mat4,
     // TAA's motion vectors of moving meshes, while on.
     motion: Option<MotionVectors>,
+    // Set around a render that isn't the canvas frame (a pass of the app's):
+    // it leaves the motion history and `last_view_proj` to the frames.
+    pub(crate) side_render: bool,
     // The white constant environment, used while no other is set.
     default_env: Environment,
     env: Option<Environment>,
@@ -378,6 +381,7 @@ impl SceneRenderer {
             jitter: Vec2::ZERO,
             mip_bias: 0.0,
             last_view_proj: Mat4::IDENTITY,
+            side_render: false,
             motion: None,
             default_env,
             env: None,
@@ -770,7 +774,9 @@ impl SceneRenderer {
         self.release_removed(world, ctx);
         self.instances.clear();
         self.batches.clear();
-        if let Some(m) = &mut self.motion {
+        if let Some(m) = &mut self.motion
+            && !self.side_render
+        {
             m.begin(self.last_view_proj);
         }
 
@@ -842,7 +848,9 @@ impl SceneRenderer {
             } else {
                 Dest::Opaque
             };
-            if let Some(motion) = &mut self.motion {
+            if let Some(motion) = &mut self.motion
+                && !self.side_render
+            {
                 let opaque = dest == Dest::Opaque && !mesh.transparent;
                 motion.track(world, e, &m, mesh, opaque, &mut self.instances);
             }
@@ -1401,7 +1409,9 @@ impl SceneRenderer {
         let view = cam_world.0.inverse();
         let proj = cam.projection_for(ctx.reverse_z());
         let view_proj = proj * view;
-        self.last_view_proj = view_proj;
+        if !self.side_render {
+            self.last_view_proj = view_proj;
+        }
         // TAA's subpixel jitter: clip xy moved by jitter·w (any projection).
         let jitter = Mat4::from_cols(
             Vec4::X,

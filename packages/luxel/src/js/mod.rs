@@ -359,6 +359,9 @@ impl Scene {
             console::error_once("[luxel] setLocalMatrix: needs 16 numbers; ignored");
             return;
         };
+        if !options::finite("setLocalMatrix", &cols) {
+            return;
+        }
         let t = Transform::from_matrix(Mat4::from_cols_array(&cols));
         self.edit_transform(e, "setLocalMatrix", |old| *old = t);
     }
@@ -377,6 +380,16 @@ impl Scene {
         else {
             return;
         };
+        if !options::finite(
+            "lookAt",
+            &[eye.x, eye.y, eye.z, target.x, target.y, target.z],
+        ) {
+            return;
+        }
+        if eye == target {
+            console::error_once("[luxel] lookAt: eye and target are the same point; ignored");
+            return;
+        }
         // Looking straight up or down: any other up axis will do.
         let up = if (target - eye).normalize_or_zero().y.abs() > 0.999 {
             Vec3::Z
@@ -571,6 +584,7 @@ impl Scene {
         self.invalidate();
         if let (Some(min), Some(max)) =
             (vec3("setBounds", "min", min), vec3("setBounds", "max", max))
+            && options::finite("setBounds", &[min.x, min.y, min.z, max.x, max.y, max.z])
         {
             self.insert(e, "setBounds", Bounds::new(min, max));
         }
@@ -954,9 +968,13 @@ impl Scene {
         // linear output), and nothing transmissive sees a scene copy.
         self.renderer.set_output(true, self.tone_mapping);
         self.renderer.set_scene_color(&self.ctx, None);
-        self.observe(Some(camera));
+        // Changes so far stay due for the canvas (`needsRender` follows
+        // `renderFrame`): this frame doesn't reach it.
+        self.observe(None);
+        // Nor does it move TAA's history of where meshes were.
+        self.renderer.side_render = true;
         let drawn = self.render_passes(camera, pass, None, None, None);
-        self.rendered(camera);
+        self.renderer.side_render = false;
         drawn
     }
 

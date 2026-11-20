@@ -1358,6 +1358,22 @@ async fn needs_render_follows_changes() {
         assert!(!s.scene.needs_render(None), "{what}: drawn");
     }
 
+    // A render into a pass of the app's doesn't reach the canvas: a change
+    // before it is still due, and its camera isn't the canvas frame's.
+    let mut pass = luxel_gl::pass::Pass::to_default();
+    s.scene.set_exposure(0.6);
+    s.scene.render(s.camera, &mut pass);
+    assert!(
+        s.scene.needs_render(Some(s.camera.to_raw())),
+        "due after render()"
+    );
+    s.scene.render_frame(s.camera);
+    s.scene.render(other, &mut pass);
+    assert!(
+        !s.scene.needs_render(Some(s.camera.to_raw())),
+        "render() through another camera"
+    );
+
     // TAA: frames until it converges.
     s.scene.set_taa(true);
     let mut frames = 0;

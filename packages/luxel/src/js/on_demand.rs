@@ -40,6 +40,12 @@ pub(crate) struct OnDemand {
     size: Option<(i32, i32)>,
     camera: Entity,
     generation: u32,
+    // At the last look: the content version, and whether something kept
+    // changing the picture on its own. Work that lands inside a frame (a
+    // bake swapped in, a reload applied, the last shader linked) is no
+    // change the next look sees, but TAA still needs frames to settle on it.
+    looked_content: u32,
+    looked_busy: bool,
 }
 
 #[wasm_bindgen]
@@ -70,7 +76,11 @@ impl Scene {
         #[wasm_bindgen(unchecked_param_type = "Entity | undefined")] camera: Option<u32>,
     ) -> bool {
         self.observe(camera.map(Entity::from_raw));
-        self.on_demand.settle > 0 || self.keeps_changing()
+        // The context was restored but the scene not yet rebuilt (a frame
+        // tried while lost used up the change).
+        self.on_demand.settle > 0
+            || self.keeps_changing()
+            || self.generation != self.ctx.generation()
     }
 }
 
@@ -82,7 +92,10 @@ impl Scene {
         let size = (fb.width(), fb.height());
         let generation = self.ctx.generation();
         let settle = if self.taa() { TAA_SETTLE } else { 1 };
+        let busy = self.keeps_changing();
         let d = &mut self.on_demand;
+        d.looked_content = content;
+        d.looked_busy = busy;
         let changed = d.invalidated
             || self.world.changed_since(d.observed)
             || content != d.content
@@ -102,8 +115,14 @@ impl Scene {
     // matrices, reload results) isn't a change.
     pub(crate) fn rendered(&mut self, camera: Entity) {
         let fb = self.ctx.default_framebuffer();
+        let landed = self.ctx.content_version() != self.on_demand.looked_content
+            || (self.on_demand.looked_busy && !self.keeps_changing());
+        let taa = self.taa();
         let d = &mut self.on_demand;
         d.settle = d.settle.saturating_sub(1);
+        if landed && taa {
+            d.settle = d.settle.max(TAA_SETTLE - 1);
+        }
         d.size = Some((fb.width(), fb.height()));
         d.camera = camera;
         d.generation = self.ctx.generation();
