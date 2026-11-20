@@ -499,9 +499,8 @@ async function loadEnv(/** @type {string} */ name, /** @type {string} */ label) 
     if (ticket !== envTicket) return;
     scene.setEnvironmentHdr(bytes, 256);
     scene.setEnvironmentIntensity(envIntensity, envIntensity, envIntensity);
+    // The scene redraws on its own while the bake runs (`needsRender`).
     status("");
-    // The bake finishing changes the picture.
-    scene.whenReady().then(invalidate);
   } catch (err) {
     status(`Can't load ${label}: ${err instanceof Error ? err.message : err}`, true);
   }
