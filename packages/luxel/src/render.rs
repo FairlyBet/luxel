@@ -96,7 +96,9 @@ const LIGHTING_SHADING: usize = 3;
 ///     vec4 u_lighting;    // x unused, y exposure, z environment rotation
 ///                         // (radians about +Y), w last specular mip
 ///     vec4 u_output;      // x shows (1) or leaves linear radiance (0), y tone
-///                         // mapper, z 1 with a scene copy, w its last mip
+///                         // mapper, z 0 without a scene copy, else 1 +
+///                         // its least mip to sample (test z > 0.5), w its
+///                         // last mip
 ///     vec4 u_shading;     // x specular AA variance, y its threshold, z the
 ///                         // glass peel mode, w 1 under reverse-Z
 ///     vec4 u_fill_a;      // the background fill: rgb a color (display
@@ -785,6 +787,9 @@ impl SceneRenderer {
         }
 
         let Some((view, view_proj)) = self.write_frame(world, ctx, camera) else {
+            // No frame: nor last frame's shadow passes (their object groups
+            // may be gone).
+            self.lights.skip_frame();
             return self.stats;
         };
         self.frame_bases.clear();
@@ -1178,7 +1183,17 @@ impl SceneRenderer {
                 self.write_deformers(world, ctx, e, group);
                 self.frame_bases.insert(e, base);
             }
-            out.push(*d);
+            // As many copies as have instance slots (as in the camera's
+            // pass).
+            let mut d = *d;
+            if command.is_instanceable()
+                && self.program_kind(ctx, d.program) != ProgramKind::Uniforms
+            {
+                d.mesh.command.instance_count = command
+                    .instance_count
+                    .clamp(1, crate::instances::MAX_COPIES);
+            }
+            out.push(d);
             objects.push(group);
         }
         for (i, (d, matrices)) in batches[..used].iter().enumerate() {
@@ -1533,8 +1548,13 @@ impl SceneRenderer {
         ) {
             let bounds = world.storage::<Bounds>();
             let any_hidden = crate::render::any_hidden(world);
+            let reloading = world.storage::<Reloading>().filter(|r| !r.is_empty());
             for (e, mesh) in storage.iter() {
                 if mesh.vao.is_null() || (any_hidden && hidden(world, e)) {
+                    continue;
+                }
+                // Its vertex arrays are of the lost context until it lands.
+                if reloading.is_some_and(|r| r.contains(e)) {
                     continue;
                 }
                 let Some(row) = worlds.row(e) else {

@@ -4,7 +4,8 @@
 //! share.
 //!
 //! Baking runs on the GPU (a few dozen full-screen draws into RGBA16F cube
-//! faces, in stages a `PendingEnvironment` spreads over frames; the image
+//! faces — kept as R11F_G11F_B10F when compact and the device allows — in
+//! stages a `PendingEnvironment` spreads over frames; the image
 //! goes up as RGBE bytes and is decoded there), so it needs half-float render
 //! targets — `EXT_color_buffer_half_float` / `EXT_color_buffer_float`, which
 //! the context enables when the device has them.
@@ -92,8 +93,9 @@ impl Environment {
     /// Bakes an equirectangular HDR image (from `decode_hdr_rgbe`) right away,
     /// waiting for the bake shaders to link: a stall of tens of milliseconds
     /// (`PendingEnvironment` spreads it over frames instead). `size` as in
-    /// `BakeJob::start`. Errors if the device can't render to half-float
-    /// textures.
+    /// `BakeJob::start`, compact (R11F_G11F_B10F cubes where the device
+    /// renders to them, else RGBA16F). Errors if the device can't render to
+    /// half-float textures.
     pub fn bake(ctx: &Context, image: &RgbeImage, size: u32) -> Result<Self, Error> {
         let baker = EnvBaker::new(ctx)?;
         for p in baker.programs() {
@@ -146,12 +148,21 @@ pub(crate) fn brdf_lut_texture(ctx: &Context) -> Result<TextureId, Error> {
     )?;
     let n = LUT_SIZE as i32;
     ctx.texture_storage_2d(tex, 1, &TextureFormat::rgba16f(), n, n);
-    let data: Vec<u8> = brdf_lut()
-        .into_iter()
-        .flat_map(|[a, b, sheen]| [a, b, sheen, 1.0])
-        .flat_map(f32::to_le_bytes)
-        .collect();
-    ctx.texture_sub_image_2d(tex, 0, 0, 0, n, n, &RGBA16F_FROM_F32, &data);
+    // Integrated once per thread: renderers and restores after the first
+    // reuse it.
+    thread_local! {
+        static DATA: std::cell::OnceCell<Vec<u8>> = const { std::cell::OnceCell::new() };
+    }
+    DATA.with(|data| {
+        let data = data.get_or_init(|| {
+            brdf_lut()
+                .into_iter()
+                .flat_map(|[a, b, sheen]| [a, b, sheen, 1.0])
+                .flat_map(f32::to_le_bytes)
+                .collect()
+        });
+        ctx.texture_sub_image_2d(tex, 0, 0, 0, n, n, &RGBA16F_FROM_F32, data);
+    });
     Ok(tex)
 }
 
@@ -600,8 +611,10 @@ impl PendingEnvironment {
                 }
                 result = job.step(&baker);
                 if let Ok(None) = result {
+                    // Wall clock: a step back (clock change) ends the wait
+                    // instead of stretching it.
                     let last = js_sys::Date::now();
-                    while js_sys::Date::now() - last < STEP_MS {
+                    while (0.0..STEP_MS).contains(&(js_sys::Date::now() - last)) {
                         ctx.next_poll_round().await;
                     }
                 }
@@ -650,11 +663,17 @@ impl PendingEnvironment {
     }
 
     /// Stops the bake (its task frees what it made); a result not yet taken
-    /// is destroyed.
+    /// is destroyed. Dropping does the same.
     pub fn cancel(&self) {
         let old = std::mem::replace(&mut *self.state.borrow_mut(), PendingState::Over);
         if let PendingState::Done(Ok(env)) = old {
             env.destroy(&self.ctx);
         }
+    }
+}
+
+impl Drop for PendingEnvironment {
+    fn drop(&mut self) {
+        self.cancel();
     }
 }

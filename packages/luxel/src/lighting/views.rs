@@ -93,6 +93,10 @@ pub(crate) fn point_views(
         return None;
     }
     if light.range > 0.0 {
+        // Every caster beyond the range: nothing to shadow.
+        if eye.clamp(min, max).distance(eye) >= light.range {
+            return None;
+        }
         far = far.min(light.range);
     }
     far *= 1.01;
@@ -147,7 +151,8 @@ pub(crate) struct CascadeViews {
 
 /// `light`'s shadow camera (its world matrix `world`), fitted around the
 /// casters' world box `bounds`, for a `size`² map. None when nothing can
-/// be in its shadow (no casters in front of a spot, a point light).
+/// be in its shadow (no casters in front of a spot or within its range);
+/// a point light: `point_views`.
 pub(crate) fn shadow_view(
     light: &Light,
     world: &Mat4,
@@ -199,6 +204,9 @@ pub(crate) fn shadow_view(
             far *= 1.01;
             let nearest = depths.iter().copied().fold(f32::INFINITY, f32::min);
             let near = (nearest * 0.99).max(far * 1e-3);
+            if near >= far {
+                return None; // every caster beyond the light's range
+            }
             let fov = (2.0 * outer_cone + 0.02).min(std::f32::consts::PI - 0.05);
             let proj = if reverse_z {
                 Mat4::perspective_rh(fov, 1.0, far, near)
@@ -649,6 +657,23 @@ mod tests {
     // Every direction from a point light lands on the face its largest
     // axis picks (as the shader does), inside the face's quarter with the
     // filter's two texels to spare — no seams between faces.
+    #[test]
+    fn casters_beyond_the_range_get_no_map() {
+        // The light at the origin, the casters 10..12 away; range 5.
+        let bounds = (Vec3::new(-1.0, -1.0, -12.0), Vec3::new(1.0, 1.0, -10.0));
+        let at_origin = Mat4::IDENTITY; // a spot looks down −z
+        let s = LightShadow::default();
+        let point = Light::point(Vec3::ONE, 1.0, 5.0);
+        assert!(point_views(&point, &at_origin, bounds, 256, false, s).is_none());
+        let spot = Light::spot(Vec3::ONE, 1.0, 5.0, 0.3, 0.5);
+        assert!(shadow_view(&spot, &at_origin, bounds, 256, false, s).is_none());
+        // In range: maps.
+        let point = Light::point(Vec3::ONE, 1.0, 11.0);
+        assert!(point_views(&point, &at_origin, bounds, 256, false, s).is_some());
+        let spot = Light::spot(Vec3::ONE, 1.0, 11.0, 0.3, 0.5);
+        assert!(shadow_view(&spot, &at_origin, bounds, 256, false, s).is_some());
+    }
+
     #[test]
     fn point_faces_cover_every_direction_with_room_to_filter() {
         let light = Light::point(Vec3::ONE, 1.0, 0.0);

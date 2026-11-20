@@ -194,8 +194,8 @@ impl PbrKey {
     }
 
     /// This variant with the least important maps dropped until its samplers
-    /// fit the device (`MAX_TEXTURE_IMAGE_UNITS`, the frame's own four
-    /// included): a material using every extension map would otherwise fail
+    /// fit the device (`MAX_TEXTURE_IMAGE_UNITS`, the frame's own
+    /// `FRAME_SAMPLERS` included): a material using every extension map would otherwise fail
     /// to link on 16-unit devices. Reported once.
     pub fn fit_texture_units(self) -> Self {
         let units = luxel_gl::limits::max_texture_image_units();
@@ -239,15 +239,16 @@ impl PbrKey {
         self.0
     }
 
-    /// What a shadow map needs of this variant: the geometry and its
-    /// deformers, and for alpha-masked materials what makes the alpha (the
-    /// base color map, vertex colors, texture transforms).
+    /// What a shadow map needs of this variant: the deformers, and for
+    /// alpha-masked materials what makes the alpha (the UVs, the base color
+    /// map, vertex colors, texture transforms). Normals never: the depth
+    /// pass doesn't shade.
     pub fn shadow_key(self) -> Self {
         let k = self.0;
-        let mut keep =
-            ATTR_NORMAL as u64 | ATTR_UV0 as u64 | ATTR_UV1 as u64 | SKIN | SKIN8 | MORPH;
+        let mut keep = SKIN | SKIN8 | MORPH;
         if (k >> ALPHA_SHIFT) & 3 == AlphaMode::Mask as u64 {
             keep |= 3 << ALPHA_SHIFT | ATTR_COLOR as u64 | TEXTURE_TRANSFORM;
+            keep |= ATTR_UV0 as u64 | ATTR_UV1 as u64;
             keep |= 1 << MAP_SHIFT | 1 << UV1_SHIFT; // the base color map (slot 0)
         }
         Self(k & keep)
@@ -442,5 +443,24 @@ mod tests {
         assert_ne!(maps(fit) & 1, 0, "base color stays");
         // Within the limit nothing changes.
         assert_eq!(all.within_texture_units(32), (all, vec![]));
+    }
+
+    #[test]
+    fn opaque_shadow_variants_share_one_program() {
+        let alpha = |m: AlphaMode| (m as u64) << ALPHA_SHIFT;
+        let plain = PbrKey::from_bits(alpha(AlphaMode::Opaque));
+        let shaded = PbrKey::from_bits(
+            alpha(AlphaMode::Opaque) | ATTR_NORMAL as u64 | ATTR_UV0 as u64 | ATTR_UV1 as u64,
+        );
+        assert_eq!(plain.shadow_key(), shaded.shadow_key());
+        // Skinning stays; a masked material keeps its UVs (its alpha).
+        let skinned = PbrKey::from_bits(alpha(AlphaMode::Opaque) | SKIN | ATTR_NORMAL as u64);
+        assert_eq!(skinned.shadow_key().0, SKIN);
+        let masked =
+            PbrKey::from_bits(alpha(AlphaMode::Mask) | ATTR_NORMAL as u64 | ATTR_UV0 as u64);
+        assert_eq!(
+            masked.shadow_key().0,
+            alpha(AlphaMode::Mask) | ATTR_UV0 as u64
+        );
     }
 }

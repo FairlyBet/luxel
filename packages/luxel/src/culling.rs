@@ -27,7 +27,8 @@ impl Bounds {
     /// transformed box (conservative under rotation).
     pub fn transformed(&self, m: &Mat4) -> (Vec3, Vec3) {
         let center = (self.min + self.max) * 0.5;
-        let half = (self.max - self.min) * 0.5;
+        // A min/max given the wrong way round is the same box.
+        let half = ((self.max - self.min) * 0.5).abs();
         let c = m.transform_point3(center);
         let h = m.x_axis.xyz().abs() * half.x
             + m.y_axis.xyz().abs() * half.y
@@ -70,10 +71,50 @@ impl Frustum {
 
     /// Whether a box (world center and half-size) is at least partly inside.
     /// Conservative: a box near a corner can pass while outside.
+    /// A box with an infinite or NaN side is never culled.
     pub fn intersects(&self, center: Vec3, half: Vec3) -> bool {
+        if !(center.is_finite() && half.is_finite()) {
+            return true;
+        }
         self.planes.iter().all(|p| {
             let n = p.xyz();
             n.dot(center) + p.w >= -n.abs().dot(half)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frustum() -> Frustum {
+        let proj = Mat4::perspective_rh_gl(1.0, 1.0, 0.1, 100.0);
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        Frustum::from_view_proj(&(proj * view))
+    }
+
+    #[test]
+    fn inverted_bounds_are_the_same_box() {
+        let b = Bounds::new(Vec3::splat(1.0), Vec3::splat(-1.0));
+        let (c, h) = b.transformed(&Mat4::IDENTITY);
+        assert_eq!(h, Vec3::ONE);
+        assert!(frustum().intersects(c, h));
+    }
+
+    #[test]
+    fn infinite_bounds_are_never_culled() {
+        let b = Bounds::new(Vec3::splat(f32::NEG_INFINITY), Vec3::splat(f32::INFINITY));
+        let (c, h) = b.transformed(&Mat4::IDENTITY);
+        assert!(frustum().intersects(c, h));
+        let huge = Bounds::new(Vec3::splat(-f32::MAX), Vec3::splat(f32::MAX));
+        let (c, h) = huge.transformed(&Mat4::from_scale(Vec3::splat(10.0)));
+        assert!(frustum().intersects(c, h));
+    }
+
+    #[test]
+    fn a_box_behind_the_camera_is_culled() {
+        let b = Bounds::new(Vec3::new(-1.0, -1.0, 9.0), Vec3::new(1.0, 1.0, 11.0));
+        let (c, h) = b.transformed(&Mat4::IDENTITY);
+        assert!(!frustum().intersects(c, h));
     }
 }

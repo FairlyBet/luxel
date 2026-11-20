@@ -459,8 +459,14 @@ impl HdrOutput {
         if on == self.auto.is_some() {
             return Ok(());
         }
+        // An output of a lost context frees only its CPU side and makes
+        // nothing (it is made again, with the setting, after a restore).
+        let stale = self.is_lost(ctx);
         if let Some(a) = self.auto.take() {
-            a.destroy(ctx, false);
+            a.destroy(ctx, stale);
+            return Ok(());
+        }
+        if stale || ctx.is_lost() {
             return Ok(());
         }
         let vert = crate::fullscreen::vertex("#version 300 es\n");
@@ -511,11 +517,18 @@ impl HdrOutput {
         if on == self.fxaa.is_some() {
             return Ok(());
         }
+        // As for auto exposure: a lost output frees only the CPU side.
+        let stale = self.is_lost(ctx);
         if let Some(mut f) = self.fxaa.take() {
-            f.free_target(ctx);
             ctx.destroy_param_group(f.group);
             ctx.destroy_param_layout(f.layout);
-            ctx.destroy_program(f.program);
+            if !stale {
+                f.free_target(ctx);
+                ctx.destroy_program(f.program);
+            }
+            return Ok(());
+        }
+        if stale || ctx.is_lost() {
             return Ok(());
         }
         let prefix = "#version 300 es\n";

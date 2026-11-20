@@ -56,6 +56,14 @@ pub struct GroundShadow {
     pub size: u32,
 }
 
+impl GroundShadow {
+    /// The darkness texture's side for a `size` asked: a power of two in
+    /// 64..=2048.
+    pub fn texture_side(size: u32) -> u32 {
+        size.clamp(64, 2048).next_power_of_two()
+    }
+}
+
 impl Default for GroundShadow {
     fn default() -> Self {
         Self {
@@ -258,7 +266,7 @@ impl Ground {
         let Some((v, _)) = view else {
             return;
         };
-        let size = self.settings.size.clamp(64, 2048).next_power_of_two();
+        let size = GroundShadow::texture_side(self.settings.size);
         if size != self.size || self.depth.is_null() {
             if let Err(e) = self.allocate(ctx, size) {
                 luxel_gl::console::error_once(&format!("[luxel] ground shadow: {e}"));
@@ -279,8 +287,17 @@ impl Ground {
         self.pass.set_clear(&ClearMask::depth());
     }
 
-    pub fn plane_program(&self) -> ProgramId {
-        self.plane_program
+    /// Its programs: the plane's, the darkness and the blur.
+    pub fn programs(&self) -> [ProgramId; 3] {
+        [self.plane_program, self.darkness, self.blur]
+    }
+
+    /// Frees its textures (made again by the next `prepare` with a view).
+    pub fn release(&mut self, ctx: &Context) {
+        if !self.depth.is_null() {
+            self.free_textures(ctx);
+            self.drawn = None;
+        }
     }
 
     /// Whether the maps are drawn again this frame.

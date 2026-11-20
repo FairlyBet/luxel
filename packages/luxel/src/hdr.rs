@@ -57,7 +57,9 @@ pub fn decode_hdr_rgbe(bytes: &[u8]) -> Result<RgbeImage, String> {
             .map(|n| start + n)
             .ok_or("HDR: header ended early")?;
         pos = end + 1;
-        Ok(&bytes[start..end])
+        // CRLF files: the \r is not part of the line.
+        let line = &bytes[start..end];
+        Ok(line.strip_suffix(b"\r").unwrap_or(line))
     };
     let magic = line()?;
     if !magic.starts_with(b"#?RADIANCE") && !magic.starts_with(b"#?RGBE") {
@@ -92,6 +94,12 @@ pub fn decode_hdr_rgbe(bytes: &[u8]) -> Result<RgbeImage, String> {
 
     let data = &bytes[pos..];
     let (w, h) = (width as usize, height as usize);
+    // Every scanline takes some bytes (a pixel and a run, or an RLE header):
+    // a file cut short fails before the image's memory is taken.
+    let least_row = if w == 1 { 4 } else { 8 };
+    if data.len() < h * least_row {
+        return Err("HDR: pixel data ended early".into());
+    }
     // A header can claim more than memory holds: an error, not an abort.
     let mut rgbe = Vec::new();
     rgbe.try_reserve_exact(w * h * 4)
@@ -190,10 +198,22 @@ fn read_scanline(data: &[u8], mut at: usize, out: &mut [u8], w: usize) -> Result
 
 /// Encodes linear RGB as a flat (uncompressed) Radiance file — for tests and
 /// tools.
+///
+/// # Panics
+/// When `rgb` is not `width * height * 3` values long.
 pub fn encode_hdr(width: u32, height: u32, rgb: &[f32]) -> Vec<u8> {
+    assert_eq!(
+        rgb.len(),
+        width as usize * height as usize * 3,
+        "encode_hdr: rgb is not width * height * 3 values"
+    );
+    // The largest value RGBE holds; above it (and +Inf) saturates, NaN and
+    // negatives are black.
+    const MAX: f32 = 255.0 / 256.0 * 1.701_411_8e38;
     let mut out =
         format!("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {height} +X {width}\n").into_bytes();
     for p in rgb.as_chunks::<3>().0 {
+        let p = p.map(|v| if v > 0.0 { v.min(MAX) } else { 0.0 });
         let m = p[0].max(p[1]).max(p[2]);
         if m < 1e-32 {
             out.extend([0, 0, 0, 0]);
@@ -282,6 +302,63 @@ mod halve_tests {
         );
         let one = halve_rgbe(&halve_rgbe(&half));
         assert_eq!((one.width, one.height), (1, 1));
+    }
+
+    #[test]
+    fn crlf_headers_parse() {
+        let unix = encode_hdr(2, 1, &[1.0, 0.5, 0.25, 2.0, 2.0, 2.0]);
+        let text_end = unix.windows(2).position(|w| w == b"\n\n").unwrap() + 2;
+        let size_end = text_end + unix[text_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+        let mut crlf = Vec::new();
+        for &b in &unix[..size_end] {
+            if b == b'\n' {
+                crlf.push(b'\r');
+            }
+            crlf.push(b);
+        }
+        crlf.extend(&unix[size_end..]);
+        let img = decode_hdr_rgbe(&crlf).unwrap();
+        assert_eq!(img.rgbe, decode_hdr_rgbe(&unix).unwrap().rgbe);
+    }
+
+    #[test]
+    fn truncated_pixels_fail_before_allocating() {
+        let header = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 16384 +X 16384\n";
+        let err = decode_hdr_rgbe(header).err().unwrap();
+        assert!(err.contains("ended early"), "{err}");
+    }
+
+    #[test]
+    fn encoding_saturates_infinity_and_blacks_nan() {
+        let file = encode_hdr(
+            3,
+            1,
+            &[
+                f32::INFINITY,
+                1.0,
+                0.0,
+                f32::NAN,
+                -1.0,
+                0.0,
+                f32::MAX,
+                0.0,
+                0.0,
+            ],
+        );
+        let back = decode_hdr(&file).unwrap();
+        assert!(
+            back.rgb[0] > 1e38 && back.rgb[0].is_finite(),
+            "{:?}",
+            back.rgb
+        );
+        assert_eq!(&back.rgb[3..6], &[0.0, 0.0, 0.0]);
+        assert!(back.rgb[6] > 1e38, "{:?}", back.rgb);
+    }
+
+    #[test]
+    #[should_panic(expected = "width * height * 3")]
+    fn encoding_checks_the_length() {
+        encode_hdr(2, 2, &[0.0; 3]);
     }
 
     // A flat Radiance file of an RGBE image.

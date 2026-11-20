@@ -48,39 +48,46 @@ pub(crate) fn cull(
     let bounds = world.storage::<Bounds>();
     let reloading = world.storage::<Reloading>().filter(|r| !r.is_empty());
     let any_hidden = crate::render::any_hidden(world);
+    // The checks that don't depend on the view, once per caster (and a
+    // waiting caster counted once): what passes, with its world box.
+    let mut ready = Vec::new();
+    for (e, caster) in casters.iter() {
+        let Some(mesh) = meshes.get(e) else {
+            continue;
+        };
+        if mesh.transparent || caster.program.is_null() || (any_hidden && hidden(world, e)) {
+            continue;
+        }
+        // A reloading mesh is out of the maps until it lands (its reload
+        // changes the content version, which redraws them).
+        if reloading.is_some_and(|r| r.contains(e)) {
+            continue;
+        }
+        if ctx.program_link_pending(caster.program) {
+            waiting += 1;
+            continue;
+        }
+        let Some(row) = worlds.row(e) else {
+            continue;
+        };
+        let world_box = bounds
+            .and_then(|b| b.get(e))
+            .map(|b| b.transformed(&worlds.data()[row as usize].0));
+        ready.push((e, caster.program, *mesh, row, world_box));
+    }
+    // Grouped by view, as the map passes take them.
     let reverse = ctx.reverse_z();
     for (i, view) in views.iter().enumerate() {
         let frustum = Frustum::from_view_proj_depth(&view.view_proj, reverse);
-        for (e, caster) in casters.iter() {
-            let Some(mesh) = meshes.get(e) else {
+        for &(entity, program, mesh, row, world_box) in &ready {
+            if world_box.is_some_and(|(c, h)| !frustum.intersects(c, h)) {
                 continue;
-            };
-            if mesh.transparent || caster.program.is_null() || (any_hidden && hidden(world, e)) {
-                continue;
-            }
-            // A reloading mesh is out of the maps until it lands (its
-            // reload changes the content version, which redraws them).
-            if reloading.is_some_and(|r| r.contains(e)) {
-                continue;
-            }
-            if ctx.program_link_pending(caster.program) {
-                waiting += 1;
-                continue;
-            }
-            let Some(row) = worlds.row(e) else {
-                continue;
-            };
-            if let Some(b) = bounds.and_then(|b| b.get(e)) {
-                let (c, h) = b.transformed(&worlds.data()[row as usize].0);
-                if !frustum.intersects(c, h) {
-                    continue;
-                }
             }
             out.push(CasterDraw {
                 view: i,
-                entity: e,
-                program: caster.program,
-                mesh: *mesh,
+                entity,
+                program,
+                mesh,
                 row,
             });
         }

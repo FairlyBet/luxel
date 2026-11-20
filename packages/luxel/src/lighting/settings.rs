@@ -3,7 +3,8 @@
 
 use luxel_gl::ids::ProgramId;
 
-/// Makes the light on the entity (directional or spot) cast shadows.
+/// Makes the light on the entity (directional, spot or point — a point
+/// light's six faces take six of the `MAX_SHADOW_VIEWS`) cast shadows.
 /// Biases as Filament's `ShadowOptions` (their defaults): the casters'
 /// depth pushed back by `slope_bias` × its slope + `constant_bias` depth
 /// units (polygon offset), the receiver moved along its normal by

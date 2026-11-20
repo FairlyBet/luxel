@@ -164,6 +164,9 @@ impl MotionVectors {
         if mesh.command.instance_count != 1 {
             return; // draws its own instances: their motion is unknown
         }
+        if !opaque {
+            return; // not in the motion pass: no state to keep
+        }
         let mut now = State {
             model: *m,
             ..State::default()
@@ -194,9 +197,6 @@ impl MotionVectors {
             let weights = node.and_then(|n| world.get::<MorphWeights>(n));
             now.weights.extend(weights.map_or(&[][..], |w| &w.0[..]));
             now.weights.resize(morph.targets as usize, 0.0);
-        }
-        if !opaque {
-            return;
         }
         if let Some(prev) = self.prev.get(&e)
             && *prev != now

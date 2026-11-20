@@ -235,8 +235,11 @@ impl LightingSystem {
     /// The ground shadow on (with these settings) or off.
     pub fn set_ground_shadow(&mut self, settings: Option<GroundShadow>) {
         self.ground_on = settings.is_some();
-        if let Some(s) = settings
-            && s != self.ground.settings
+        // The size the texture gets, so the getter reports it.
+        if let Some(s) = settings.map(|mut s| {
+            s.size = GroundShadow::texture_side(s.size);
+            s
+        }) && s != self.ground.settings
         {
             self.ground.settings = s;
             self.ground.invalidate();
@@ -254,9 +257,9 @@ impl LightingSystem {
         self.waiting
     }
 
-    /// Its own programs (the ground shadow's plane).
+    /// Its own programs (the ground shadow's).
     pub fn programs(&self) -> Vec<luxel_gl::ids::ProgramId> {
-        vec![self.ground.plane_program()]
+        self.ground.programs().to_vec()
     }
 
     /// The ground shadow's plane to draw this frame, if any.
@@ -303,8 +306,9 @@ impl LightingSystem {
 
     /// A new frame seen by `camera` (its projection and world matrix; the
     /// cascades follow it): which lights cast shadows and from where (the
-    /// directional / spot lights with a `LightShadow`, while
-    /// `MAX_SHADOW_LAYERS` last), the lights block, and the casters each
+    /// directional, spot and point lights with a `LightShadow`, while
+    /// the layers and `MAX_SHADOW_VIEWS` last — a point light takes six
+    /// views), the lights block, and the casters each
     /// map draws (`push_casters`).
     pub fn prepare(
         &mut self,
@@ -377,6 +381,8 @@ impl LightingSystem {
             let s = self.ground.settings;
             ground_bounds(world).and_then(|b| ground_view(b, s.reach, s.size, ctx.reverse_z()))
         } else {
+            // Off: its textures go (made again when it comes back on).
+            self.ground.release(ctx);
             None
         };
         let Some((v, plane)) = view else {
@@ -454,6 +460,14 @@ impl LightingSystem {
         if self.ground.is_dirty() {
             ctx.param_set_texture_by_name(self.ground.group(), name, texture);
         }
+    }
+
+    /// Draws no map this frame (the frame was skipped): last frame's
+    /// passes don't run again.
+    pub fn skip_frame(&mut self) {
+        self.maps.hold();
+        self.ground.hold();
+        self.draws.clear();
     }
 
     /// Renders this frame's shadow maps (before the passes that shade with

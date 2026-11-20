@@ -76,7 +76,8 @@ export interface GroundShadowOptions {
   /** How far above the ground a caster still darkens it, in world units;
    *  default 0: half the casters' height. */
   reach?: number;
-  /** The darkness texture's side in texels; default 512. */
+  /** The darkness texture's side in texels: rounded up to a power of two
+   *  in 64..2048 (what `groundShadow()` reports); default 512. */
   size?: number;
 }
 

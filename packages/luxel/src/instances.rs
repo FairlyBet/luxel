@@ -102,7 +102,13 @@ impl Batches {
 
     pub fn clear(&mut self) {
         self.used = 0;
-        self.index.clear();
+        // Keys used last frame keep their Vec (most come back); the others
+        // go.
+        self.index.retain(|_, slots| {
+            let used = !slots.is_empty();
+            slots.clear();
+            used
+        });
     }
 }
 
@@ -196,9 +202,19 @@ impl Instances {
         field: ParamField,
     ) -> Result<(), Error> {
         let texels = (self.data.len() / 4) as i32;
-        let rows = ((texels + WIDTH - 1) / WIDTH).max(1);
+        let max_rows = luxel_gl::limits::max_texture_size().max(1) as i32;
+        let mut rows = ((texels + WIDTH - 1) / WIDTH).max(1);
+        if rows > max_rows {
+            // More than the GPU holds: what doesn't fit reads as zeros.
+            luxel_gl::console::error_once(&format!(
+                "[luxel] instances: {texels} texels of instance data, more than \
+                 the {max_rows}-row texture the GPU allows; the rest are dropped"
+            ));
+            rows = max_rows;
+            self.data.truncate((max_rows * WIDTH * 4) as usize);
+        }
         if rows > self.rows {
-            let rows = (rows as u32).next_power_of_two() as i32;
+            let rows = (rows as u32).next_power_of_two().min(max_rows as u32) as i32;
             let texture = Self::make_texture(ctx, rows)?;
             ctx.destroy_texture(std::mem::replace(&mut self.texture, texture));
             ctx.param_set_texture(group, field, texture);
