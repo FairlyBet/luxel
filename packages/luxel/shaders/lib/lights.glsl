@@ -48,8 +48,10 @@ layout(std140) uniform Lighting {
                         // w last mip of the specular cube
     vec4 u_output;      // x 1: scene_output shows (exposure, tone map, sRGB),
                         //   0: it leaves linear radiance (HDR target);
-                        // y tone mapper (tone_map modes), z 1 with a
-                        // scene copy for transmission, w its last mip
+                        // y tone mapper (tone_map modes), z 0 without a
+                        // scene copy for transmission, else 1 + its least
+                        // mip to read (scene_color_available /
+                        // scene_color_at), w its last mip
     vec4 u_shading;     // x specular antialiasing variance, y its threshold,
                         // z depth-peeling mode, w 1 under reverse-Z
     vec4 u_fill_a;      // the background fill (background_fill: w its

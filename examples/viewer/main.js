@@ -270,7 +270,8 @@ let pinch = 0;
 canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  moved = 0;
+  // A second finger makes it a gesture, never a tap.
+  moved = pointers.size === 1 ? 0 : Infinity;
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     pinch = Math.hypot(a.x - b.x, a.y - b.y);
@@ -290,7 +291,7 @@ canvas.addEventListener("pointermove", (e) => {
   } else if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y);
-    if (pinch > 0) zoom(pinch / d);
+    if (pinch > 0 && d > 0) zoom(pinch / d);
     pinch = d;
   }
 });
@@ -312,6 +313,9 @@ function zoom(/** @type {number} */ factor) {
 // --- models --------------------------------------------------------------------
 
 let root = 0;
+// Materials "Give this part its own copy" made for the model shown.
+/** @type {number[]} */
+const clones = [];
 let modelLabel = "";
 let modelUrl = "";
 // The model asked for last (still loading, perhaps): loaded again when the
@@ -359,6 +363,7 @@ async function load(
     }
     const problems = warnings();
     if (root) scene.despawn(root);
+    for (const m of clones.splice(0)) scene.destroyMaterial(m);
     root = scene.addModel(model);
     modelLabel = label;
     modelUrl = typeof source === "string" ? source : source.name;
@@ -454,7 +459,15 @@ $("open-file").addEventListener("click", () => $("file").click());
 // A picture at twice the canvas size, drawn as frames are.
 $("save-image").addEventListener("click", async () => {
   try {
-    const blob = await scene.capture(viewCamera(), { width: canvas.width * 2, height: canvas.height * 2 });
+    // One scale for both sides (capture clamps each to the GPU's limit,
+    // which would change the framing).
+    const gl = /** @type {WebGL2RenderingContext} */ (canvas.getContext("webgl2"));
+    const limit = Math.min(8192, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+    const scale = Math.min(2, limit / canvas.width, limit / canvas.height);
+    const blob = await scene.capture(viewCamera(), {
+      width: Math.floor(canvas.width * scale),
+      height: Math.floor(canvas.height * scale),
+    });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${modelLabel || "view"}.png`;
@@ -688,7 +701,15 @@ async function pickAt(/** @type {PointerEvent} */ e) {
   const rect = canvas.getBoundingClientRect();
   const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   const y = 1 - ((e.clientY - rect.top) / rect.height) * 2;
-  const hit = await scene.pick(viewCamera(), x, y);
+  const shown = root;
+  let hit;
+  try {
+    hit = await scene.pick(viewCamera(), x, y);
+  } catch {
+    return; // lost context: nothing to pick until it's back
+  }
+  // Another model since (the answer comes a frame or so later).
+  if (root !== shown) return;
   if (!hit) return inspect(0, "");
   inspect(hit.entity, scene.name(scene.parent(hit.entity)) ?? `entity ${hit.entity}`);
 }
@@ -713,6 +734,7 @@ function inspect(/** @type {number} */ part, /** @type {string} */ partName) {
   own.textContent = "Give this part its own copy";
   own.onclick = () => {
     const copy = scene.cloneMaterial(material);
+    clones.push(copy); // freed with the model
     scene.setMaterial(part, copy);
     inspect(part, partName);
   };

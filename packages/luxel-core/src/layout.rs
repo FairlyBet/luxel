@@ -148,6 +148,24 @@ enum FieldKind {
     StructArray(Vec<FieldDef>, u32),
 }
 
+fn name_problem(fields: &[FieldDef]) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    for f in fields {
+        if f.name.is_empty() || f.name.contains(['.', '[', ']']) {
+            return Some(format!("field name \"{}\" is empty or has . [ ]", f.name));
+        }
+        if !seen.insert(f.name.as_str()) {
+            return Some(format!("field name \"{}\" is used twice", f.name));
+        }
+        if let FieldKind::Struct(members) | FieldKind::StructArray(members, _) = &f.kind
+            && let Some(p) = name_problem(members)
+        {
+            return Some(format!("in \"{}\": {p}", f.name));
+        }
+    }
+    None
+}
+
 fn count_elements(fields: &[FieldDef]) -> u64 {
     fields.iter().fold(0u64, |n, f| {
         n.saturating_add(match &f.kind {
@@ -228,6 +246,13 @@ impl LayoutBuilder {
     /// field per element.
     pub fn element_count(&self) -> u64 {
         count_elements(&self.fields)
+    }
+
+    /// The first field name `build` couldn't make addressable: empty, with
+    /// `.`, `[` or `]` (path syntax), or used twice at one level (only one
+    /// of the two would resolve). None when every name is fine.
+    pub fn name_problem(&self) -> Option<String> {
+        name_problem(&self.fields)
     }
 
     pub fn build(&self, rule: LayoutRule) -> Layout {
@@ -479,6 +504,23 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn names_that_cant_be_addressed_are_reported() {
+        let ok = LayoutBuilder::new()
+            .field("a", FieldType::F32)
+            .field("b", FieldType::F32);
+        assert_eq!(ok.name_problem(), None);
+        let twice = LayoutBuilder::new()
+            .field("a", FieldType::F32)
+            .field("a", FieldType::Vec4);
+        assert!(twice.name_problem().unwrap().contains("twice"));
+        let dotted = LayoutBuilder::new().field("a.b", FieldType::F32);
+        assert!(dotted.name_problem().is_some());
+        let inner = LayoutBuilder::new().field("", FieldType::F32);
+        let nested = LayoutBuilder::new().struct_array("s", &inner, 2);
+        assert!(nested.name_problem().unwrap().contains("in \"s\""));
+    }
     use FieldType::*;
     use LayoutRule::*;
 

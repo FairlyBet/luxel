@@ -1,7 +1,9 @@
 // What a surface point is made of, gathered by the material shader and
 // handed to a shading model (`surface_gltf.glsl`, `surface_openpbr.glsl`).
 // Parameters are glTF's where glTF has them, plus OpenPBR's own; each model
-// reads them its way. Needs common.glsl, object.glsl, environment.glsl.
+// reads them its way. Needs common.glsl, object.glsl, environment.glsl, and
+// a `vec3 v_model_scale` the includer declares (`in`, the model matrix's
+// scale per axis, which its vertex stage writes) for the volume helpers.
 //
 // Transmission helpers ported from the Khronos glTF-Sample-Renderer
 // (Apache-2.0), source/Renderer/shaders/punctual.glsl and functions.glsl.

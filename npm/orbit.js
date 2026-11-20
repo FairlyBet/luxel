@@ -106,10 +106,16 @@ export class OrbitControls {
   dispose() {
     for (const [type, f, o] of this._listeners) this.element.removeEventListener(type, f, o);
     this._listeners = [];
+    // The element's own touch-action back.
+    if (this._touchAction !== undefined) {
+      this.element.style.touchAction = this._touchAction;
+      this._touchAction = undefined;
+    }
   }
 
   _listen() {
     const el = this.element;
+    this._touchAction = el.style.touchAction;
     el.style.touchAction = "none";
     const ndc = (e) => {
       const r = el.getBoundingClientRect();
@@ -153,9 +159,13 @@ export class OrbitControls {
     };
     const up = (e) => {
       const single = this._pointers.size === 1;
+      const p = this._pointers.get(e.pointerId);
       this._pointers.delete(e.pointerId);
       if (this._pointers.size < 2) this._pinch = 0;
-      if (single && e.type === "pointerup" && this._moved < 0.01 && this.onTap) this.onTap(...ndc(e));
+      // A tap: one pointer, still, the primary button (not a pan's).
+      const tap =
+        single && p && !p.pan && e.button === 0 && e.type === "pointerup" && this._moved < 0.01;
+      if (tap && this.onTap) this.onTap(...ndc(e));
     };
     const wheel = (e) => {
       e.preventDefault();

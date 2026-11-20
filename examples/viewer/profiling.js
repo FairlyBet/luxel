@@ -32,7 +32,9 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
   Trace.trackName(TRACK_BROWSER, "browser: long animation frames");
   // The browser's view of slow frames (Chrome 123+): where a frame's time
   // went, scripts and rendering included, even outside our code.
-  try {
+  // By what the browser lists: observing an unknown type doesn't throw.
+  const types = PerformanceObserver.supportedEntryTypes ?? [];
+  if (types.includes("long-animation-frame")) {
     new PerformanceObserver((list) => {
       if (!until) return;
       for (const e of /** @type {any[]} */ (list.getEntries())) {
@@ -45,16 +47,13 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
         }
       }
     }).observe({ type: "long-animation-frame", buffered: false });
-  } catch {
-    try {
-      new PerformanceObserver((list) => {
-        if (!until) return;
-        for (const e of list.getEntries()) Trace.complete("long task", e.startTime, e.duration, TRACK_BROWSER);
-      }).observe({ type: "longtask", buffered: false });
-    } catch {
-      // Neither: frame intervals and our own spans only.
-    }
+  } else if (types.includes("longtask")) {
+    new PerformanceObserver((list) => {
+      if (!until) return;
+      for (const e of list.getEntries()) Trace.complete("long task", e.startTime, e.duration, TRACK_BROWSER);
+    }).observe({ type: "longtask", buffered: false });
   }
+  // Neither: frame intervals and our own spans only.
   document.addEventListener("visibilitychange", () => Trace.instant(`page ${document.visibilityState}`));
 
   function gpuName() {
@@ -152,6 +151,19 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
       rows.push([label, ms[ms.length >> 1]]);
       await new Promise((r) => setTimeout(r, 50)); // let the page breathe
     };
+    // A row with a setting changed, put back even when timing fails.
+    const trial = async (
+      /** @type {string} */ label,
+      /** @type {() => void} */ change,
+      /** @type {() => void} */ restore,
+    ) => {
+      change();
+      try {
+        await time(label);
+      } finally {
+        restore();
+      }
+    };
     // Materials with a property on, to turn it off for a row.
     const withProperty = (/** @type {string} */ name) =>
       root
@@ -162,9 +174,15 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     const without = async (/** @type {string} */ label, /** @type {string} */ name) => {
       const on = withProperty(name);
       if (!on.length) return;
-      for (const [m] of on) scene.setMaterialProperty(m, name, 0);
-      await time(label);
-      for (const [m, v] of on) scene.setMaterialProperty(m, name, /** @type {any} */ (v).length === 1 ? /** @type {any} */ (v)[0] : [.../** @type {any} */ (v)]);
+      await trial(
+        label,
+        () => {
+          for (const [m] of on) scene.setMaterialProperty(m, name, 0);
+        },
+        () => {
+          for (const [m, v] of on) scene.setMaterialProperty(m, name, /** @type {any} */ (v).length === 1 ? /** @type {any} */ (v)[0] : [.../** @type {any} */ (v)]);
+        },
+      );
     };
 
     Trace.start();
@@ -182,37 +200,46 @@ export function createProfiling({ wasm, canvas, $, describe, scene, ctx, viewCam
     if (withProperty("transmission_weight").length) {
       for (const s of [0.5, 0.25]) {
         if (s >= trans) continue;
-        scene.setTransmissionResolution(s);
-        await time(`scene copy for glass at ${s}`);
+        await trial(
+          `scene copy for glass at ${s}`,
+          () => scene.setTransmissionResolution(s),
+          () => scene.setTransmissionResolution(trans),
+        );
       }
-      scene.setTransmissionResolution(trans);
     }
     const shading = scene.shadingModel();
-    scene.setShadingModel(shading === "openpbr" ? "gltf" : "openpbr");
-    await time(`${scene.shadingModel()} shading`);
-    scene.setShadingModel(shading);
+    const other = shading === "openpbr" ? "gltf" : "openpbr";
+    await trial(
+      `${other} shading`,
+      () => scene.setShadingModel(other),
+      () => scene.setShadingModel(shading),
+    );
     if (scene.taa()) {
       const samples = scene.samples();
-      scene.setTaa(false);
-      scene.setSamples(0);
-      await time("no TAA, no MSAA");
-      scene.setSamples(samples);
-      scene.setTaa(true);
+      await trial(
+        "no TAA, no MSAA",
+        () => {
+          scene.setTaa(false);
+          scene.setSamples(0);
+        },
+        () => {
+          scene.setSamples(samples);
+          scene.setTaa(true);
+        },
+      );
     }
     // FXAA's own cost: without it if on, else with it.
     if (scene.fxaa()) {
-      scene.setFxaa(false);
-      await time("no FXAA");
-      scene.setFxaa(true);
+      await trial("no FXAA", () => scene.setFxaa(false), () => scene.setFxaa(true));
     } else if (scene.hdr()) {
-      scene.setFxaa(true);
-      await time("+ FXAA");
-      scene.setFxaa(false);
+      await trial("+ FXAA", () => scene.setFxaa(true), () => scene.setFxaa(false));
     }
     if (root && root === getRoot()) {
-      scene.setVisible(root, false);
-      await time("model hidden (background only)");
-      scene.setVisible(root, true);
+      await trial(
+        "model hidden (background only)",
+        () => scene.setVisible(root, false),
+        () => scene.setVisible(root, true),
+      );
     }
     await time("this view again (drift check)");
     await scene.whenReady();

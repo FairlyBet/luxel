@@ -240,7 +240,8 @@ impl<T> Mut<'_, T> {
     }
 
     /// Writes only if the value differs, so an unchanged write doesn't mark
-    /// the component changed.
+    /// the component changed. "Differs" is `PartialEq`: a value holding a
+    /// NaN never equals itself, so it is written (and marked) every time.
     pub fn set_if_neq(&mut self, value: T)
     where
         T: PartialEq,
@@ -266,7 +267,8 @@ impl<T> DerefMut for Mut<'_, T> {
     }
 }
 
-// Type-erased view the world uses for despawn and tracker clearing.
+// Type-erased view the world uses for despawn, trimming old removals and
+// change queries.
 pub(crate) trait AnyStorage: 'static {
     fn remove_entity(&mut self, e: Entity, tick: Tick);
     fn trim_removed(&mut self, through: Tick);

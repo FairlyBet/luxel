@@ -116,7 +116,12 @@ void main() {
     mat3 normal_matrix = mat3(model);
 #else
     mat4 model = u_model; // read once
+#ifdef u_normal_matrix
+    // Instanced (a macro reading the instance again): from the matrix read.
+    mat3 normal_matrix = transpose(inverse(mat3(model)));
+#else
     mat3 normal_matrix = u_normal_matrix;
+#endif
 #endif
     vec4 world = model * vec4(position, 1.0);
     v_world = world.xyz;

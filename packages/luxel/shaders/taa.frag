@@ -103,11 +103,6 @@ vec3 sample_history(vec2 uv) {
     return tonemap(finite(textureLod(u_history, uv, 0.0).rgb));
 }
 
-vec3 sample_current(ivec2 p) {
-    ivec2 size = textureSize(u_current, 0);
-    return rgb_to_ycocg(tonemap(finite(texelFetch(u_current, clamp(p, ivec2(0), size - 1), 0).rgb)));
-}
-
 float depth_at(vec2 uv) {
     return textureLod(u_depth, uv, 0.0).r;
 }

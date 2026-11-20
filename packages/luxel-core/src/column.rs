@@ -98,7 +98,7 @@ impl<T: ColumnScalar> Column<T> {
 
     /// Number of elements.
     pub fn len(&self) -> u32 {
-        self.data.len() as u32 / self.stride
+        (self.data.len() / self.stride as usize) as u32
     }
 
     pub fn is_empty(&self) -> bool {
@@ -109,7 +109,9 @@ impl<T: ColumnScalar> Column<T> {
     pub fn resize(&mut self, len: u32) {
         let old_len = self.len();
         let old_ptr = self.data.as_ptr();
-        self.data.resize((len * self.stride) as usize, T::default());
+        // In usize: a u32 product past 4 GiB would wrap to a small size.
+        self.data
+            .resize(len as usize * self.stride as usize, T::default());
         self.dirty.resize(len);
         if len > old_len {
             self.dirty.mark(old_len..len);
@@ -123,21 +125,22 @@ impl<T: ColumnScalar> Column<T> {
     /// that size later doesn't move the data (and stale JS views).
     pub fn reserve(&mut self, additional: u32) {
         let old_ptr = self.data.as_ptr();
-        self.data.reserve((additional * self.stride) as usize);
+        self.data
+            .reserve(additional as usize * self.stride as usize);
         if self.data.as_ptr() != old_ptr {
             self.layout_version = self.layout_version.wrapping_add(1);
         }
     }
 
     pub fn get(&self, index: u32) -> &[T] {
-        let s = (index * self.stride) as usize;
+        let s = index as usize * self.stride as usize;
         &self.data[s..s + self.stride as usize]
     }
 
     /// Mutable access to one element; marks it dirty.
     pub fn get_mut(&mut self, index: u32) -> &mut [T] {
         self.dirty.mark(index..index + 1);
-        let s = (index * self.stride) as usize;
+        let s = index as usize * self.stride as usize;
         &mut self.data[s..s + self.stride as usize]
     }
 

@@ -39,8 +39,7 @@ in vec2 v_ndc;
 uniform highp sampler2D u_depth;
 uniform mat4 u_proj;
 uniform mat4 u_inv_proj;
-// x radius, y thickness (view-space units), z distance exponent, w distance
-// falloff.
+// x radius, y thickness (view-space units); z, w unused.
 uniform vec4 u_gtao;
 // x the result's power, y 1 under reverse-Z, z frame index (noise), w 1
 // with ambient occlusion.
@@ -201,7 +200,7 @@ void main() {
         vec2 low_h = vec2(dot(view_dir, to_normal), dot(view_dir, -to_normal));
         vec2 cos_h = low_h;
         for (int j = 0; j < STEPS; ++j) {
-            vec3 offset = dir.xyz * radius * dir.w * pow(float(j + 1) / float(STEPS), u_gtao.z);
+            vec3 offset = dir.xyz * radius * dir.w * (float(j + 1) / float(STEPS));
             vec3 s = scene_uv_and_depth(view_pos + offset);
             vec3 delta = view_position(s.xy, s.z) - view_pos;
             if (abs(delta.z) < thickness) {

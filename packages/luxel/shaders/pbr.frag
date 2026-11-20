@@ -259,15 +259,23 @@ struct ShadingFrame {
 ShadingFrame shading_frame() {
     ShadingFrame f;
 #ifdef HAS_NORMAL
-    f.ng = normalize(v_normal);
-    if (!gl_FrontFacing) f.ng = -f.ng;
+    // A zero normal (degenerate data) would make NaN pixels: the face's
+    // normal then.
+    vec3 n0 = dot(v_normal, v_normal) > 1e-12
+        ? normalize(v_normal)
+        : normalize(cross(dFdx(v_world), dFdy(v_world))) * (gl_FrontFacing ? 1.0 : -1.0);
+    f.ng = gl_FrontFacing ? n0 : -n0;
 #else
     // Faces the eye whichever way the triangle winds.
     f.ng = normalize(cross(dFdx(v_world), dFdy(v_world)));
 #endif
 #if defined(HAS_NORMAL) && defined(HAS_TANGENT)
-    f.t = normalize(v_tangent.xyz);
-    f.b = cross(normalize(v_normal), f.t) * v_tangent.w;
+    // A zero tangent: any perpendicular (the normal map then turns
+    // arbitrarily, but stays finite).
+    f.t = dot(v_tangent.xyz, v_tangent.xyz) > 1e-12
+        ? normalize(v_tangent.xyz)
+        : normalize(cross(abs(n0.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), n0));
+    f.b = cross(n0, f.t) * v_tangent.w;
     if (!gl_FrontFacing) { f.t = -f.t; f.b = -f.b; }
 #elif defined(HAS_NORMAL_MAP) || defined(HAS_UV0)
 #ifdef HAS_NORMAL_MAP

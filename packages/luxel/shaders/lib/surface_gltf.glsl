@@ -130,8 +130,11 @@ vec3 shade_gltf(Surface s) {
         float VdotH = clamp(dot(v, h), 0.0, 1.0);
         vec3 dielectric_fresnel = F_Schlick(f0_dielectric * specular_weight, f90_dielectric, VdotH);
         vec3 metal_fresnel = F_Schlick(base, vec3(1.0), VdotH);
-        vec3 intensity = light.color.rgb * light.color.w * light_attenuation(light, to_light)
-            * light_shadow_rgb(i, light, s.position, shadow_ng);
+        vec3 intensity = light.color.rgb * light.color.w * light_attenuation(light, to_light);
+        // Out of its reach or cone: no shadow lookups for nothing.
+        if (any(greaterThan(intensity, vec3(0.0)))) {
+            intensity *= light_shadow_rgb(i, light, s.position, shadow_ng);
+        }
 
         vec3 l_diffuse = intensity * NdotL * base * INV_PI;
 #ifdef HAS_DIFFUSE_TRANSMISSION

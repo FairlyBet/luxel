@@ -299,7 +299,10 @@ vec3 shade_openpbr(Surface s) {
 #else
         vec3 shadow_ng = s.ng;
 #endif
-        radiance *= light_shadow_rgb(i, light, s.position, shadow_ng);
+        // Out of its reach or cone: no shadow lookups for nothing.
+        if (any(greaterThan(radiance, vec3(0.0)))) {
+            radiance *= light_shadow_rgb(i, light, s.position, shadow_ng);
+        }
         vec3 h = normalize(l + v);
         float NdotL = dot(n, l);
         float VdotH = clamp(dot(v, h), 0.0, 1.0);

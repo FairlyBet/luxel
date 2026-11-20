@@ -418,8 +418,13 @@ export function brandHandles(dts) {
         `export type ${b} = number & { readonly __brand: "${b}" };`,
     )
     .join("\n");
-  // After the leading comments.
-  const first = lines.findIndex((l) => l.startsWith("export "));
+  // After the leading comments: before the first export and the doc
+  // comment that belongs to it.
+  let first = lines.findIndex((l) => l.startsWith("export "));
+  if (first > 0 && /\*\/\s*$/.test(lines[first - 1])) {
+    while (first > 0 && !/^\s*\/\*\*/.test(lines[first - 1])) first--;
+    if (first > 0) first--; // the `/**` line itself
+  }
   lines.splice(first, 0, "// Handle brands (scripts/brand-handles.mjs).", decls, "");
   return lines.join("\n");
 }

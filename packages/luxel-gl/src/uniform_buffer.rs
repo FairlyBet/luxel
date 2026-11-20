@@ -274,6 +274,9 @@ impl Context {
                 "uniform block of {elements} fields can't fit MAX_UNIFORM_BLOCK_SIZE ({max} bytes)"
             ));
         }
+        if let Some(p) = layout.builder.name_problem() {
+            return Err(err!("uniform block: {p}"));
+        }
         let layout = layout.builder.build(LayoutRule::Std140);
         let size = layout.size();
         validate_block_size(size, limits::max_uniform_block_size())?;
