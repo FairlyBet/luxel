@@ -1,7 +1,8 @@
 //! The scene for JS: one `Scene` object owning the world, the transform system
 //! and the scene renderer. Entities are plain numbers; components are set and
-//! read through methods taking the entity — no JS object per entity, nothing
-//! to `.free()` but the scene itself (`destroy`).
+//! read through methods taking the entity — no JS object per entity. The
+//! scene's GPU objects go with `destroy()`, not with `.free()` or the
+//! garbage collector.
 //!
 //! ```js
 //! const scene = new Scene(ctx);

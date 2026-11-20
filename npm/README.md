@@ -262,7 +262,7 @@ value back in the shape the setter takes:
   `animationSpeed(root)` and `materialVariant(root)`.
 
 `isX` / `hasX` ask about a state rather than a setting: `isAlive(e)`,
-`isShown(e)`, `hasEnvironment()`, `isLost()`.
+`isShown(e)`, `hasEnvironment()` (and `ctx.isLost()` on the context).
 
 A setter's error names it: `"setLight: \"intensity\" must be a finite
 number"`.
@@ -270,9 +270,15 @@ number"`.
 `visible(e)` is `e`'s own flag. `isShown(e)` also counts hidden ancestors,
 as glTF's `KHR_node_visibility` does.
 
-Objects (`Scene`, `Model`, `Pass`, `FrameStats`, `RenderState`, …) are
-freed by the garbage collector once unreachable; `free()` frees one at
-once, which matters for large ones such as a `Model` or a `Scene`.
+GPU memory is freed by `destroy`, not by the garbage collector:
+`scene.destroy()` frees everything the scene owns (its models, targets,
+shadow maps, environment, cloned materials, loaded textures), and
+`model.destroy(ctx)` a model you didn't add to a scene. A `Scene` or
+`Model` dropped without it leaves its GPU objects in the context.
+
+The JS wrapper objects themselves (`Scene`, `Model`, `Pass`, `FrameStats`,
+`RenderState`, …) are freed by the garbage collector once unreachable, or
+at once by `free()`; `destroy()` already frees its own.
 
 ## License
 
