@@ -974,6 +974,14 @@ impl FramebufferObj {
         (self.width, self.height)
     }
 
+    /// The texture attached as color `index`, if one is.
+    pub(crate) fn color_texture(&self, index: u32) -> Option<TextureId> {
+        match self.color.get(index as usize).copied().flatten()?.source() {
+            Source::Texture(t) => Some(t),
+            _ => None,
+        }
+    }
+
     pub(crate) fn has_color(&self, index: u32) -> bool {
         self.color.get(index as usize).is_some_and(Option::is_some)
     }

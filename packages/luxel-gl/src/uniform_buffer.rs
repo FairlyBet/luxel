@@ -86,7 +86,9 @@ impl From<UniformType> for FieldType {
 /// one or more `UniformBuffer`s from it. The same layout also serves as a nested
 /// struct via `struct_field` / `struct_array`.
 ///
-/// The builder methods consume and return `self`, so they chain:
+/// The builder methods consume and return `self`, so they chain (in JS:
+/// chain, or reassign — `l = l.field("u_view", UniformType.Mat4)`; the old
+/// object is used up):
 /// ```ignore
 /// let light = UboLayout::new()
 ///     .field("pos", UniformType::Vec3)
@@ -118,7 +120,7 @@ impl UboLayout {
     }
 
     /// An array of `count` primitives (each element aligned to 16 per std140).
-    /// Address elements with an indexed path, e.g. `set_vec4("offsets[3]", …)`.
+    /// Address elements with an indexed path, e.g. `uniformBufferSetVec4(ubo, "offsets[3]", …)`.
     pub fn array(self, name: &str, ty: UniformType, count: u32) -> Self {
         Self {
             builder: self.builder.array(name, ty.into(), count),
@@ -126,7 +128,7 @@ impl UboLayout {
     }
 
     /// A nested struct, laid out per `layout`. Address members with a dotted
-    /// path, e.g. `set_vec3("light.pos", …)`.
+    /// path, e.g. `uniformBufferSetVec3(ubo, "light.pos", …)`.
     #[wasm_bindgen(js_name = structField)]
     pub fn struct_field(self, name: &str, layout: &UboLayout) -> Self {
         Self {
@@ -135,7 +137,7 @@ impl UboLayout {
     }
 
     /// An array of `count` structs, each laid out per `layout`. Address members
-    /// with a path like `set_vec4("lights[2].color", …)`.
+    /// with a path like `uniformBufferSetVec4(ubo, "lights[2].color", …)`.
     #[wasm_bindgen(js_name = structArray)]
     pub fn struct_array(self, name: &str, layout: &UboLayout, count: u32) -> Self {
         Self {

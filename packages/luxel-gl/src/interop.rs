@@ -37,12 +37,15 @@ impl Context {
         gl.pixel_storei(Gl::PACK_SKIP_ROWS, 0);
         gl.pixel_storei(Gl::PACK_SKIP_PIXELS, 0);
         // Unpack too: uploads that take the defaults skip setting them.
-        crate::pixel_unpack::PixelUnpack::reset(&gl);
+        crate::pixel_unpack::PixelUnpack::reset(gl);
         gl.disable(Gl::RASTERIZER_DISCARD);
         gl.disable(Gl::SAMPLE_ALPHA_TO_COVERAGE);
         gl.disable(Gl::SAMPLE_COVERAGE);
-        // Reverse-Z's clip control and depth range, as the context set them.
-        crate::depth_range::apply(&self.core);
+        // Reverse-Z's clip control and depth range, as the context set them
+        // (only with the extension on: asking for it would turn it on).
+        if self.is_extension_enabled(crate::extension::Extension::ExtClipControl) {
+            crate::depth_range::apply(&self.core);
+        }
     }
 
     /// The `WebGLTexture` behind `tex` (undefined for a stale handle): to

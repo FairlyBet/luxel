@@ -163,6 +163,11 @@ fn attr_index_in_range(index: u32) -> bool {
 }
 
 impl VertexArrayObj {
+    // Whether any attribute reads `buffer`.
+    pub(crate) fn reads(&self, buffer: BufferId) -> bool {
+        self.attribs.iter().flatten().any(|(b, _)| *b == buffer)
+    }
+
     // Nothing set on it yet (no attributes, index buffer or owned buffers).
     pub(crate) fn is_fresh(&self) -> bool {
         self.attribs.iter().all(Option::is_none)

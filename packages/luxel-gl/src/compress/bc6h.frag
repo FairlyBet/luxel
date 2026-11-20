@@ -162,12 +162,15 @@ void Swap(inout float a, inout float b) {
     b = tmp;
 }
 
+// Flat (both endpoints equal): index 0, not 0 / 0.
 uint ComputeIndex3(float texelPos, float endPoint0Pos, float endPoint1Pos) {
+    if (endPoint1Pos == endPoint0Pos) return 0u;
     float r = (texelPos - endPoint0Pos) / (endPoint1Pos - endPoint0Pos);
     return uint(clamp(r * 6.98182 + 0.00909 + 0.5, 0.0, 7.0));
 }
 
 uint ComputeIndex4(float texelPos, float endPoint0Pos, float endPoint1Pos) {
+    if (endPoint1Pos == endPoint0Pos) return 0u;
     float r = (texelPos - endPoint0Pos) / (endPoint1Pos - endPoint0Pos);
     return uint(clamp(r * 14.93333 + 0.03333 + 0.5, 0.0, 15.0));
 }
@@ -210,7 +213,7 @@ void EncodeP1(inout uvec4 block, inout float blockMSLE) {
     blockMax = customExp2(logBlockMax);
 
     vec3 blockDir = blockMax - blockMin;
-    blockDir = blockDir / (blockDir.x + blockDir.y + blockDir.z);
+    blockDir = blockDir / max(blockDir.x + blockDir.y + blockDir.z, 1e-20); // (flat: 0)
 
     vec3 endpoint0 = Quantize10(blockMin);
     vec3 endpoint1 = Quantize10(blockMax);
@@ -291,8 +294,11 @@ float EvaluateP2Pattern(uint pattern) {
             p1BlockMax = max(p1BlockMax, texels[i]);
         }
     }
-    vec3 p0BlockDir = normalize(p0BlockMax - p0BlockMin);
-    vec3 p1BlockDir = normalize(p1BlockMax - p1BlockMin);
+    // (A flat partition has no direction: 0, not normalize's NaN.)
+    vec3 p0d = p0BlockMax - p0BlockMin;
+    vec3 p1d = p1BlockMax - p1BlockMin;
+    vec3 p0BlockDir = dot(p0d, p0d) > 0.0 ? normalize(p0d) : vec3(0.0);
+    vec3 p1BlockDir = dot(p1d, p1d) > 0.0 ? normalize(p1d) : vec3(0.0);
     float sqDistanceFromLine = 0.0;
     for (uint i = 0u; i < 16u; ++i) {
         if (Pattern(pattern, i) == 0u) {
@@ -324,8 +330,8 @@ void EncodeP2Pattern(inout uvec4 block, inout float blockMSLE, uint pattern) {
 
     vec3 p0BlockDir = p0BlockMax - p0BlockMin;
     vec3 p1BlockDir = p1BlockMax - p1BlockMin;
-    p0BlockDir = p0BlockDir / (p0BlockDir.x + p0BlockDir.y + p0BlockDir.z);
-    p1BlockDir = p1BlockDir / (p1BlockDir.x + p1BlockDir.y + p1BlockDir.z);
+    p0BlockDir = p0BlockDir / max(p0BlockDir.x + p0BlockDir.y + p0BlockDir.z, 1e-20);
+    p1BlockDir = p1BlockDir / max(p1BlockDir.x + p1BlockDir.y + p1BlockDir.z, 1e-20);
 
     float p0Endpoint0Pos = f32tof16(dot(p0BlockMin, p0BlockDir));
     float p0Endpoint1Pos = f32tof16(dot(p0BlockMax, p0BlockDir));

@@ -60,6 +60,15 @@ pub(crate) enum QueryState {
     Disjoint,
 }
 
+impl QueryObj {
+    // A run that recorded nothing: its result is 0 at once (no GL query
+    // ran, so the last run's count would otherwise read as this one's).
+    pub(crate) fn set_empty_run(&mut self) {
+        self.state = QueryState::Ready(0.0);
+        self.run = self.run.wrapping_add(1);
+    }
+}
+
 pub(crate) struct QueryObj {
     pub(crate) raw: WebGlQuery,
     kind: QueryKind,

@@ -394,7 +394,9 @@ impl TextureObj {
     // Checks a texStorage request against the implementation limits for this
     // target (`depth` is 1 for 2D / cube). Reports and returns false if it
     // can't be allocated, so the caller skips the GL call.
-    fn storage_fits(&self, levels: i32, width: i32, height: i32, depth: i32) -> bool {
+    // `is_3d`: a texStorage3D call (else texStorage2D), which only 3D and
+    // 2D-array textures take; a cube map's faces are square.
+    fn storage_fits(&self, levels: i32, width: i32, height: i32, depth: i32, is_3d: bool) -> bool {
         let (max_wh, max_d, what) = match self.target {
             TextureTarget::Texture2D => (limits::max_texture_size(), 1, "MAX_TEXTURE_SIZE"),
             TextureTarget::TextureCubeMap => (
@@ -412,8 +414,26 @@ impl TextureObj {
                 "MAX_TEXTURE_SIZE / MAX_ARRAY_TEXTURE_LAYERS",
             ),
         };
+        let takes_3d = matches!(
+            self.target,
+            TextureTarget::Texture3D | TextureTarget::Texture2DArray
+        );
         let problem = if self.internal.get() != 0 {
             Some("is already allocated (immutable storage is one-shot)".to_string())
+        } else if is_3d != takes_3d {
+            Some(format!(
+                "a {:?} takes {} storage",
+                self.target,
+                if takes_3d {
+                    "3D (texture_storage_3d)"
+                } else {
+                    "2D (texture_storage_2d)"
+                }
+            ))
+        } else if self.target == TextureTarget::TextureCubeMap && width != height {
+            Some(format!(
+                "a cube map's faces are square, not {width}x{height}"
+            ))
         } else if width < 1 || height < 1 || depth < 1 {
             Some(format!("size {width}x{height}x{depth} must be at least 1"))
         } else if width as u32 > max_wh || height as u32 > max_wh || depth as u32 > max_d {
@@ -456,7 +476,7 @@ impl Context {
     ) -> bool {
         let filter_float = self.can_filter_float32();
         self.with_texture(tex, "texture_storage_2d", |gl, t, obj| {
-            let fits = obj.storage_fits(levels, width, height, 1);
+            let fits = obj.storage_fits(levels, width, height, 1, false);
             if fits {
                 gl.tex_storage_2d(t, levels, format.internal as u32, width, height);
                 obj.extent.set([levels, width, height, 1]);
@@ -660,7 +680,7 @@ impl Context {
     ) {
         let filter_float = self.can_filter_float32();
         self.with_texture(tex, "texture_storage_3d", |gl, t, obj| {
-            if obj.storage_fits(levels, width, height, depth) {
+            if obj.storage_fits(levels, width, height, depth, true) {
                 gl.tex_storage_3d(t, levels, format.internal as u32, width, height, depth);
                 obj.extent.set([levels, width, height, depth]);
                 storage_allocated(gl, t, obj, format.internal as u32, filter_float);
@@ -680,7 +700,7 @@ impl Context {
         height: i32,
     ) {
         self.with_texture(tex, "texture_compressed_storage_2d", |gl, t, obj| {
-            if obj.storage_fits(levels, width, height, 1) {
+            if obj.storage_fits(levels, width, height, 1, false) {
                 gl.tex_storage_2d(t, levels, format.as_gl(), width, height);
                 obj.extent.set([levels, width, height, 1]);
                 obj.internal.set(format.as_gl());
@@ -688,7 +708,8 @@ impl Context {
         });
     }
 
-    /// Compressed immutable storage for TEXTURE_3D / TEXTURE_2D_ARRAY.
+    /// Compressed immutable storage for TEXTURE_2D_ARRAY (WebGL's compressed
+    /// formats don't take TEXTURE_3D).
     #[wasm_bindgen(js_name = textureCompressedStorage3D)]
     pub fn texture_compressed_storage_3d(
         &self,
@@ -700,7 +721,13 @@ impl Context {
         depth: i32,
     ) {
         self.with_texture(tex, "texture_compressed_storage_3d", |gl, t, obj| {
-            if obj.storage_fits(levels, width, height, depth) {
+            if obj.target == TextureTarget::Texture3D {
+                return console::error(
+                    "[luxel] texture_compressed_storage_3d: compressed formats take a 2D array, \
+                     not TEXTURE_3D; ignored",
+                );
+            }
+            if obj.storage_fits(levels, width, height, depth, true) {
                 gl.tex_storage_3d(t, levels, format.as_gl(), width, height, depth);
                 obj.extent.set([levels, width, height, depth]);
                 obj.internal.set(format.as_gl());

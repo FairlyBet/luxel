@@ -394,9 +394,26 @@ impl Context {
         if let Err(e) = self.bind_read_source(src, attachment, r) {
             return console::error(&format!("[luxel] {OP}: {e}; ignored"));
         }
-        self.with_texture(tex, OP, |gl, target, _| {
+        // Reading the very texture it writes (attached to the source) is a
+        // feedback loop GL refuses.
+        let reads_itself = !src.is_null()
+            && self
+                .res()
+                .framebuffers
+                .get(src.0)
+                .is_some_and(|f| f.color_texture(attachment) == Some(tex));
+        if reads_itself {
+            return console::error(&format!(
+                "[luxel] {OP}: the source framebuffer reads the texture being written; ignored"
+            ));
+        }
+        self.with_texture(tex, OP, |gl, target, obj| {
             if target != Gl::TEXTURE_2D {
                 return console::error(&format!("[luxel] {OP}: not a 2D texture; ignored"));
+            }
+            // The level, its storage and the destination rectangle.
+            if !obj.region_fits(OP, level, [x_offset, y_offset, 0], [width, height, 1]) {
+                return;
             }
             gl.copy_tex_sub_image_2d(target, level, x_offset, y_offset, x, y, width, height);
         });

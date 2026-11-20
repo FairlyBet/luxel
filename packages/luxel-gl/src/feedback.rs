@@ -155,8 +155,13 @@ impl<'a> Recording<'a> {
 
     /// Whether draw `d` with `program` can be recorded; if not, says why
     /// (once) and the caller skips it. Accounts for what it will write.
-    pub(crate) fn admit(&mut self, d: &DrawItem, program: &ProgramObj) -> bool {
-        match self.check(d, program) {
+    pub(crate) fn admit(
+        &mut self,
+        d: &DrawItem,
+        program: &ProgramObj,
+        vertex_arrays: &Pool<crate::vao::VertexArrayObj>,
+    ) -> bool {
+        match self.check(d, program, vertex_arrays) {
             Ok(()) => true,
             Err(why) => {
                 console::error_once(&format!(
@@ -167,7 +172,12 @@ impl<'a> Recording<'a> {
         }
     }
 
-    fn check(&mut self, d: &DrawItem, program: &ProgramObj) -> Result<(), String> {
+    fn check(
+        &mut self,
+        d: &DrawItem,
+        program: &ProgramObj,
+        vertex_arrays: &Pool<crate::vao::VertexArrayObj>,
+    ) -> Result<(), String> {
         let mode = self.want.mode;
         if d.command.mode != mode {
             return Err(format!(
@@ -200,6 +210,13 @@ impl<'a> Recording<'a> {
                     "the program writes buffer {i}, but none is bound there"
                 ));
             };
+            // Written while read as vertices: GL refuses the draw.
+            if vertex_arrays
+                .get(d.vao.0)
+                .is_some_and(|v| v.reads(b.buffer))
+            {
+                return Err(format!("buffer {i} is also a vertex source of this draw"));
+            }
             after[i] += vertices * stride as u64;
             if after[i] > b.size as u64 {
                 return Err(format!(
@@ -235,8 +252,14 @@ impl<'a> Recording<'a> {
     }
 
     /// Ends recording and puts the global state back.
-    pub(crate) fn finish(self, gl: &Gl) {
+    pub(crate) fn finish(self, gl: &Gl, queries: &mut Pool<QueryObj>) {
         if !self.active {
+            // No draw recorded: the pass's query counted 0 primitives.
+            if !self.want.query.is_null()
+                && let Some(q) = queries.get_mut(self.want.query.0)
+            {
+                q.set_empty_run();
+            }
             return;
         }
         gl.end_transform_feedback();

@@ -65,7 +65,10 @@ enum FieldDef {
 }
 
 /// Describes a parameter layout. Chain the methods, then pass it to
-/// `Context::create_param_layout`.
+/// `Context::create_param_layout`. Each call consumes the builder and
+/// returns a new one: in JS chain them, or reassign
+/// (`b = b.uniform("u_color", UniformType.Vec3)`); calling one on the old
+/// object fails ("null pointer passed to rust").
 #[wasm_bindgen]
 #[derive(Clone, Default)]
 pub struct ParamLayoutBuilder {

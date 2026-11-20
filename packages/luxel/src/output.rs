@@ -714,6 +714,9 @@ impl HdrOutput {
         // resolved: telling tiled (mobile) GPUs saves writing them back.
         discard.depth = last && self.taa.is_none();
         if self.fb != self.resolve_fb {
+            // From scratch: a frame with the key output set attachments
+            // [0, 1] (set again after this when it still has one).
+            pass.clear_resolve();
             pass.set_resolve(self.resolve_fb);
             discard.color = last;
         } else {

@@ -122,6 +122,7 @@ impl DirectTarget {
         let mut discard = InvalidateMask::none();
         discard.depth = true;
         if self.resolve_fb != self.fb {
+            pass.clear_resolve();
             pass.set_resolve(self.resolve_fb);
             discard.color = true;
         } else {

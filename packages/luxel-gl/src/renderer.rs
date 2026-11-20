@@ -269,7 +269,7 @@ fn run_pass(
         // Checked before its program is bound (switching programs while
         // recording is an error); counted only once issued (`start`).
         if let Some(r) = &mut recording
-            && !r.admit(d, program)
+            && !r.admit(d, program, vertex_arrays)
         {
             st.stats.skipped = st.stats.skipped.wrapping_add(1);
             continue;
@@ -375,7 +375,7 @@ fn run_pass(
         st.stats.draws = st.stats.draws.wrapping_add(1);
     }
     if let Some(r) = recording {
-        r.finish(gl);
+        r.finish(gl, queries);
     }
 
     // Resolve — copy color 0 into the resolve target (the MSAA resolve). It
