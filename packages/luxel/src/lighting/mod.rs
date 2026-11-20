@@ -37,13 +37,11 @@ use luxel_gl::param::GROUP_SLOTS;
 pub(crate) use casters::CasterDraw;
 pub(crate) use ground::GroundPlane;
 pub use ground::GroundShadow;
-pub(crate) use light::key_light;
 pub use light::{Light, LightKind};
 pub use maps::{MAX_SHADOW_LAYERS, MAX_SHADOW_VIEWS};
 pub use pack::MAX_LIGHTS;
 pub use settings::{LightShadow, ShadowCaster};
 pub use views::MAX_CASCADES;
-pub(crate) use views::caster_bounds as scene_bounds;
 
 use ground::Ground;
 use maps::ShadowMaps;
@@ -113,6 +111,9 @@ pub(crate) struct LightingSystem {
     ground_on: bool,
     // Casters this frame left out while their programs link.
     waiting: usize,
+    // This frame's shadow casters' world box (`caster_bounds`), found once
+    // in `prepare` for everything that asks.
+    bounds: Option<(glam::Vec3, glam::Vec3)>,
 }
 
 /// A caster draw's view index for the ground shadow's pass.
@@ -162,6 +163,7 @@ impl LightingSystem {
             ground,
             ground_on: false,
             waiting: 0,
+            bounds: None,
         })
     }
 
@@ -251,6 +253,17 @@ impl LightingSystem {
         self.ground_on.then_some(self.ground.settings)
     }
 
+    /// The shadow casters' world box as of the last `prepare`.
+    pub fn caster_bounds(&self) -> Option<(glam::Vec3, glam::Vec3)> {
+        self.bounds
+    }
+
+    /// The key light (`key_light`) with the casters' box of the last
+    /// `prepare`.
+    pub fn key_light(&self, world: &World) -> Option<(Entity, glam::Vec4)> {
+        light::key_light_near(world, self.bounds)
+    }
+
     /// Casters this frame left out of their maps while their programs link
     /// (or their model reloads).
     pub fn waiting(&self) -> usize {
@@ -318,6 +331,10 @@ impl LightingSystem {
         camera: Option<(Camera, glam::Mat4)>,
     ) {
         let debug = self.debug_cascades;
+        // One walk over the casters for the frame (the plan, the key light,
+        // the ground and the app's effects all read it).
+        self.bounds = caster_bounds(world);
+        let key = light::key_light_near(world, self.bounds).map(|(e, _)| e);
         let content = ctx.content_version();
         if content != self.content_seen {
             self.content_seen = content;
@@ -335,6 +352,7 @@ impl LightingSystem {
                 ctx,
                 &self.layers,
                 &self.maps.views,
+                key,
                 debug,
                 CASCADE_OVERLAP,
             );
@@ -350,6 +368,7 @@ impl LightingSystem {
             ctx,
             &self.layers,
             &self.maps.views,
+            key,
             debug,
             CASCADE_OVERLAP,
         );
@@ -379,7 +398,8 @@ impl LightingSystem {
     fn prepare_ground(&mut self, world: &World, ctx: &Context) -> usize {
         let view = if self.ground_on {
             let s = self.ground.settings;
-            ground_bounds(world).and_then(|b| ground_view(b, s.reach, s.size, ctx.reverse_z()))
+            ground_bounds(world, self.bounds)
+                .and_then(|b| ground_view(b, s.reach, s.size, ctx.reverse_z()))
         } else {
             // Off: its textures go (made again when it comes back on).
             self.ground.release(ctx);
@@ -511,7 +531,7 @@ impl LightingSystem {
             self.release_maps(ctx, frame_group);
             return;
         }
-        let Some(bounds) = caster_bounds(world) else {
+        let Some(bounds) = self.bounds else {
             return;
         };
         let ShadowOptions { map_size, depth16 } = self.options;

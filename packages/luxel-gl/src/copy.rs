@@ -113,12 +113,6 @@ pub(crate) fn blit_attachment(
     }
 }
 
-/// Whether the canvas's drawing buffer is multisampled (antialias): a blit
-/// can't write into it then (GL ES 3.0: DRAW with SAMPLE_BUFFERS > 0).
-pub(crate) fn canvas_multisampled(gl: &Gl) -> bool {
-    crate::framebuffer::context_attribute(gl, "antialias").unwrap_or(false)
-}
-
 #[wasm_bindgen]
 impl Context {
     /// Copies `src_rect` of `src` into `dst_rect` of `dst`
@@ -183,7 +177,7 @@ impl Context {
                  resolves); ignored"
             ));
         }
-        if dst.is_null() && canvas_multisampled(gl) {
+        if dst.is_null() && self.core.default_fb.is_multisampled() {
             return console::error(&format!(
                 "[luxel] {OP}: the canvas is multisampled (ContextOptions.antialias), \
                  a blit can't write into it; ignored"
@@ -193,7 +187,7 @@ impl Context {
         // canvas) resolves only into the same rectangle: no scaling, no
         // offset (GLES 3.0 blitFramebuffer).
         let multisampled = if src.is_null() {
-            canvas_multisampled(gl)
+            self.core.default_fb.is_multisampled()
         } else {
             samples(src) > 0
         };
@@ -249,7 +243,7 @@ impl Context {
             Some(format!(
                 "the destination has no color attachment {dst_index}"
             ))
-        } else if d.is_none() && canvas_multisampled(gl) {
+        } else if d.is_none() && self.core.default_fb.is_multisampled() {
             Some(
                 "the canvas is multisampled (ContextOptions.antialias), a blit can't write into it"
                     .into(),

@@ -2,7 +2,7 @@
 
 263 low-находки ночного ревью (с добором), проверены агентами по группам и разобраны 20.11. Статусы: «исправлена» (в колонке — область, коммиты ниже), «исправлена раньше» — закрыта фиксами high/medium, «опровергнута», «пропущена» / «частично» — с причиной.
 
-Итого: исправлена — 181, пропущена — 50, исправлена раньше — 25, опровергнута — 5, частично — 2.
+Итого: исправлена — 189, пропущена — 42, исправлена раньше — 25, опровергнута — 5, частично — 2.
 
 Коммиты low-фиксов:
 - примеры: ac901fe
@@ -13,7 +13,7 @@
 - шейдеры, core, viewer, orbit, скрипты: d957cd1
 - чтение канваса по drawing buffer (64), motion-вариант по атрибутам скина (241): последний коммит с этим файлом
 
-Пропущенное «только производительность» — оптимизации без ошибки в поведении (лишние проходы, кэши, аллокации на кадр); их лучше делать с замерами.
+Пропущенное «только производительность» — оптимизации без ошибки в поведении; очевидные (лишние проходы и копии) сделаны позже, остальные ждут замеров на реальном GPU — список в `docs/backlog.md`.
 
 | # | Файл | Находка | Статус | Заметка |
 |---|---|---|---|---|
@@ -52,7 +52,7 @@
 | 32 | `luxel-gl/src/context_loss.rs:125` | Loss / restore listeners are never removed and their closures are forgotten | исправлена | gl |
 | 33 | `luxel-gl/src/context_loss.rs:125` | Loss / restore listeners are forgotten, never removed: each Context leaks two closures and its Core allocation | пропущена | дубль 31 |
 | 34 | `luxel-gl/src/copy.rs:50` | Every blit issues synchronous GL getters (isEnabled, getContextAttributes), including the per-frame pass resol | опровергнута | isEnabled(SCISSOR_TEST) and getContextAttributes are answered from browser-side caches with no GPU round trip, and they run one to three times per frame on the  |
-| 35 | `luxel-gl/src/copy.rs:50` | Every blit queries GL (isEnabled, getContextAttributes) on the per-frame path | пропущена | только производительность |
+| 35 | `luxel-gl/src/copy.rs:50` | Every blit queries GL (isEnabled, getContextAttributes) on the per-frame path | исправлена | перф: кэш атрибута antialias |
 | 36 | `luxel-gl/src/copy.rs:396` | copy_texture_sub_image_2d forwards level, offsets and format to GL unvalidated | исправлена | gl |
 | 37 | `luxel-gl/src/draw.rs:176` | instanceCount is silently ignored on rangeElements commands and the check for it is Rust-only | исправлена | gl |
 | 38 | `luxel-gl/src/feedback.rs:170` | Recording into a buffer the same draw reads from is not checked, contrary to the "each rule is checked per dra | исправлена | gl |
@@ -92,7 +92,7 @@
 | 72 | `luxel-gl/src/renderer.rs:241` | A rect clear always forgets the render state: every shadow tile pass re-applies the full state | исправлена раньше | вместе с high/medium |
 | 73 | `luxel-gl/src/renderer.rs:286` | Float-blend guard skips valid draws when per-target overrides turn blending off on the float32 attachment | пропущена | float-blend guard с per-target overrides — редкий случай, не локально |
 | 74 | `luxel-gl/src/renderer.rs:372` | FrameStats counters use plain += and overflow if resetFrameStats is never called | исправлена | gl |
-| 75 | `luxel-gl/src/renderer.rs:395` | Resolve and store ops call GL getters and allocate JS objects every frame | пропущена | только производительность |
+| 75 | `luxel-gl/src/renderer.rs:395` | Resolve and store ops call GL getters and allocate JS objects every frame | исправлена | перф: кэш атрибута antialias |
 | 76 | `luxel-gl/src/renderer.rs:411` | Default resolve path (no setResolveAttachments) skips the checks the other blit paths make | исправлена | gl |
 | 77 | `luxel-gl/src/renderer.rs:411` | The default resolve path blits unchecked, then invalidates the source and moves the cache as if it had worked | исправлена | gl |
 | 78 | `luxel-gl/src/renderer.rs:786` | Every draw re-diffs every field of every group, including groups shared by consecutive draws | пропущена | только производительность |
@@ -106,7 +106,7 @@
 | 86 | `luxel-gl/src/texture.rs:881` | Cube-face upload is the only raw upload with no PixelUnpack and it neither applies nor resets unpack state | исправлена | gl |
 | 87 | `luxel-gl/src/texture.rs:1536` | createImageBitmap path has no fallback to the <img> path when fetch or decode is refused | исправлена | gl |
 | 88 | `luxel-gl/src/texture.rs:1591` | Exceptions thrown by the on_load callback are silently discarded | исправлена | gl |
-| 89 | `luxel-gl/src/texture.rs:1785` | Non-UNSIGNED_BYTE uploads copy the whole pixel buffer a second time | пропущена | только производительность |
+| 89 | `luxel-gl/src/texture.rs:1785` | Non-UNSIGNED_BYTE uploads copy the whole pixel buffer a second time | исправлена | перф: вид на память wasm вместо копии |
 | 90 | `luxel-gl/src/texture_compressor.rs:266` | The 2D BC6H encoder is never precompiled and whenReady() does not cover it, so the first 2D Hdr compress block | пропущена | прекомпиляция 2D BC6H — расширение whenReady |
 | 91 | `luxel-gl/src/texture_compressor.rs:440` | The 'one compressor per context' cache is a single slot: two contexts loading models evict each other's encode | пропущена | один слот компрессора на поток — переделка кэша |
 | 92 | `luxel-gl/src/texture_compressor.rs:447` | SHARED holds one compressor for the whole thread, so two contexts evict each other and recompile all encoders | пропущена | дубль 91 |
@@ -122,7 +122,7 @@
 | 102 | `luxel-gl/src/trace.rs:656` | JS docs name TRACK_MAIN / TRACK_GPU, which are not exported to JS | исправлена | gl |
 | 103 | `luxel-gl/src/uniform_buffer.rs:114` | UboLayout builder methods consume the JS object; the exported docs show Rust syntax and names | исправлена | gl |
 | 104 | `luxel-gl/src/uniform_buffer.rs:215` | Uniform-buffer fields can only be written by path string: a string build/transfer and binary search per setter | пропущена | только производительность |
-| 105 | `luxel-gl/src/uniform_buffer.rs:232` | UBO setters mark the field dirty even when the bytes did not change, so unchanged blocks are re-uploaded every | пропущена | только производительность |
+| 105 | `luxel-gl/src/uniform_buffer.rs:232` | UBO setters mark the field dirty even when the bytes did not change, so unchanged blocks are re-uploaded every | исправлена | перф: неизменённые байты не помечаются |
 | 106 | `luxel-gl/src/uniform_buffer.rs:266` | Block size is validated only after the whole layout is expanded: a large array count allocates one Field (with | исправлена раньше | вместе с high/medium |
 | 107 | `luxel-gl/src/vao.rs:223` | vertex_array_attr does not validate size/stride/offset and records the attribute even when GL rejected it | исправлена | gl |
 | 108 | `luxel-gl/src/vao_builder.rs:233` | VaoBuilder holds three copies of the vertex data at build time, and always interleaves vertex by vertex | пропущена | только производительность |
@@ -190,7 +190,7 @@
 | 170 | `luxel/src/hdr.rs:203` | encode_hdr mishandles infinite/huge values and does not check rgb.len() against width*height | исправлена | сцена |
 | 171 | `luxel/src/instances.rs:105` | The batch index reallocates one Vec per batch key every frame | исправлена | сцена |
 | 172 | `luxel/src/instances.rs:202` | Growing the instance texture past MAX_TEXTURE_SIZE destroys the working texture and never recovers | исправлена | сцена |
-| 173 | `luxel/src/instances.rs:208` | Instance upload does three full passes over the data every frame anything moves | пропущена | только производительность |
+| 173 | `luxel/src/instances.rs:208` | Instance upload does three full passes over the data every frame anything moves | исправлена | перф: без промежуточного прохода в байты |
 | 174 | `luxel/src/js/animation.rs:196` | setAnimationSpeed is silently dropped unless a clip is playing, and playAnimation resets it to 1 | исправлена | фасад |
 | 175 | `luxel/src/js/animation.rs:196` | setAnimationSpeed is silently dropped when nothing plays and reset by every play/crossfade | исправлена | фасад |
 | 176 | `luxel/src/js/animation.rs:221` | advanceAnimations ignores a non-finite dt without the report every other setter gives | исправлена | фасад |
@@ -208,7 +208,7 @@
 | 188 | `luxel/src/js/materials.rs:381` | A loadTexture that failed stays in scene.textures and is fetched and re-created after every context loss | исправлена раньше | вместе с high/medium |
 | 189 | `luxel/src/js/materials.rs:381` | A loadTexture that fails stays in the scene's texture list and is fetched again after every context loss | исправлена раньше | вместе с high/medium |
 | 190 | `luxel/src/js/materials.rs:506` | Rust `set_material_values` ("setMaterialProperty from Rust") does not invalidate shadows like the JS path does | исправлена | фасад |
-| 191 | `luxel/src/js/materials.rs:520` | Every material property write rescans all meshes and re-resolves variant, vertex array and shadow caster for e | пропущена | только производительность |
+| 191 | `luxel/src/js/materials.rs:520` | Every material property write rescans all meshes and re-resolves variant, vertex array and shadow caster for e | исправлена | перф: варианты пересматриваются только когда ключ изменился |
 | 192 | `luxel/src/js/mod.rs:199` | Constructing a Scene changes how createProgram reports errors on the shared context | исправлена | задокументировано |
 | 193 | `luxel/src/js/mod.rs:291` | despawn frees a model's GPU data while entities reparented out of its subtree still draw with it | пропущена | despawn и перенесённые setParent'ом узлы: нужна привязка примитивов к модели, не к иерархии |
 | 194 | `luxel/src/js/mod.rs:328` | setRotation(0,0,0,0) normalizes a zero quaternion to NaN | исправлена | фасад |
@@ -230,7 +230,7 @@
 | 210 | `luxel/src/js/output.rs:243` | Setters called between the restore and the scene's first sync create GL objects inside structures that are the | исправлена | фасад |
 | 211 | `luxel/src/js/output.rs:421` | prepare_output scans every mesh against every PBR variant each frame, even with contact shadows off | исправлена | фасад |
 | 212 | `luxel/src/js/output.rs:421` | prepare_output scans every mesh against every PBR variant each frame, even with contact shadows off | исправлена | фасад |
-| 213 | `luxel/src/js/output.rs:596` | apply_occlusion walks all shadow casters once or twice per frame for values that rarely change | пропущена | только производительность |
+| 213 | `luxel/src/js/output.rs:596` | apply_occlusion walks all shadow casters once or twice per frame for values that rarely change | исправлена | перф: границы кастеров один раз за кадр |
 | 214 | `luxel/src/js/picking.rs:25` | pick, worldToScreen, screenToRay and raycastBounds use a stale camera aspect | исправлена | фасад |
 | 215 | `luxel/src/js/picking.rs:29` | pick / worldToScreen / screenToRay / raycastBounds use a stale camera aspect (1 for a camera not rendered yet) | исправлена | фасад |
 | 216 | `luxel/src/js/restore.rs:98` | Cancelling a finished-but-unapplied bake at restore destroys stale handles and logs errors | исправлена | фасад |
@@ -253,7 +253,7 @@
 | 233 | `luxel/src/lighting/mod.rs:301` | prepare() doc says only directional / spot lights cast shadows | исправлена | сцена |
 | 234 | `luxel/src/lighting/mod.rs:358` | Every distinct bias pair interns a render state that is never released | опровергнута | Interned render states that are never freed are the core's accepted design (medium #16 kept interning and fixed only the scissor and NaN cases); new states come |
 | 235 | `luxel/src/lighting/mod.rs:502` | Lights past MAX_LIGHTS still get shadow maps planned, drawn and stored | исправлена раньше | вместе с high/medium |
-| 236 | `luxel/src/lighting/pack.rs:84` | LightsBlock::write rescans every caster each frame via key_light, also on frozen frames | пропущена | только производительность |
+| 236 | `luxel/src/lighting/pack.rs:84` | LightsBlock::write rescans every caster each frame via key_light, also on frozen frames | исправлена | перф: границы кастеров один раз за кадр |
 | 237 | `luxel/src/lighting/settings.rs:6` | LightShadow docs still say only directional and spot lights cast shadows | исправлена | сцена |
 | 238 | `luxel/src/lighting/views.rs:201` | Spot (and point) light with a range shorter than the nearest caster builds an inverted/empty shadow frustum in | исправлена | сцена |
 | 239 | `luxel/src/lighting/views.rs:521` | caster_bounds collapses to a point for casters without Bounds and for single-joint skins, so the directional f | пропущена | caster_bounds для мешей без Bounds/одного сустава — нужна оценка границ скина |

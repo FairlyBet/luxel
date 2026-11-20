@@ -538,8 +538,9 @@ pub(crate) fn caster_bounds(world: &World) -> Option<(Vec3, Vec3)> {
 /// mesh with bounds — glass and other meshes that cast no shadow stand on
 /// the ground too (a lamp's bulb below its shade), so the ground is under
 /// them all; only the casters darken it.
-pub(crate) fn ground_bounds(world: &World) -> Option<(Vec3, Vec3)> {
-    let mut out = caster_bounds(world);
+/// `casters`: `caster_bounds`, already found.
+pub(crate) fn ground_bounds(world: &World, casters: Option<(Vec3, Vec3)>) -> Option<(Vec3, Vec3)> {
+    let mut out = casters;
     let (Some(meshes), Some(bounds), Some(worlds)) = (
         world.storage::<crate::render::MeshRenderer>(),
         world.storage::<Bounds>(),

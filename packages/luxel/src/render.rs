@@ -1063,6 +1063,17 @@ impl SceneRenderer {
         self.lights.programs()
     }
 
+    /// The shadow casters' world box this frame (found once by the
+    /// lights' prepare).
+    pub fn caster_bounds(&self) -> Option<(glam::Vec3, glam::Vec3)> {
+        self.lights.caster_bounds()
+    }
+
+    /// The key light (`lighting::key_light`) with this frame's casters' box.
+    pub fn key_light(&self, world: &World) -> Option<(Entity, glam::Vec4)> {
+        self.lights.key_light(world)
+    }
+
     /// The projection this frame's opaque pass drew with (TAA's jitter
     /// in it while it lasts).
     pub fn drawn_projection(&self) -> Mat4 {

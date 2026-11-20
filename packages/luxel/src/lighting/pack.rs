@@ -67,12 +67,14 @@ impl LightsBlock {
     /// maps' layers from `slots` (into `views`), the cascades' far bounds,
     /// each layer's normal bias and world → map matrix. `debug` tints the
     /// cascades; `overlap` is how far they reach into each other.
+    #[allow(clippy::too_many_arguments)]
     pub fn write(
         &mut self,
         world: &World,
         ctx: &Context,
         slots: &HashMap<Entity, ShadowSlot>,
         views: &[ShadowView],
+        key_entity: Option<Entity>,
         debug: bool,
         overlap: f32,
     ) {
@@ -81,7 +83,6 @@ impl LightsBlock {
         let mut splits: Vec<Vec4> = Vec::with_capacity(MAX_LIGHTS);
         // The key light (`key_light`, as contact shadows pick it), by its
         // index here; −1 without one.
-        let key_entity = super::key_light(world).map(|(e, _)| e);
         let mut key: Option<usize> = None;
         if let (Some(storage), Some(worlds)) =
             (world.storage::<Light>(), world.storage::<WorldMatrix>())

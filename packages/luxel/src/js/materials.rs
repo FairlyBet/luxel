@@ -551,10 +551,18 @@ impl Scene {
             .materials
             .get_mut(&material)
             .ok_or("setMaterialProperty: not a material of this scene")?;
+        // What the meshes' variants and vertex arrays depend on: with every
+        // attribute and none (the rest of a key is the mesh's own), the
+        // vertex layout it wants.
+        let shape = |m: &Material| (PbrKey::new(u32::MAX, m), PbrKey::new(0, m), m.vertex_key());
+        let before = shape(&record.material);
         record.material.set_property(name, values)?;
         record.material.write_property(&self.ctx, material, name);
-        // A factor crossing zero can change the shader variant.
-        self.update_variants_of(material);
+        // A factor crossing zero can change the shader variant: only then
+        // are its meshes gone through again.
+        if shape(&record.material) != before {
+            self.update_variants_of(material);
+        }
         Ok(())
     }
 

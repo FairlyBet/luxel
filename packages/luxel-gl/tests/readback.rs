@@ -79,7 +79,9 @@ fn canvas_reads_reach_past_a_smaller_viewport() {
     let fb = f.ctx.default_framebuffer();
     fb.set_viewport(&luxel_gl::draw::Viewport::new(W / 2, 0, W / 2, H));
     // Past the viewport's width (W / 2), inside the buffer.
-    let px = f.ctx.read_pixels(CANVAS, 0, W - 2, 1, 1, 1, ReadFormat::Rgba8);
+    let px = f
+        .ctx
+        .read_pixels(CANVAS, 0, W - 2, 1, 1, 1, ReadFormat::Rgba8);
     let past = f.ctx.read_pixels(CANVAS, 0, W, 0, 1, 1, ReadFormat::Rgba8);
     fb.set_viewport(&luxel_gl::draw::Viewport::new(0, 0, W, H));
     px.expect("inside the drawing buffer");

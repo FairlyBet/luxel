@@ -566,7 +566,7 @@ impl Scene {
                 .get::<crate::transform::WorldMatrix>(camera)?
                 .0
                 .inverse();
-            let (_, at) = crate::lighting::key_light(&self.world)?;
+            let (_, at) = self.renderer.key_light(&self.world)?;
             Some((c, view * at))
         });
         if ao.is_none() && contact.is_none() {
@@ -612,7 +612,9 @@ impl Scene {
         let (_, size) = out.draw_target();
         let (target, key) = out.occlusion_target();
         // The scene's size (the shadow casters' box), for the auto lengths.
-        let scene_size = crate::lighting::scene_bounds(&self.world)
+        let scene_size = self
+            .renderer
+            .caster_bounds()
             .map_or(2.0, |(lo, hi)| (hi - lo).length().max(1e-3));
         let proj = self.renderer.drawn_projection();
         if let Some(o) = self.occlusion.as_mut() {

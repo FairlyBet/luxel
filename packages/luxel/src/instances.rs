@@ -224,14 +224,26 @@ impl Instances {
         if self.data.is_empty() || self.data == self.uploaded {
             return Ok(());
         }
-        // Whole rows: pad the last.
-        self.bytes.clear();
-        for v in &self.data {
-            self.bytes.extend_from_slice(&v.to_le_bytes());
-        }
-        self.bytes.resize((rows * WIDTH * 4 * 4) as usize, 0);
+        // Straight from the floats (wasm is little-endian): the whole rows,
+        // then the last one padded.
+        // SAFETY: any f32 is 4 valid bytes; the slice covers `data` exactly.
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(self.data.as_ptr().cast::<u8>(), self.data.len() * 4)
+        };
+        let row_bytes = (WIDTH * 4 * 4) as usize;
+        let full = (bytes.len() / row_bytes) as i32;
         let format = TextureFormat::rgba32f();
-        ctx.texture_sub_image_2d(self.texture, 0, 0, 0, WIDTH, rows, &format, &self.bytes);
+        if full > 0 {
+            let whole = &bytes[..full as usize * row_bytes];
+            ctx.texture_sub_image_2d(self.texture, 0, 0, 0, WIDTH, full, &format, whole);
+        }
+        let rest = &bytes[full as usize * row_bytes..];
+        if !rest.is_empty() {
+            self.bytes.clear();
+            self.bytes.extend_from_slice(rest);
+            self.bytes.resize(row_bytes, 0);
+            ctx.texture_sub_image_2d(self.texture, 0, 0, full, WIDTH, 1, &format, &self.bytes);
+        }
         self.uploaded.clear();
         self.uploaded.extend_from_slice(&self.data);
         Ok(())

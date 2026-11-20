@@ -197,6 +197,9 @@ struct DefaultFramebufferInner {
     // (which runs after the frame's drawing, before the page is shown) the
     // cleared buffer would be what's shown — a blank frame each resize.
     pending_size: Option<(i32, i32)>,
+    // The context's `antialias` attribute, read once (it can't change; a
+    // lost context answers nothing, so it's read again then).
+    antialias: Option<bool>,
 }
 
 impl DefaultFramebufferInner {
@@ -359,6 +362,7 @@ impl DefaultFramebuffer {
                 max_pixel_ratio: f64::INFINITY,
                 device_size: None,
                 pending_size: None,
+                antialias: None,
             })),
         }
     }
@@ -607,7 +611,11 @@ impl DefaultFramebuffer {
     /// created with `antialias: true`): a blit can't write into it then.
     #[wasm_bindgen(js_name = isMultisampled)]
     pub fn is_multisampled(&self) -> bool {
-        context_attribute(&self.inner.borrow().gl, "antialias").unwrap_or(false)
+        let mut s = self.inner.borrow_mut();
+        if s.antialias.is_none() {
+            s.antialias = context_attribute(&s.gl, "antialias");
+        }
+        s.antialias.unwrap_or(false)
     }
 
     /// Color space of the drawing buffer (`drawingBufferColorSpace`). `Srgb`

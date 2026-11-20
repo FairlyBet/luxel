@@ -395,7 +395,7 @@ fn run_pass(
         };
         match dst_obj {
             Err(()) => report_stale("framebuffer", "render (resolve target)", dst),
-            Ok(None) if copy::canvas_multisampled(gl) => console::error_once(
+            Ok(None) if default_fb.is_multisampled() => console::error_once(
                 "[luxel] resolve into the canvas: it is multisampled itself \
                  (ContextOptions.antialias = true), a blit can't write into it; \
                  create the context with antialias off; skipped",

@@ -1,6 +1,5 @@
 use glam::{Mat4, Vec3, Vec4};
 
-use super::views::caster_bounds;
 use crate::render::hidden;
 use crate::transform::WorldMatrix;
 
@@ -92,12 +91,15 @@ impl Light {
 /// distance (candela → lux), nothing beyond its range or outside its cone.
 /// Contact shadows are of it, and the shaders report its share of each
 /// pixel. Its entity, and its world position (w 1) or the direction toward
-/// it (w 0).
-pub(crate) fn key_light(world: &luxel_ecs::World) -> Option<(luxel_ecs::Entity, Vec4)> {
+/// it (w 0). `bounds`: the casters' box (`caster_bounds`), already found.
+pub(crate) fn key_light_near(
+    world: &luxel_ecs::World,
+    bounds: Option<(Vec3, Vec3)>,
+) -> Option<(luxel_ecs::Entity, Vec4)> {
     let lights = world.storage::<Light>()?;
     let worlds = world.storage::<WorldMatrix>()?;
     let any_hidden = crate::render::any_hidden(world);
-    let centre = caster_bounds(world).map_or(Vec3::ZERO, |(lo, hi)| (lo + hi) * 0.5);
+    let centre = bounds.map_or(Vec3::ZERO, |(lo, hi)| (lo + hi) * 0.5);
     let mut best: Option<(f32, luxel_ecs::Entity, Vec4)> = None;
     // Among the lights the block holds (the first MAX_LIGHTS shown).
     let mut shaded = 0;
@@ -143,6 +145,10 @@ pub(crate) fn key_light(world: &luxel_ecs::World) -> Option<(luxel_ecs::Entity, 
 #[cfg(test)]
 mod key_light_tests {
     use super::*;
+
+    fn key_light(world: &World) -> Option<(luxel_ecs::Entity, Vec4)> {
+        key_light_near(world, crate::lighting::views::caster_bounds(world))
+    }
     use crate::culling::Bounds;
     use crate::lighting::settings::ShadowCaster;
     use crate::transform::WorldMatrix;

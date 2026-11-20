@@ -1810,6 +1810,9 @@ fn sub_image_2d(
 
 // The bytes as the typed array a pixel `data_type` calls for (a copy in JS
 // memory; the bytes are little-endian, as wasm and every WebGL platform are).
+// A typed view of `data` for a GL upload: straight over wasm memory when
+// `data` is aligned to its element (as allocations are), else over a copy.
+// Used at once: an allocation that grows the memory detaches the view.
 fn pixel_view(data: &[u8], data_type: u32) -> Result<js_sys::Object, String> {
     let element = match data_type {
         0x1400 | 0x1401 => 1,                                     // (UNSIGNED_)BYTE
@@ -1827,18 +1830,23 @@ fn pixel_view(data: &[u8], data_type: u32) -> Result<js_sys::Object, String> {
             data.len()
         ));
     }
-    let buffer = js_sys::Uint8Array::from(data).buffer();
+    let (buffer, at) = if (data.as_ptr() as usize).is_multiple_of(element) {
+        let memory = wasm_bindgen::memory().unchecked_into::<js_sys::WebAssembly::Memory>();
+        (memory.buffer(), data.as_ptr() as u32)
+    } else {
+        (js_sys::Uint8Array::from(data).buffer().into(), 0)
+    };
     let len = (data.len() / element) as u32;
     Ok(match data_type {
-        0x1400 => js_sys::Int8Array::new(&buffer).into(),
-        0x1401 => js_sys::Uint8Array::new(&buffer).into(),
-        0x1402 => js_sys::Int16Array::new_with_byte_offset_and_length(&buffer, 0, len).into(),
-        0x1404 => js_sys::Int32Array::new_with_byte_offset_and_length(&buffer, 0, len).into(),
-        0x1406 => js_sys::Float32Array::new_with_byte_offset_and_length(&buffer, 0, len).into(),
+        0x1400 => js_sys::Int8Array::new_with_byte_offset_and_length(&buffer, at, len).into(),
+        0x1401 => js_sys::Uint8Array::new_with_byte_offset_and_length(&buffer, at, len).into(),
+        0x1402 => js_sys::Int16Array::new_with_byte_offset_and_length(&buffer, at, len).into(),
+        0x1404 => js_sys::Int32Array::new_with_byte_offset_and_length(&buffer, at, len).into(),
+        0x1406 => js_sys::Float32Array::new_with_byte_offset_and_length(&buffer, at, len).into(),
         _ if element == 2 => {
-            js_sys::Uint16Array::new_with_byte_offset_and_length(&buffer, 0, len).into()
+            js_sys::Uint16Array::new_with_byte_offset_and_length(&buffer, at, len).into()
         }
-        _ => js_sys::Uint32Array::new_with_byte_offset_and_length(&buffer, 0, len).into(),
+        _ => js_sys::Uint32Array::new_with_byte_offset_and_length(&buffer, at, len).into(),
     })
 }
 

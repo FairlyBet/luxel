@@ -231,8 +231,20 @@ impl UniformBufferObj {
             ));
             return;
         }
+        // The field's bytes before (a mat4, the largest, is 64): an unchanged
+        // write isn't uploaded again.
+        let at = self.layout.field(id).offset as usize;
+        let mut before = [0u8; 64];
+        let window = (self.data.len().saturating_sub(at)).min(64);
+        before[..window].copy_from_slice(&self.data[at..at + window]);
         match self.layout.write(&mut self.data, id, vals) {
-            Ok(range) => self.dirty.mark(range),
+            Ok(range) => {
+                let (s, e) = (range.start as usize, range.end as usize);
+                let same = s == at && e - s <= window && self.data[s..e] == before[..e - s];
+                if !same {
+                    self.dirty.mark(range);
+                }
+            }
             Err(e) => console::warn_once(&format!("[luxel] UBO field \"{path}\" ({ty:?}): {e:?}")),
         }
     }
