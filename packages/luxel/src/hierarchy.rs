@@ -202,7 +202,6 @@ impl TransformSystem {
             if !(all || parent_moved || transforms.changed_tick(row) > self.last_run) {
                 continue;
             }
-            self.dirty[i] = true;
             let local = transforms.data()[row as usize].matrix();
             let m = match node.parent {
                 NONE => local,
@@ -211,6 +210,13 @@ impl TransformSystem {
                     worlds.get(parent).map_or(local, |pm| pm.0 * local)
                 }
             };
+            // The same matrix isn't written: its change tick is what shadow
+            // maps and object groups redraw for, and a rebuild (any spawn,
+            // despawn or reparent) recomputes everything.
+            if worlds.get(node.entity).is_some_and(|wm| wm.0 == m) {
+                continue;
+            }
+            self.dirty[i] = true;
             if let Some(mut wm) = worlds.get_mut(node.entity, now) {
                 wm.0 = m;
                 count += 1;

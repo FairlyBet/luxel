@@ -490,9 +490,11 @@ impl LightingSystem {
             world.storage::<Light>(),
             world.storage::<WorldMatrix>(),
         ) else {
+            self.release_maps(ctx, frame_group);
             return;
         };
         if settings.is_empty() {
+            self.release_maps(ctx, frame_group);
             return;
         }
         let Some(bounds) = caster_bounds(world) else {
@@ -598,6 +600,11 @@ impl LightingSystem {
                 views_used -= slot.count;
             }
         };
+        if could == 0.0 {
+            // No shown light asks for shadows any more.
+            self.release_maps(ctx, frame_group);
+            return;
+        }
         if views_used == 0 {
             return;
         }
@@ -622,6 +629,21 @@ impl LightingSystem {
                 self.maps.views.push(view);
             }
             self.layers.insert(e, slot);
+        }
+    }
+}
+
+impl LightingSystem {
+    // Back to the 1×1 placeholder once nothing casts shadows (not merely
+    // while the casters are out of view: they'd only come back).
+    fn release_maps(&mut self, ctx: &Context, frame_group: ParamGroupId) {
+        if self.maps.size() <= 1 && self.maps.layers() <= 1 {
+            return;
+        }
+        let depth16 = self.maps.depth16();
+        match self.maps.resize(ctx, 1, 1, depth16) {
+            Ok(()) => ctx.param_set_texture_by_name(frame_group, SHADOW_MAP, self.maps.texture()),
+            Err(e) => console::error_once(&format!("[luxel] shadow maps: {e}")),
         }
     }
 }

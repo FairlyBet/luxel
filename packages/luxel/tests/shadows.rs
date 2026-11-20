@@ -502,6 +502,11 @@ async fn lights_share_the_atlas() {
     );
     // Two 2048² layers of 24-bit depth (4 bytes a texel).
     assert_eq!(scene.shadow_memory(), (2048.0 * 2048.0 * 4.0) * 2.0);
+    // No light casts shadows any more: the maps go back to one 1×1 layer.
+    scene.remove_light(point);
+    scene.remove_light(spot);
+    scene.render_frame(camera);
+    assert_eq!(scene.shadow_memory(), 4.0);
     scene.destroy();
 }
 

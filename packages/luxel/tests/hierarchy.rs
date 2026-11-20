@@ -277,3 +277,24 @@ fn a_swap_within_one_frame_is_noticed() {
     frame(&mut w, &mut sys);
     assert_eq!(pos(&w, d), Vec3::new(1.0, 1.0, 2.0));
 }
+
+// A rebuild (here: a spawn elsewhere) leaves the matrices it recomputes the
+// same unchanged: no change tick for shadow maps and object groups to
+// redraw for.
+#[test]
+fn a_rebuild_keeps_unchanged_matrices_unchanged() {
+    let mut w = World::new();
+    let [_root, a, b, _c] = chain(&mut w);
+    let mut sys = TransformSystem::new();
+    frame(&mut w, &mut sys);
+    let tick = |w: &World, e: Entity| {
+        let s = w.storage::<WorldMatrix>().unwrap();
+        s.changed_tick(s.row(e).unwrap())
+    };
+    let (ta, tb) = (tick(&w, a), tick(&w, b));
+    let d = w.spawn();
+    w.insert(d, at(9.0, 0.0, 0.0));
+    assert_eq!(frame(&mut w, &mut sys), 1, "only the new one written");
+    assert_eq!((tick(&w, a), tick(&w, b)), (ta, tb));
+    assert_eq!(pos(&w, b), Vec3::new(1.0, 1.0, 1.0));
+}
