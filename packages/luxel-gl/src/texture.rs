@@ -1457,6 +1457,17 @@ impl Context {
     /// `internal`, if it can't: the format must be color-renderable and
     /// filterable — not compressed, integer, depth, or a float format the
     /// device can't render to (or, for 32F, filter).
+    // Levels for an image's texture: a whole chain only when mipmaps were
+    // asked for and the format can have them generated (else the levels
+    // past 0 would stay black; one level samples level 0 under any filter).
+    fn image_levels(&self, format: &TextureFormat, generate_mipmaps: bool, w: i32, h: i32) -> i32 {
+        if generate_mipmaps && self.mipmap_problem(format.internal as u32).is_none() {
+            mip_levels(w, h)
+        } else {
+            1
+        }
+    }
+
     pub(crate) fn mipmap_problem(&self, internal: u32) -> Option<String> {
         match internal {
             0 => Some("the texture has no storage yet".into()),
@@ -1602,11 +1613,7 @@ impl Context {
         generate_mipmaps: bool,
     ) -> (i32, i32) {
         let (w, h) = (bitmap.width() as i32, bitmap.height() as i32);
-        let levels = if generate_mipmaps {
-            mip_levels(w, h)
-        } else {
-            1
-        };
+        let levels = self.image_levels(format, generate_mipmaps, w, h);
         if w == 0 || h == 0 || !self.allocate_2d(tex, levels, format, w, h) {
             return (0, 0);
         }
@@ -1671,11 +1678,7 @@ impl Context {
             } else if img_cb.complete() && img_cb.natural_width() > 0 {
                 let w = img_cb.natural_width() as i32;
                 let h = img_cb.natural_height() as i32;
-                let levels = if generate_mipmaps {
-                    mip_levels(w, h)
-                } else {
-                    1
-                };
+                let levels = ctx.image_levels(&format, generate_mipmaps, w, h);
                 if ctx.allocate_2d(tex, levels, &format, w, h) {
                     // No browser color-space conversion: the image's stored values,
                     // as glTF (and data maps generally) expect.

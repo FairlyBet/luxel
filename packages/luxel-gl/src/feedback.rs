@@ -351,6 +351,8 @@ impl Context {
                 Some("index buffers can't receive transform feedback".to_string())
             } else if offset % 4 != 0 {
                 Some(format!("offset {offset} isn't a multiple of 4"))
+            } else if range.is_some() && size % 4 != 0 {
+                Some(format!("size {size} isn't a multiple of 4"))
             } else if size == 0 || offset as u64 + size as u64 > b.size as u64 {
                 Some(format!(
                     "range {offset}+{size} doesn't fit the buffer ({} bytes)",
@@ -364,6 +366,7 @@ impl Context {
             }
             Some((
                 b.raw.clone(),
+                range.is_none(),
                 Binding {
                     buffer,
                     offset,
@@ -375,7 +378,12 @@ impl Context {
         // GL first: the object stores the binding itself.
         gl.bind_transform_feedback(Gl::TRANSFORM_FEEDBACK, Some(&obj.raw));
         match &binding {
-            Some((raw, b)) => gl.bind_buffer_range_with_i32_and_i32(
+            // The whole buffer: bound as such, whatever its size (a range's
+            // size must be a multiple of 4).
+            Some((raw, true, _)) => {
+                gl.bind_buffer_base(Gl::TRANSFORM_FEEDBACK_BUFFER, index, Some(raw))
+            }
+            Some((raw, false, b)) => gl.bind_buffer_range_with_i32_and_i32(
                 Gl::TRANSFORM_FEEDBACK_BUFFER,
                 index,
                 Some(raw),
@@ -387,7 +395,7 @@ impl Context {
         gl.bind_buffer(Gl::TRANSFORM_FEEDBACK_BUFFER, None);
         gl.bind_transform_feedback(Gl::TRANSFORM_FEEDBACK, None);
 
-        let new = binding.map(|(_, b)| b);
+        let new = binding.map(|(_, _, b)| b);
         if let Some(b) = new {
             buffers.retain(b.buffer.0);
         }

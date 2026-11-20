@@ -131,7 +131,7 @@ async fn a_canvas_without_depth_still_depth_tests_and_presents_again() {
     // Resized: the frame held is the old size.
     canvas.set_width(SIZE as u32 * 2);
     ctx.default_framebuffer()
-        .set_viewport(Viewport::new(0, 0, SIZE * 2, SIZE));
+        .set_viewport(&Viewport::new(0, 0, SIZE * 2, SIZE));
     assert!(!scene.present_frame(), "declines after a resize");
     scene.destroy();
 }

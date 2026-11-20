@@ -119,5 +119,5 @@ impl Scene {
 // than asked).
 fn set_viewport_to_buffer(fb: &luxel_gl::framebuffer::DefaultFramebuffer) {
     let size = fb.drawing_buffer_size();
-    fb.set_viewport(Viewport::new(0, 0, size[0].max(1), size[1].max(1)));
+    fb.set_viewport(&Viewport::new(0, 0, size[0].max(1), size[1].max(1)));
 }

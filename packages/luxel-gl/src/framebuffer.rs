@@ -416,8 +416,8 @@ impl DefaultFramebuffer {
     }
 
     #[wasm_bindgen(js_name = setViewport)]
-    pub fn set_viewport(&self, v: Viewport) {
-        self.inner.borrow_mut().viewport = v;
+    pub fn set_viewport(&self, v: &Viewport) {
+        self.inner.borrow_mut().viewport = *v;
     }
 
     #[wasm_bindgen(js_name = setClearColor)]
@@ -1062,10 +1062,15 @@ impl FramebufferObj {
         }
         if let Some(depth) = &self.depth {
             if depth.is_stencil() {
-                if mask.depth || mask.stencil {
-                    arr.push(&JsValue::from(
-                        WebGl2RenderingContext::DEPTH_STENCIL_ATTACHMENT,
-                    ));
+                // A packed attachment's halves can be discarded alone.
+                let point = match (mask.depth, mask.stencil) {
+                    (true, true) => Some(WebGl2RenderingContext::DEPTH_STENCIL_ATTACHMENT),
+                    (true, false) => Some(WebGl2RenderingContext::DEPTH_ATTACHMENT),
+                    (false, true) => Some(WebGl2RenderingContext::STENCIL_ATTACHMENT),
+                    (false, false) => None,
+                };
+                if let Some(point) = point {
+                    arr.push(&JsValue::from(point));
                 }
             } else if mask.depth {
                 arr.push(&JsValue::from(WebGl2RenderingContext::DEPTH_ATTACHMENT));

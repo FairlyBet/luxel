@@ -100,3 +100,32 @@ async fn resolution_scale_and_pixel_ratio_cap() {
     drop(ctx);
     canvas.remove();
 }
+
+// A context for a WebGL2 context made elsewhere covers its drawing buffer,
+// and one Viewport object can be set again (it isn't consumed).
+#[wasm_bindgen_test]
+fn from_gl_covers_the_drawing_buffer() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(64);
+    canvas.set_height(32);
+    let gl: web_sys::WebGl2RenderingContext = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let ctx = Context::from_gl(gl);
+    let fb = ctx.default_framebuffer();
+    assert_eq!((fb.width(), fb.height()), (64, 32));
+    let vp = luxel_gl::draw::Viewport::new(0, 0, 8, 8);
+    fb.set_viewport(&vp);
+    fb.set_viewport(&vp);
+    assert_eq!(fb.width(), 8);
+}

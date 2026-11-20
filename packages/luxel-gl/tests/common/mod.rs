@@ -42,6 +42,11 @@ pub struct Fixture {
 }
 
 pub fn fixture() -> Fixture {
+    fixture_with(false)
+}
+
+/// The fixture with the canvas antialiased (multisampled) or not.
+pub fn fixture_with(antialias: bool) -> Fixture {
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas: HtmlCanvasElement = document
         .create_element("canvas")
@@ -52,7 +57,7 @@ pub fn fixture() -> Fixture {
     canvas.set_height(H as u32);
 
     let mut options = ContextOptions::new();
-    options.antialias = false;
+    options.antialias = antialias;
     let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
     // Same context object the library uses, for readback only.
     let gl = canvas

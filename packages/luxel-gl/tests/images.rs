@@ -215,3 +215,35 @@ async fn failed_loads_call_back_with_zero() {
     assert_eq!(errors.len(), 2, "{errors:?}");
     assert!(errors[0].contains("no-such-image.png"), "{errors:?}");
 }
+
+// Mipmaps asked for a format GL can't generate them for (sRGB without
+// alpha): the texture gets one level, sampled under any filter, instead of
+// a chain whose levels past 0 stay black.
+#[wasm_bindgen_test]
+async fn mipmaps_for_a_format_that_cannot_have_them() {
+    let f = fixture();
+    let bytes_of = |ctx: &luxel_gl::context::Context| {
+        js_sys::Reflect::get(&ctx.resource_stats(), &"textureBytes".into())
+            .unwrap()
+            .as_f64()
+            .unwrap()
+    };
+    let before = bytes_of(&f.ctx);
+    let t = new_texture(&f);
+    let (cb, done) = on_load();
+    let errors = capture_console("error", || {
+        f.ctx.texture_load_bytes(
+            t,
+            &png(&[TOP, BOTTOM, TOP, BOTTOM]),
+            "image/png",
+            &TextureFormat::srgb8(),
+            true,
+            false,
+            cb,
+        );
+    });
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(loaded(done).await, (1, 4));
+    // One 1×4 level of 3 bytes a texel, not 1×4 + 1×2 + 1×1.
+    assert_eq!(bytes_of(&f.ctx) - before, 12.0);
+}

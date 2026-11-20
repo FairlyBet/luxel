@@ -112,6 +112,10 @@ struct State {
     // GPU progress probes (`gpu_fence`), oldest first. Fences in flight: each with the context (and its generation) it was
     // set on — only that context can wait on or delete it.
     fences: Vec<Fence>,
+    // Where the last "gpu frame" span ended: the next starts no earlier, so
+    // the spans tile their track instead of overlapping (spans on a track
+    // must nest).
+    gpu_last_end: f64,
 }
 
 thread_local! {
@@ -315,7 +319,14 @@ pub fn start(max_events: usize) {
         s.name_index.clear();
         s.full = false;
         s.max_events = max_events.max(1);
-        s.origin = performance_now();
+        // Fences still in flight keep their times, on the new clock.
+        let origin = performance_now();
+        let shift = (s.origin - origin) * 1000.0;
+        for f in &mut s.fences {
+            f.set += shift;
+        }
+        s.gpu_last_end = 0.0;
+        s.origin = origin;
         s.recording = true;
     });
 }
@@ -375,11 +386,15 @@ pub fn gpu_fence(ctx: &Context) {
         }
         for Fence { sync, set, .. } in done {
             gl.delete_sync(Some(&sync));
+            let ts = set.max(s.gpu_last_end).max(0.0);
+            s.gpu_last_end = now;
             s.push(Rec {
                 name: Name::Static("gpu frame"),
-                phase: Phase::Complete { dur: now - set },
+                phase: Phase::Complete {
+                    dur: (now - ts).max(0.0),
+                },
                 track: TRACK_GPU,
-                ts: set,
+                ts,
                 args: Vec::new(),
             });
         }
@@ -661,6 +676,11 @@ impl Trace {
             let mut s = s.borrow_mut();
             if !s.recording {
                 return;
+            }
+            if !start_ms.is_finite() || !duration_ms.is_finite() {
+                return crate::console::warn_once(
+                    "[luxel] Trace.complete: a time isn't a finite number; ignored",
+                );
             }
             let name = s.intern(name);
             let ts = (start_ms - s.origin) * 1000.0;

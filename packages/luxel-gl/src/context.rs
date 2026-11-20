@@ -348,9 +348,16 @@ impl Context {
         v.set(v.get().wrapping_add(1));
     }
 
+    /// A context for a WebGL2 context made elsewhere. The canvas pass
+    /// covers its drawing buffer as it is now; for an `OffscreenCanvas`
+    /// (no auto-resize) keep it current with `setViewport` when it resizes.
     #[wasm_bindgen(js_name = fromGl)]
     pub fn from_gl(gl: WebGl2RenderingContext) -> Context {
-        let default_fb = DefaultFramebuffer::new(gl.clone(), Viewport::new(0, 0, 0, 0), None);
+        let viewport = Viewport::new(0, 0, gl.drawing_buffer_width(), gl.drawing_buffer_height());
+        let canvas = gl
+            .canvas()
+            .and_then(|c| c.dyn_into::<HtmlCanvasElement>().ok());
+        let default_fb = DefaultFramebuffer::new(gl.clone(), viewport, canvas);
         Context::new(gl, default_fb)
     }
 

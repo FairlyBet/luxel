@@ -235,3 +235,29 @@ fn copy_from_the_canvas_into_a_texture() {
     assert_eq!(px, [BLACK, BLUE].concat());
     assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
 }
+
+// An antialiased canvas is resolved for the copy (as for readPixels), so
+// it is a valid source.
+#[wasm_bindgen_test]
+fn copy_from_an_antialiased_canvas() {
+    let f = fixture_with(true);
+    f.ctx.render(&quad_pass(
+        &f,
+        CANVAS,
+        solid_program(&f, "0.0, 0.0, 1.0, 1.0"),
+        1,
+        true,
+    ));
+    let (fb, tex) = texture_framebuffer(&f, 1, 1);
+    let errors = capture_console("error", || {
+        f.ctx
+            .copy_texture_sub_image_2d(tex, 0, 0, 0, CANVAS, 0, W / 2, H / 2, 1, 1);
+    });
+    assert!(errors.is_empty(), "{errors:?}");
+    let px = f
+        .ctx
+        .read_pixels(fb, 0, 0, 0, 1, 1, ReadFormat::Rgba8)
+        .unwrap();
+    assert_eq!(px, BLUE);
+    assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
+}

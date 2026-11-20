@@ -371,8 +371,10 @@ impl Context {
             width,
             height,
         };
+        // An antialiased canvas is resolved for the copy, as for readPixels
+        // (WebGL's implicit resolve of the drawing buffer).
         let multisampled = if src.is_null() {
-            canvas_multisampled(self.gl())
+            false
         } else {
             let res = self.res();
             res.framebuffers
