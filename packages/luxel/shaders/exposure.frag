@@ -33,6 +33,14 @@ uniform float u_force;       // 1: no previous to ease from
 
 out vec4 frag_color;
 
+// Kept finite: radiance past half floats' range is stored as infinity, and
+// one such texel would carry the average (and NaN, inf × 0) with it.
+// Infinity becomes the largest half float, NaN black.
+vec3 finite(vec3 c) {
+    c = min(c, vec3(65504.0));
+    return mix(vec3(0.0), c, equal(c, c));
+}
+
 void main() {
     float exposure;
 #ifdef EXPOSURE_BEGIN
@@ -43,7 +51,7 @@ void main() {
     vec3 source_color = vec3(0.0);
     for (int i = src_pos.x; i < next_pos.x; i++) {
         for (int j = src_pos.y; j < next_pos.y; j++) {
-            source_color += texelFetch(u_source, ivec2(i, j), 0).rgb;
+            source_color += finite(texelFetch(u_source, ivec2(i, j), 0).rgb);
         }
     }
     source_color /= float((next_pos.x - src_pos.x) * (next_pos.y - src_pos.y));

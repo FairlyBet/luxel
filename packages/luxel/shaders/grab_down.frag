@@ -23,8 +23,17 @@ float vmax(vec4 v) {
     return max(max(v.x, v.y), max(v.z, v.w));
 }
 
+// Kept finite: radiance past half floats' range is stored as infinity, and
+// one such texel would carry the average (and NaN, inf × 0) with it.
+// Infinity becomes the largest half float, NaN black.
+vec3 finite(vec3 c) {
+    c = min(c, vec3(65504.0));
+    return mix(vec3(0.0), c, equal(c, c));
+}
+
 void tapReinhard(inout vec4 sum, inout float totalWeight, ivec2 p, ivec2 size) {
     vec4 s = texelFetch(u_source, min(p, size - 1), 0);
+    s.rgb = finite(s.rgb); // (an infinite tap's weight is 0, and inf × 0 NaN)
     float w = 1.0 / (1.0 + vmax(s));
     totalWeight += w;
     sum += s * w;

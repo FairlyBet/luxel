@@ -160,18 +160,13 @@ impl AutoExposure {
             from = t;
         }
         // Last: to 1×1, eased from the previous.
-        let dt = if self.last_ms > 0.0 {
-            now_ms - self.last_ms
-        } else {
-            0.0
-        };
+        let (adjust, force) = ease(self.last_ms, now_ms, self.speed);
         self.last_ms = now_ms;
-        let force = !(dt > 0.0 && dt <= 1000.0);
         let next = 1 - self.current;
         let (p, _, g) = self.end;
         ctx.param_set_texture_by_name(g, "u_source", from);
         ctx.param_set_texture_by_name(g, "u_prev", self.result[self.current].0);
-        ctx.param_set_f32(g, self.f_adjust, self.speed * (dt as f32 / 1000.0));
+        ctx.param_set_f32(g, self.f_adjust, adjust);
         ctx.param_set_f32(g, self.f_min, self.min_luminance);
         ctx.param_set_f32(g, self.f_max, self.max_luminance);
         ctx.param_set_f32(g, self.f_force, if force { 1.0 } else { 0.0 });
@@ -201,5 +196,40 @@ impl AutoExposure {
                 ctx.destroy_texture(t);
             }
         }
+    }
+}
+
+// The share of the way to the measured value this meter moves (at most all
+// of it), and whether to jump there: on the first meter or after a pause of
+// over a second. Two meters in the same millisecond (a coarse clock) or a
+// clock going back keep the last value.
+fn ease(last_ms: f64, now_ms: f64, speed: f32) -> (f32, bool) {
+    let dt = now_ms - last_ms;
+    if last_ms <= 0.0 || dt > 1000.0 {
+        return (1.0, true);
+    }
+    if !(dt > 0.0) {
+        return (0.0, false);
+    }
+    ((speed * (dt as f32 / 1000.0)).min(1.0), false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ease;
+
+    #[test]
+    fn easing_steps() {
+        assert_eq!(ease(0.0, 5.0, 0.5), (1.0, true), "first meter");
+        assert_eq!(ease(100.0, 1200.0, 0.5), (1.0, true), "after a pause");
+        assert_eq!(ease(100.0, 100.0, 0.5), (0.0, false), "same millisecond");
+        assert_eq!(ease(100.0, 90.0, 0.5), (0.0, false), "clock went back");
+        assert_eq!(
+            ease(100.0, 600.0, 5.0),
+            (1.0, false),
+            "never past the target"
+        );
+        let (a, f) = ease(100.0, 116.0, 0.5);
+        assert!(!f && (a - 0.008).abs() < 1e-6);
     }
 }
