@@ -249,7 +249,7 @@ impl VaoBuilder {
         }
     }
 
-    /// Makes the attribute at `index` (added already) per instance: it
+    /// Makes the attribute at `index` per instance: it
     /// advances once every `divisor` instances (1: each instance its own),
     /// for instanced draws. Per-instance attributes go in a buffer of their
     /// own, one per divisor (their counts differ: n instances need
@@ -447,6 +447,17 @@ impl VaoBuilder {
                 .find(|&&(i, _)| i == e.index)
                 .map_or(0, |&(_, d)| d)
         };
+        // A divisor set on an index no attribute starts at would be lost.
+        if let Some(&(i, _)) = self
+            .divisors
+            .iter()
+            .find(|&&(i, d)| d != 0 && !self.attrs.iter().any(|e| e.index == i))
+        {
+            return Err(err!(
+                "VaoBuilder: setDivisor({i}): no attribute starts at index {i} (a matrix takes \
+                 its first slot's divisor)"
+            ));
+        }
         let mut divisors: Vec<u32> = self.attrs.iter().map(divisor_of).collect();
         divisors.sort_unstable();
         divisors.dedup();
@@ -462,6 +473,11 @@ impl VaoBuilder {
                 "vertices"
             };
             let (interleaved, stride, offsets) = interleave(&group, what)?;
+            if stride > 255 {
+                return Err(err!(
+                    "VaoBuilder: {stride} bytes per vertex in one buffer; WebGL allows at most 255"
+                ));
+            }
             let vbo = ctx.create_buffer(self.usage, &interleaved)?;
             ctx.own_buffer(vao, vbo);
             // One vertex_attrib_pointer per slot for matrices.

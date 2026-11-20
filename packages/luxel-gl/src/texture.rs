@@ -822,6 +822,13 @@ impl Context {
             ) {
                 return;
             }
+            // WebGL2 refuses these for 3D uploads from an array.
+            if unpack.flip_y || unpack.premultiply_alpha {
+                return console::error(
+                    "[luxel] texture_sub_image_3d: flipY / premultiplyAlpha don't apply to \
+                     3D uploads from bytes; ignored",
+                );
+            }
             unpack.apply(gl);
             let result = if format.data_type == UNSIGNED_BYTE {
                 gl.tex_sub_image_3d_with_opt_u8_array(
@@ -888,9 +895,14 @@ impl Context {
                 return;
             }
             let target = face.as_gl();
+            // The unpack state at its defaults, set and put back as the 2D
+            // uploads do (whatever an earlier call left).
+            let unpack = PixelUnpack::default();
+            unpack.apply(gl);
             if let Err(e) = sub_image_2d(gl, target, level, x, y, width, height, format, data) {
                 console::error(&format!("[luxel] texSubImage2D cube face failed: {e}"));
             }
+            PixelUnpack::reset(gl);
         });
     }
 
@@ -1544,8 +1556,11 @@ async fn decode_bitmap(
     let opts = js_sys::Object::new();
     js_sys::Reflect::set(&opts, &"premultiplyAlpha".into(), &"none".into())?;
     js_sys::Reflect::set(&opts, &"colorSpaceConversion".into(), &"none".into())?;
-    let orientation = if flip_y { "flipY" } else { "from-image" };
-    js_sys::Reflect::set(&opts, &"imageOrientation".into(), &orientation.into())?;
+    // Only a flip is asked for: the default already follows the image's
+    // orientation, and older engines refuse "from-image".
+    if flip_y {
+        js_sys::Reflect::set(&opts, &"imageOrientation".into(), &"flipY".into())?;
+    }
     let args = js_sys::Array::of2(blob, &opts);
     call_async(&js_sys::global(), decode, &args)
         .await?
@@ -1599,7 +1614,7 @@ impl Context {
                     (0, 0)
                 }
             };
-            let _ = on_load.call2(&JsValue::NULL, &(w as f64).into(), &(h as f64).into());
+            call_on_load(&on_load, w as f64, h as f64);
         });
     }
 
@@ -1707,7 +1722,7 @@ impl Context {
             }
             // Report the decoded size (0,0 on failure). Callbacks that don't need
             // it (the common case) are nullary JS functions and ignore the args.
-            let _ = on_load.call2(&JsValue::NULL, &(w as f64).into(), &(h as f64).into());
+            call_on_load(&on_load, w as f64, h as f64);
             // `_self` drops here, after every capture has been used for the last
             // time, freeing the closure box.
         });
@@ -1806,6 +1821,13 @@ fn pixel_view(data: &[u8], data_type: u32) -> Result<js_sys::Object, String> {
 /// texture-packing join does).
 pub fn failed_later(on_load: js_sys::Function) {
     wasm_bindgen_futures::spawn_local(async move {
-        let _ = on_load.call2(&JsValue::NULL, &0.into(), &0.into());
+        call_on_load(&on_load, 0.0, 0.0);
     });
+}
+
+// An image-load callback, reporting what it throws.
+fn call_on_load(on_load: &js_sys::Function, w: f64, h: f64) {
+    if let Err(e) = on_load.call2(&JsValue::NULL, &w.into(), &h.into()) {
+        web_sys::console::error_2(&"[luxel] an image load's callback threw:".into(), &e);
+    }
 }

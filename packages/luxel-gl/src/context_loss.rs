@@ -108,8 +108,14 @@ pub(crate) fn install(core: &Rc<Core>) {
                 }
                 back
             });
-            if core.reverse_z.get() {
-                crate::depth_range::apply(&core);
+            // Reverse-Z needs EXT_clip_control; a device without it now
+            // goes back to the usual depth (flipping funcs and clears with
+            // no clip control would draw nothing right).
+            if core.reverse_z.get() && !crate::depth_range::apply(&core) {
+                core.reverse_z.set(false);
+                console::warn(
+                    "[luxel] reverse-Z is off: EXT_clip_control is gone after the restore",
+                );
             }
             let ctx = Context { core };
             invoke(&ctx.core.loss.on_restored, &ctx);

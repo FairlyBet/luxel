@@ -47,7 +47,15 @@ thread_local! {
 fn first_time(msg: &str) -> bool {
     REPORTED.with(|r| {
         let mut r = r.borrow_mut();
-        !r.contains(msg) && r.insert(msg.to_string())
+        if r.contains(msg) {
+            return false;
+        }
+        // Messages naming handles never repeat: past a few thousand the set
+        // starts over rather than grow for the page's life.
+        if r.len() >= 4096 {
+            r.clear();
+        }
+        r.insert(msg.to_string())
     })
 }
 

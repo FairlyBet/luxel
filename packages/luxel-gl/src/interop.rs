@@ -36,6 +36,8 @@ impl Context {
         gl.pixel_storei(Gl::PACK_ROW_LENGTH, 0);
         gl.pixel_storei(Gl::PACK_SKIP_ROWS, 0);
         gl.pixel_storei(Gl::PACK_SKIP_PIXELS, 0);
+        // Unpack too: uploads that take the defaults skip setting them.
+        crate::pixel_unpack::PixelUnpack::reset(&gl);
         gl.disable(Gl::RASTERIZER_DISCARD);
         gl.disable(Gl::SAMPLE_ALPHA_TO_COVERAGE);
         gl.disable(Gl::SAMPLE_COVERAGE);

@@ -76,8 +76,10 @@ impl GpuProfiler {
     /// times add up per frame only if collected together — give each its
     /// own). Call before rendering the pass.
     pub fn time(&mut self, pass: &mut Pass, label: &str) {
-        if let Some(q) = self.next_query(label) {
-            pass.set_timer(q);
+        match self.next_query(label) {
+            Some(q) => pass.set_timer(q),
+            // None free (all in flight): not an earlier frame's query again.
+            None => pass.clear_timer(),
         }
     }
 
@@ -154,6 +156,10 @@ impl GpuProfiler {
 
     /// Frees the queries.
     pub fn destroy(&mut self) {
+        // After a loss its queries went with the context.
+        if self.resync() {
+            return;
+        }
         for timer in self.timers.drain(..) {
             for slot in timer.slots {
                 self.ctx.destroy_query(slot.query);

@@ -27,6 +27,14 @@ pub enum AttrType {
 }
 
 impl AttrType {
+    fn byte_size(&self) -> i32 {
+        match self {
+            Self::Byte | Self::UnsignedByte => 1,
+            Self::Short | Self::UnsignedShort | Self::HalfFloat => 2,
+            Self::Int | Self::UnsignedInt | Self::Float => 4,
+        }
+    }
+
     fn as_gl(&self) -> u32 {
         *self as u32
     }
@@ -224,6 +232,21 @@ impl Context {
         if b.kind != BufferKind::Generic {
             console::error("[luxel] vertex_array_attr: an index buffer can't hold vertex data");
             return;
+        }
+        // What vertexAttribPointer refuses (and the attribute would be
+        // recorded and enabled all the same).
+        let unit = attr.attr_type.byte_size();
+        if !(1..=4).contains(&attr.size)
+            || !(0..=255).contains(&attr.stride)
+            || attr.offset < 0
+            || attr.stride % unit != 0
+            || attr.offset % unit != 0
+        {
+            return console::error(&format!(
+                "[luxel] vertex_array_attr: size {} / stride {} / offset {} isn't one WebGL takes \
+                 (size 1–4, stride 0–255, both multiples of the type's {unit} bytes); ignored",
+                attr.size, attr.stride, attr.offset
+            ));
         }
 
         self.gl_state().forget_vao();

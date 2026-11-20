@@ -118,3 +118,13 @@ compressed_formats![
     (RED_GREEN_RGTC2, red_green_rgtc2, 0x8DBD),
     (SIGNED_RED_GREEN_RGTC2, signed_red_green_rgtc2, 0x8DBE),
 ];
+
+/// Whether `internal` is one of the compressed formats (S3TC, ETC2 / EAC,
+/// ASTC, BPTC, RGTC).
+pub(crate) fn is_compressed(internal: u32) -> bool {
+    matches!(
+        internal,
+        0x83F0..=0x83F3 | 0x8C4C..=0x8C4F | 0x9270..=0x9279 | 0x93B0..=0x93BD
+            | 0x93D0..=0x93DD | 0x8E8C..=0x8E8F | 0x8DBB..=0x8DBE
+    )
+}

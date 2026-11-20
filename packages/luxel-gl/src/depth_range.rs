@@ -55,14 +55,15 @@ impl Context {
 
 // Sets the clip-control state for the context's flag (GL loses it with the
 // context).
-pub(crate) fn apply(core: &Core) {
+/// False without EXT_clip_control (nothing applied).
+pub(crate) fn apply(core: &Core) -> bool {
     let Some(ext) = core
         .gl
         .get_extension(Extension::ExtClipControl.name())
         .ok()
         .flatten()
     else {
-        return;
+        return false;
     };
     let depth = if core.reverse_z.get() {
         ZERO_TO_ONE
@@ -74,4 +75,5 @@ pub(crate) fn apply(core: &Core) {
     {
         let _ = f.call2(&ext, &LOWER_LEFT.into(), &depth.into());
     }
+    true
 }

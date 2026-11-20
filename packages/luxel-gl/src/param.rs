@@ -138,7 +138,15 @@ impl ParamLayoutObj {
         for (name, def) in &builder.fields {
             let field = match *def {
                 FieldDef::Plain(ty, count) => {
-                    let w = (ty.components() * count) as usize;
+                    // More than any MAX_*_UNIFORM_VECTORS allows (4096
+                    // vec4s): a typo, not a layout.
+                    let w = ty
+                        .components()
+                        .checked_mul(count)
+                        .filter(|&w| w <= 4 * 4096)
+                        .ok_or_else(|| {
+                            err!("param layout: \"{name}\" × {count} is past any uniform limit")
+                        })? as usize;
                     plain.push(PlainField {
                         name: name.as_str().into(),
                         ty,

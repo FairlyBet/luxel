@@ -196,12 +196,12 @@ fn run_pass(
         match framebuffers.get(pass.target.0) {
             Some(f) => Some(f),
             None => {
-                st.stats.skipped += pass.items.len() as u32;
+                st.stats.skipped = st.stats.skipped.wrapping_add(pass.items.len() as u32);
                 return report_stale("framebuffer", "render (pass target)", pass.target);
             }
         }
     };
-    st.stats.passes += 1;
+    st.stats.passes = st.stats.passes.wrapping_add(1);
     st.bind_target(gl, pass.target, target.map(|f| &f.raw));
     // Blending into a 32-bit float attachment without EXT_float_blend is an
     // INVALID_OPERATION per draw: such draws are skipped, reported.
@@ -246,7 +246,7 @@ fn run_pass(
         Some(want) => match Recording::new(feedbacks, want) {
             Some(r) => Some(r),
             None => {
-                st.stats.skipped += pass.items.len() as u32;
+                st.stats.skipped = st.stats.skipped.wrapping_add(pass.items.len() as u32);
                 return;
             }
         },
@@ -255,7 +255,7 @@ fn run_pass(
     for d in &pass.items {
         let Some(program) = programs.get_mut(d.program.0) else {
             report_stale("program", "render (draw)", d.program);
-            st.stats.skipped += 1;
+            st.stats.skipped = st.stats.skipped.wrapping_add(1);
             continue;
         };
         // A program whose link failed is skipped (its error is reported once).
@@ -263,7 +263,7 @@ fn run_pass(
         // one-shot pass (a bake, a pack) can't silently draw nothing; callers who
         // want to avoid the stall poll `program_is_ready` before submitting.
         if !program.ensure_linked(gl) {
-            st.stats.skipped += 1;
+            st.stats.skipped = st.stats.skipped.wrapping_add(1);
             continue;
         }
         // Checked before its program is bound (switching programs while
@@ -271,12 +271,12 @@ fn run_pass(
         if let Some(r) = &mut recording
             && !r.admit(d, program)
         {
-            st.stats.skipped += 1;
+            st.stats.skipped = st.stats.skipped.wrapping_add(1);
             continue;
         }
         if !st.apply_render_state(gl, d.state, render_states) {
             report_stale("render state", "render (draw)", d.state);
-            st.stats.skipped += 1;
+            st.stats.skipped = st.stats.skipped.wrapping_add(1);
             continue;
         }
         // The pass's scissor, else (deprecated) the state's.
@@ -295,7 +295,7 @@ fn run_pass(
                 "[luxel] render: blending into a 32-bit float target needs \
                  EXT_float_blend, which this device doesn't have; draws skipped",
             );
-            st.stats.skipped += 1;
+            st.stats.skipped = st.stats.skipped.wrapping_add(1);
             continue;
         }
         let vao = if d.vao.is_null() {
@@ -305,7 +305,7 @@ fn run_pass(
                 Some(v) => Some(&v.raw),
                 None => {
                     report_stale("vertex array", "render (draw)", d.vao);
-                    st.stats.skipped += 1;
+                    st.stats.skipped = st.stats.skipped.wrapping_add(1);
                     continue;
                 }
             }
@@ -354,7 +354,7 @@ fn run_pass(
             }
         }
         if !complete {
-            st.stats.skipped += 1;
+            st.stats.skipped = st.stats.skipped.wrapping_add(1);
             continue;
         }
         program.check_covered(&used[..n_used]);
@@ -372,7 +372,7 @@ fn run_pass(
         if let Some(target) = occlusion {
             gl.end_query(target);
         }
-        st.stats.draws += 1;
+        st.stats.draws = st.stats.draws.wrapping_add(1);
     }
     if let Some(r) = recording {
         r.finish(gl);
@@ -411,7 +411,33 @@ fn run_pass(
                 let all = Viewport::new(0, 0, w, h);
                 // Whether a blit ran: only then is DRAW the resolve target.
                 let mut blitted = false;
-                if pass.resolve_color.is_empty() {
+                // Resolving into itself, or into a multisampled target, or
+                // (from a multisampled one) into another format: what GL
+                // refuses, refused here with the reason.
+                let refused = if dst == pass.target {
+                    Some("the resolve target is the pass's own target".to_string())
+                } else if d
+                    .and_then(|f| f.color_format_in(textures, renderbuffers, 0))
+                    .is_some_and(|(_, n)| n > 0)
+                {
+                    Some("the resolve target is multisampled".to_string())
+                } else if pass.resolve_color.is_empty()
+                    && let (Some((a, n)), Some((b, _))) = (
+                        target.and_then(|f| f.color_format_in(textures, renderbuffers, 0)),
+                        d.and_then(|f| f.color_format_in(textures, renderbuffers, 0)),
+                    )
+                    && n > 0
+                    && a != b
+                {
+                    Some(format!(
+                        "color 0x{a:X} (multisampled) resolves into the same format only, not 0x{b:X}"
+                    ))
+                } else {
+                    None
+                };
+                if let Some(why) = refused {
+                    console::error_once(&format!("[luxel] resolve: {why}; skipped"));
+                } else if pass.resolve_color.is_empty() {
                     blitted = true;
                     copy::blit(
                         gl,
@@ -744,7 +770,7 @@ impl GlState {
             None => rs.apply(gl, self.reverse_z),
         }
         self.render_state = Some(id);
-        self.stats.states += 1;
+        self.stats.states = self.stats.states.wrapping_add(1);
         true
     }
 
@@ -757,7 +783,7 @@ impl GlState {
         if self.program != Some(id) {
             gl.use_program(Some(raw));
             self.program = Some(id);
-            self.stats.programs += 1;
+            self.stats.programs = self.stats.programs.wrapping_add(1);
         }
     }
 
@@ -770,7 +796,7 @@ impl GlState {
         if self.vao != Some(id) {
             gl.bind_vertex_array(raw);
             self.vao = Some(id);
-            self.stats.vertex_arrays += 1;
+            self.stats.vertex_arrays = self.stats.vertex_arrays.wrapping_add(1);
         }
     }
 }
@@ -800,7 +826,7 @@ fn apply_group(
     let mut complete = true;
     for (i, f) in layout.plain.iter().enumerate() {
         if program.upload_field(gl, m, i, f, group) {
-            stats.uniforms += 1;
+            stats.uniforms = stats.uniforms.wrapping_add(1);
         }
     }
 
@@ -813,14 +839,14 @@ fn apply_group(
             // Unset: sample nothing rather than whatever an earlier draw left
             // on this unit (perhaps a texture the target is drawing into).
             if bindings.unbind_unit(gl, unit) {
-                stats.textures += 1;
+                stats.textures = stats.textures.wrapping_add(1);
             }
             continue;
         }
         match textures.get(tex.0) {
             Some(obj) => {
                 if bindings.bind_texture(gl, unit, tex, obj) {
-                    stats.textures += 1;
+                    stats.textures = stats.textures.wrapping_add(1);
                 }
             }
             None => {
@@ -870,7 +896,7 @@ fn apply_group(
             }
         };
         if bindings.bind_sampler(gl, unit, sid, raw) {
-            stats.samplers += 1;
+            stats.samplers = stats.samplers.wrapping_add(1);
         }
     }
 
@@ -897,7 +923,7 @@ fn apply_group(
         let size = range.map_or(obj.byte_size(), |(_, s)| s as u32);
         let point = program.block_point(bi, size);
         if bindings.bind_block(gl, point, ubo, range, obj) {
-            stats.blocks += 1;
+            stats.blocks = stats.blocks.wrapping_add(1);
         }
     }
     complete

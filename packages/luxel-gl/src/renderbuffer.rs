@@ -186,7 +186,9 @@ impl Context {
         width: i32,
         height: i32,
     ) -> Result<RenderbufferId, Error> {
-        self.new_renderbuffer(format, samples.max(1), width, height)
+        // 0 is single-sampled storage (as the samples option means
+        // elsewhere), not a 1-sample buffer treated as multisampled.
+        self.new_renderbuffer(format, samples.max(0), width, height)
     }
 
     /// 0 for a stale handle.

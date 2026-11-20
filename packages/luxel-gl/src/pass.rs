@@ -72,6 +72,30 @@ pub fn default_key(
     ix(program.0, 15) << 48 | ix(state.0, 12) << 36 | ix(material.0, 20) << 16 | ix(vao.0, 16)
 }
 
+/// `defaultKey`'s high 32 bits, as a number (`defaultKey` is a BigInt in
+/// JS): `pushWithKey(defaultKeyHi(…), defaultKeyLo(…), …)` sorts as `push`.
+/// `KEY_LAST` is 0x8000_0000 in the high half.
+#[wasm_bindgen(js_name = defaultKeyHi)]
+pub fn default_key_hi(
+    program: ProgramId,
+    state: StateId,
+    material: ParamGroupId,
+    vao: VertexArrayId,
+) -> u32 {
+    (default_key(program, state, material, vao) >> 32) as u32
+}
+
+/// `defaultKey`'s low 32 bits (see `defaultKeyHi`).
+#[wasm_bindgen(js_name = defaultKeyLo)]
+pub fn default_key_lo(
+    program: ProgramId,
+    state: StateId,
+    material: ParamGroupId,
+    vao: VertexArrayId,
+) -> u32 {
+    default_key(program, state, material, vao) as u32
+}
+
 // ---------------------------------------------------------------------------
 // Batch — a builder for draws sharing a program, state and default groups.
 // ---------------------------------------------------------------------------
@@ -307,6 +331,18 @@ impl Pass {
     #[wasm_bindgen(js_name = clearScissor)]
     pub fn clear_scissor(&mut self) {
         self.scissor = None;
+    }
+
+    /// Back to the target's full size (undoes `setViewport`).
+    #[wasm_bindgen(js_name = clearViewport)]
+    pub fn clear_viewport(&mut self) {
+        self.viewport = None;
+    }
+
+    /// The clear covers the whole target again (undoes `setClearRect`).
+    #[wasm_bindgen(js_name = clearClearRect)]
+    pub fn clear_clear_rect(&mut self) {
+        self.clear_rect = None;
     }
 
     /// Limits the clear to `rect` (in the target's pixels), whatever the

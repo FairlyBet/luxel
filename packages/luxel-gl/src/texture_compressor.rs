@@ -770,6 +770,8 @@ impl TextureCompressor {
                 (Gl::TEXTURE_WRAP_T, get(Gl::TEXTURE_WRAP_T)),
                 (Gl::TEXTURE_BASE_LEVEL, get(Gl::TEXTURE_BASE_LEVEL)),
                 (Gl::TEXTURE_MAX_LEVEL, get(Gl::TEXTURE_MAX_LEVEL)),
+                (Gl::TEXTURE_MIN_LOD, get(Gl::TEXTURE_MIN_LOD)),
+                (Gl::TEXTURE_MAX_LOD, get(Gl::TEXTURE_MAX_LOD)),
             ];
             if anisotropic {
                 s.push((MAX_ANISOTROPY, get(MAX_ANISOTROPY)));
@@ -805,7 +807,11 @@ impl TextureCompressor {
         }
         gl.bind_buffer(Gl::PIXEL_UNPACK_BUFFER, None);
         for (pname, value) in settings {
-            if pname == MAX_ANISOTROPY {
+            // Float parameters (the LOD clamps are floats in GL).
+            if pname == MAX_ANISOTROPY
+                || pname == Gl::TEXTURE_MIN_LOD
+                || pname == Gl::TEXTURE_MAX_LOD
+            {
                 if let Some(v) = value.as_f64() {
                     gl.tex_parameterf(bind_target, pname, v as f32);
                 }

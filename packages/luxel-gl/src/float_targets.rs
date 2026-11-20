@@ -65,6 +65,11 @@ impl Context {
     /// Why color format `internal` can't be rendered to here, if it can't.
     pub(crate) fn float_target_problem(&self, internal: u32) -> Option<String> {
         let name = format_name(internal);
+        if never_color_renderable(internal) {
+            return Some(format!(
+                "0x{internal:X} is never color-renderable in WebGL2"
+            ));
+        }
         match float_need(internal)? {
             FloatNeed::Half
                 if !self.is_extension_enabled(Extension::ExtColorBufferFloat)
@@ -101,9 +106,10 @@ fn format_name(internal: u32) -> &'static str {
 
 #[wasm_bindgen]
 impl Context {
-    /// Whether a texture of `format` can be a color attachment here. Only
-    /// float formats depend on the device; the rest answer true (depth formats
-    /// go to the depth slot).
+    /// Whether a texture of `format` can be a color attachment here. Float
+    /// formats depend on the device; formats WebGL2 never renders to (RGB16F
+    /// / RGB32F, SRGB8, RGB9_E5, snorm, RGB integer, compressed) answer false;
+    /// the rest true (depth formats go to the depth slot).
     #[wasm_bindgen(js_name = canRenderTo)]
     pub fn can_render_to(&self, format: &TextureFormat) -> bool {
         self.float_target_problem(format.internal as u32).is_none()
@@ -122,4 +128,18 @@ impl Context {
     pub fn can_filter_float32(&self) -> bool {
         self.is_extension_enabled(Extension::OesTextureFloatLinear)
     }
+}
+
+// Sized formats no WebGL2 framebuffer takes as color, whatever extensions.
+fn never_color_renderable(internal: u32) -> bool {
+    matches!(
+        internal,
+        // RGB16F RGB32F SRGB8 RGB9_E5
+        0x881B | 0x8815 | 0x8C41 | 0x8C3D
+        // R8 RG8 RGB8 RGBA8 _SNORM
+        | 0x8F94
+            ..=0x8F97
+        // RGB8UI RGB8I RGB16UI RGB16I RGB32UI RGB32I
+        | 0x8D7D | 0x8D8F | 0x8D77 | 0x8D89 | 0x8D71 | 0x8D83
+    ) || crate::compressed_format::is_compressed(internal)
 }

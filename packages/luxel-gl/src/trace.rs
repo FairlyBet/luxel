@@ -332,7 +332,8 @@ pub fn start(max_events: usize) {
 }
 
 /// Stops recording; what was recorded stays for [`report`]. Open spans are
-/// closed now.
+/// closed now, and the GPU fences in flight dropped (they only matter while
+/// recording).
 pub fn stop() {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
@@ -340,6 +341,26 @@ pub fn stop() {
             s.close_top();
         }
         s.recording = false;
+        for f in std::mem::take(&mut s.fences) {
+            if !f.gl.is_context_lost() {
+                f.gl.delete_sync(Some(&f.sync));
+            }
+        }
+    });
+}
+
+// Drops a context's fences (it is going): they hold it alive otherwise.
+pub(crate) fn forget(gl: &Gl) {
+    let _ = STATE.try_with(|s| {
+        if let Ok(mut s) = s.try_borrow_mut() {
+            s.fences.retain(|f| {
+                let mine = js_sys::Object::is(&f.gl, gl);
+                if mine && !gl.is_context_lost() {
+                    gl.delete_sync(Some(&f.sync));
+                }
+                !mine
+            });
+        }
     });
 }
 
@@ -353,6 +374,10 @@ pub fn stop() {
 pub fn gpu_fence(ctx: &Context) {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
+        // Not recording, nothing in flight: nothing to do (each frame).
+        if !s.recording && s.fences.is_empty() {
+            return;
+        }
         let gl = ctx.gl();
         let generation = ctx.generation();
         let mine = |f: &Fence| js_sys::Object::is(&f.gl, gl);
@@ -668,8 +693,8 @@ impl Trace {
     }
 
     /// A span with known times (`performance.now()` milliseconds), on
-    /// `track` (`TRACK_MAIN`, `TRACK_GPU`, or ≥ 3 for rows of your own: name
-    /// them with `trackName`).
+    /// `track`: 1 the main thread, 2 the GPU (fences), ≥ 3 rows of your own
+    /// (name them with `trackName`).
     /// For things measured elsewhere: long animation frames, long tasks.
     pub fn complete(name: &str, start_ms: f64, duration_ms: f64, track: u32) {
         STATE.with(|s| {

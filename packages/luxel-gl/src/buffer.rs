@@ -165,6 +165,10 @@ impl Context {
     #[wasm_bindgen(js_name = createEmptyBuffer)]
     pub fn create_empty_buffer(&self, usage: BufferUsage, size: u32) -> Result<BufferId, Error> {
         self.check_alive()?;
+        // GL takes the size as a signed 32-bit number.
+        if size > i32::MAX as u32 {
+            return Err(format!("createEmptyBuffer: {size} bytes is over 2^31 − 1").into());
+        }
         let obj = create_raw(self.gl(), BufferKind::Generic, usage, Init::Size(size))?;
         self.insert_buffer(obj)
     }
@@ -188,6 +192,13 @@ impl Context {
         let Some(b) = res.buffers.get(buffer.0) else {
             return self.stale("buffer", "buffer_write", buffer);
         };
+        let end = offset as i64 + data.len() as i64;
+        if offset < 0 || end > b.size as i64 {
+            return crate::console::error(&format!(
+                "[luxel] buffer_write: bytes {offset}..{end} are past the buffer's {}; ignored",
+                b.size
+            ));
+        }
         if b.kind == BufferKind::Index {
             self.gl_state().forget_vao();
         }

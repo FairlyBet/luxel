@@ -25,7 +25,6 @@
 use crate::error::{Error, err};
 use wasm_bindgen::prelude::*;
 
-use crate::console;
 use crate::context::Context;
 use crate::draw::{DrawCommand, DrawMode, Viewport};
 use crate::ids::{FramebufferId, ParamGroupId, ParamLayoutId, ProgramId, SamplerId, TextureId};
@@ -104,9 +103,8 @@ impl PackSpec {
         }
     }
 
-    /// Fill output channel `out` from channel `channel` of `tex`. Up to four
-    /// distinct source textures may be referenced across all channels; a fifth is
-    /// rejected with a logged error (the channel is left at its previous setting).
+    /// Fill output channel `out` from channel `channel` of `tex` (four
+    /// channels: at most four distinct sources, never more).
     #[wasm_bindgen(js_name = setSource)]
     pub fn set_source(&mut self, out: Channel, tex: TextureId, channel: Channel) {
         // What this channel referenced is no longer: free its slot first.
@@ -115,13 +113,8 @@ impl PackSpec {
         let slot = match self.sources.iter().position(|t| *t == tex) {
             Some(i) => i,
             None => {
-                if self.sources.len() >= 4 {
-                    console::error(
-                        "[luxel] PackSpec: a pack can reference at most 4 distinct source \
-                         textures; ignoring extra source",
-                    );
-                    return;
-                }
+                // (The channel's own slot was just freed: at most three left.)
+                debug_assert!(self.sources.len() < 4);
                 self.sources.push(tex);
                 self.sources.len() - 1
             }
@@ -377,6 +370,15 @@ impl TexturePacker {
         // A failed program would draw nothing into the storage made below.
         if !ctx.program_linked(self.program) {
             return Err(err!("packInto: the packing shader failed to link"));
+        }
+        // Nor would a destroyed source (its draw skipped): an error, not a
+        // zero-filled texture reported as packed.
+        if let Some(i) = spec
+            .sources
+            .iter()
+            .position(|&t| !t.is_null() && !ctx.texture_is_valid(t))
+        {
+            return Err(err!("packInto: source {i} is a destroyed texture"));
         }
         // Storage is one-shot: a texture that has some already (packed
         // into before) would be drawn into at the wrong size and format.

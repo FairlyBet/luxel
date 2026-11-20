@@ -277,7 +277,19 @@ pub(crate) struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        // The canvas's observer goes with the context (a framebuffer handle
+        // kept in JS would keep resizing it otherwise), and so do its trace
+        // fences.
+        self.default_fb.disable_auto_resize();
+        crate::trace::forget(&self.gl);
         self.res.get_mut().delete_all(&self.gl);
+    }
+}
+
+// Calls a JS callback, reporting what it throws instead of dropping it.
+pub(crate) fn call_reporting(f: &js_sys::Function, what: &str) {
+    if let Err(e) = f.call0(&JsValue::NULL) {
+        web_sys::console::error_2(&format!("[luxel] {what} threw:").into(), &e);
     }
 }
 
@@ -368,8 +380,17 @@ impl Context {
     ) -> Result<Context, Error> {
         let gl = canvas
             .get_context_with_context_options("webgl2", &options.to_js())
-            .map_err(|_| "get_context failed")?
-            .ok_or("WebGL2 not supported")?
+            .map_err(|e| {
+                let why = js_sys::Reflect::get(&e, &"message".into())
+                    .ok()
+                    .and_then(|m| m.as_string())
+                    .unwrap_or_else(|| format!("{e:?}"));
+                Error::from(format!("getContext('webgl2') threw: {why}"))
+            })?
+            .ok_or(
+                "no WebGL2 context: unsupported here, refused for these options \
+                 (failIfMajorPerformanceCaveat, …), or the canvas has another kind of context",
+            )?
             .dyn_into::<WebGl2RenderingContext>()
             .map_err(|_| "cast to WebGl2RenderingContext failed")?;
         let viewport = Viewport::new(0, 0, canvas.width() as i32, canvas.height() as i32);
@@ -398,25 +419,32 @@ impl Context {
     }
 
     /// JS: called when the context is lost. Every handle is dead from here on.
+    /// None (undefined) clears it; an exception it throws is reported.
     #[wasm_bindgen(js_name = setOnLost)]
     pub fn set_on_lost(
         &self,
-        #[wasm_bindgen(unchecked_param_type = "() => void")] f: js_sys::Function,
+        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<
+            js_sys::Function,
+        >,
     ) {
-        self.on_lost(move |_| {
-            let _ = f.call0(&JsValue::NULL);
+        *self.core.loss.on_lost.borrow_mut() = f.map(|f| {
+            Box::new(move |_: &Context| call_reporting(&f, "onLost")) as Box<dyn FnMut(&Context)>
         });
     }
 
     /// JS: called once the context is back (extensions already re-enabled).
     /// Recreate every resource here; handles from before the loss are stale.
+    /// None (undefined) clears it; an exception it throws is reported.
     #[wasm_bindgen(js_name = setOnRestored)]
     pub fn set_on_restored(
         &self,
-        #[wasm_bindgen(unchecked_param_type = "() => void")] f: js_sys::Function,
+        #[wasm_bindgen(unchecked_param_type = "(() => void) | undefined")] f: Option<
+            js_sys::Function,
+        >,
     ) {
-        self.on_restored(move |_| {
-            let _ = f.call0(&JsValue::NULL);
+        *self.core.loss.on_restored.borrow_mut() = f.map(|f| {
+            Box::new(move |_: &Context| call_reporting(&f, "onRestored"))
+                as Box<dyn FnMut(&Context)>
         });
     }
 
@@ -441,9 +469,15 @@ impl Context {
 
     /// Debug aid: restores a context lost via `simulate_context_loss`. The
     /// restore (and `on_restored`) happens asynchronously. Returns false if no
-    /// simulated loss is pending.
+    /// simulated loss is pending, or its lost event hasn't arrived yet (it
+    /// comes a task later: wait for `isLost`'s event or `setOnLost`).
     #[wasm_bindgen(js_name = simulateContextRestore)]
     pub fn simulate_context_restore(&self) -> bool {
+        // Not before the lost event has come (it is dispatched later):
+        // restoreContext would be refused, and the extension lost with it.
+        if !self.core.lost_until_restored.get() {
+            return false;
+        }
         let ext = self.core.loss.lose_ext.borrow_mut().take();
         match ext {
             Some(ext) => {

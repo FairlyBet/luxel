@@ -461,8 +461,12 @@ impl ProgramObj {
             Err(msg)
         };
 
-        gl.delete_shader(self.vert.take().as_ref());
-        gl.delete_shader(self.frag.take().as_ref());
+        // Detached first: a deleted shader still attached lives on with the
+        // program.
+        for s in [self.vert.take(), self.frag.take()].into_iter().flatten() {
+            gl.detach_shader(&self.raw, &s);
+            gl.delete_shader(Some(&s));
+        }
         // A context lost under the link reads as a failed one: not the
         // shader's fault.
         if result.is_err() && gl.is_context_lost() {
@@ -506,6 +510,7 @@ impl ProgramObj {
                 let u = &refl.uniforms[i];
                 let compatible = u.ty == f.ty
                     || (u.ty == FieldType::Bool
+                        && f.ty.components() == 1
                         && matches!(f.ty.scalar(), Scalar::Bool | Scalar::I32 | Scalar::U32));
                 if !compatible {
                     console::warn_once(&format!(
@@ -626,6 +631,10 @@ impl ProgramObj {
                 continue;
             }
             self.reported_unset[bit] = true;
+            // Parked samplers (an array's, or past the units) bind nothing.
+            if (n_u..n_u + n_s).contains(&bit) && refl.samplers[bit - n_u].name.is_empty() {
+                continue;
+            }
             let (what, name) = if bit < n_u {
                 ("uniform", &refl.uniforms[bit].name)
             } else if bit < n_u + n_s {
@@ -886,10 +895,12 @@ impl Context {
         let ids: Vec<ProgramId> = programs.iter().map(|&p| ProgramId::from_raw(p)).collect();
         let ready = self.programs_ready(ids.clone());
         let ctx = self.clone();
+        let generation = ctx.generation();
         wasm_bindgen_futures::future_to_promise(async move {
             ready.await;
-            // Lost meanwhile: nothing linked (every handle is gone).
-            if ctx.is_lost() {
+            // Lost meanwhile (or lost and restored): nothing linked, every
+            // handle is gone.
+            if ctx.is_lost() || ctx.generation() != generation {
                 return Err(
                     Error::context_lost("programsReady: the WebGL context was lost").into(),
                 );

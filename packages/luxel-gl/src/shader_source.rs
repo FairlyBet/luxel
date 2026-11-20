@@ -81,7 +81,8 @@ impl ShaderSource {
             };
             let at = || format!("{}:{}", self.files[id], i + 1);
             let name = name.map_err(|e| err!("{}: {e}", at()))?;
-            if !self.files.iter().any(|f| f == name) {
+            // (files[0] is the main file's label, not a chunk.)
+            if !self.files[1..].iter().any(|f| f == name) {
                 if depth >= 32 {
                     return Err(err!("{}: #include nested too deeply", at()));
                 }
