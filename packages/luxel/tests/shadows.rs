@@ -323,6 +323,13 @@ async fn still_shadow_maps_are_kept_and_frozen_ones_held() {
     assert!(lit > 60 && shadowed < lit / 4, "{shadowed} vs {lit}");
     assert_eq!(scene.shadow_maps(), 1);
     assert_eq!(scene.shadow_maps_drawn(), 0, "nothing moved: kept");
+    // A texture filled in later (an image landing) may change what an
+    // alpha-masked caster cuts out: drawn again.
+    ctx.note_content_changed();
+    scene.render_frame(camera);
+    assert_eq!(scene.shadow_maps_drawn(), 1, "content changed: drawn");
+    scene.render_frame(camera);
+    assert_eq!(scene.shadow_maps_drawn(), 0, "then kept");
 
     // The light from the left: the shadow moves right; drawn again.
     scene.look_at(sun, &[-4.0, 0.0, 8.0], &[0.0, 0.0, 0.0]);

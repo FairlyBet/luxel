@@ -93,6 +93,10 @@ pub(crate) struct LightingSystem {
     debug_cascades: bool,
     // Bumped by `invalidate`: part of every map's signature.
     epoch: u64,
+    // The context's content version last seen: a texture filled in after
+    // it was drawn with (an image landing) changes what alpha-masked
+    // casters cut out, which no signature sees.
+    content_seen: u32,
     // Frozen: the maps drawn once, fitted to the whole scene, then kept
     // (`baked` once they are).
     frozen: bool,
@@ -148,6 +152,7 @@ impl LightingSystem {
             options: ShadowOptions::default(),
             debug_cascades: false,
             epoch: 0,
+            content_seen: 0,
             frozen: false,
             baked: false,
             layers: HashMap::new(),
@@ -309,6 +314,11 @@ impl LightingSystem {
         camera: Option<(Camera, glam::Mat4)>,
     ) {
         let debug = self.debug_cascades;
+        let content = ctx.content_version();
+        if content != self.content_seen {
+            self.content_seen = content;
+            self.invalidate();
+        }
         if self.frozen && self.baked {
             // The maps, their cameras and the lights' layers as baked; the
             // lights themselves may still change color or intensity.

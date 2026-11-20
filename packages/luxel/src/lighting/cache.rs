@@ -5,7 +5,8 @@
 //! or deformed (its `WorldMatrix`, its skin's joints, its morph weights) —
 //! and a map whose signature matches the one it was drawn with is kept.
 //! What no signature sees (a material's values or textures edited in
-//! place) bumps the epoch every signature includes (`invalidate`).
+//! place, a texture's image landing — the context's content version) bumps
+//! the epoch every signature includes (`invalidate`).
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
