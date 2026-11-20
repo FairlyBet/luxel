@@ -9,6 +9,8 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
 const TS_OPTIONS: &str = r#"
+/** An entity: a plain number (the npm package's typings brand it). */
+export type Entity = number;
 /** The background color or gradient (`setBackgroundColor`,
  *  `setBackgroundGradient`), in display (sRGB 0–1) values. */
 export interface BackgroundFill {

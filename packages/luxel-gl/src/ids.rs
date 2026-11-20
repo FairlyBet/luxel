@@ -60,3 +60,19 @@ typed_handle!(
     /// vertex shader outputs into.
     pub struct FeedbackId
 );
+
+// The handle names the typings use (in `unchecked_*_type`s), as plain
+// numbers; the npm build brands them (scripts/brand-handles.mjs).
+#[wasm_bindgen::prelude::wasm_bindgen(typescript_custom_section)]
+const TS_HANDLES: &str = r#"
+/** A handle: a plain number (the npm package's typings brand it). */
+export type ProgramId = number;
+/** A handle: a plain number (the npm package's typings brand it). */
+export type TextureId = number;
+/** A handle: a plain number (the npm package's typings brand it). */
+export type ParamGroupId = number;
+/** A handle: a plain number (the npm package's typings brand it). */
+export type StateId = number;
+/** A handle: a plain number (the npm package's typings brand it). */
+export type VertexArrayId = number;
+"#;

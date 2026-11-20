@@ -401,6 +401,15 @@ export function brandHandles(dts) {
     }
     lines[i] = `${m[1]}(${params.join(", ")})${m[3]}`;
   }
+  // The crates' own plain aliases (`export type TextureId = number;`, so
+  // the unbranded typings stand alone) give way to the brands.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(/^export type (\w+) = number;$/);
+    if (!m || !handleNames.has(m[1])) continue;
+    const doc = i > 0 && /^\/\*\*.*\*\/$/.test(lines[i - 1]) ? 1 : 0;
+    lines.splice(i - doc, 1 + doc);
+    i -= doc;
+  }
   const decls = [...handleNames]
     .sort()
     .map(

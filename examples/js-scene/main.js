@@ -33,7 +33,7 @@ const envUrl = params.get("env") ?? ENV_URL;
 statsEl.textContent = `loading ${url}…`;
 // The scene takes the model over: its GPU data goes with the root entity.
 const [model, hdr] = await Promise.all([
-  loadModel(ctx, url),
+  loadModel(ctx, url, {}),
   fetch(envUrl).then((r) => r.arrayBuffer()),
 ]);
 const root = scene.addModel(model);
@@ -89,6 +89,7 @@ let background = true;
 let envAngle = 0;
 let spinning = true;
 let exposure = 1;
+/** @type {import("./pkg/luxel.js").ToneMappingName[]} */
 const toneMappers = ["neutral", "aces", "agx", "none"];
 let toneMapper = 0;
 let angle = 0;
