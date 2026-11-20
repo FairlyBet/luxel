@@ -104,8 +104,12 @@ async fn glass_shows_transparent_meshes_behind_it() {
     scene.set_camera(camera, cam).unwrap();
     scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
     let root = scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
-    for layers in [0u32, 2] {
+    // The last: MSAA with the copy at half size (setQuality("medium")):
+    // depth reaches the copy through a 1:1 resolve.
+    for (layers, samples, scale) in [(0u32, 0i32, 1.0f32), (2, 0, 1.0), (0, 4, 0.5)] {
         scene.set_transmission_layers(layers);
+        scene.set_samples(samples);
+        scene.set_transmission_resolution(scale);
         wasm_bindgen_futures::JsFuture::from(scene.when_ready())
             .await
             .unwrap();
@@ -122,8 +126,13 @@ async fn glass_shows_transparent_meshes_behind_it() {
             Some(&mut px),
         )
         .unwrap();
-        assert!(px[0] > 150 && px[1] < 60, "layers {layers}: center {px:?}");
+        assert!(
+            px[0] > 150 && px[1] < 60,
+            "layers {layers}, samples {samples}, copy at {scale}: center {px:?}"
+        );
     }
+    scene.set_samples(0);
+    scene.set_transmission_resolution(1.0);
     // Nothing behind the glass but a background color: the glass shows it
     // (else the empty, black scene copy).
     let behind = scene

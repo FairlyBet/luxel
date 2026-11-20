@@ -782,12 +782,20 @@ impl HdrOutput {
 
     // The opaque scene's depth into the copy's target (its own renderbuffer,
     // made on first need), for meshes drawn into the copy. False where it
-    // can't be: a multisampled target only blits to the same size.
+    // can't be. A multisampled target only blits to the same size: scaled,
+    // its depth is resolved 1:1 first (`screen_depth`), then scaled.
     fn depth_into_grab(&mut self, ctx: &Context) -> bool {
         let (w, h) = self.size;
         let (gw, gh) = self.grab_size;
+        let mut source = self.fb;
         if self.fb != self.resolve_fb && (gw, gh) != (w, h) {
-            return false;
+            if self.screen_depth(ctx).is_none() {
+                return false;
+            }
+            match self.screen_depth {
+                Some((_, fb)) => source = fb,
+                None => return false,
+            }
         }
         if self.grab_depth.is_null() {
             match ctx.create_renderbuffer(depth_renderbuffer_format(self.reverse_z), gw, gh) {
@@ -815,7 +823,7 @@ impl HdrOutput {
             return false;
         }
         ctx.blit_framebuffer(
-            self.fb,
+            source,
             &Viewport::new(0, 0, w, h),
             self.grab_fb,
             &Viewport::new(0, 0, gw, gh),
