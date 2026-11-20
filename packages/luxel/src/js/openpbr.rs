@@ -220,6 +220,14 @@ pub fn set(
             )]
         }),
         "geometry_opacity" => want(1).map(|()| {
+            // An opaque material ignores alpha (its mode comes with the
+            // model): say so rather than do nothing quietly.
+            if values[0] < 1.0 && m.alpha_mode() == luxel_gltf::AlphaMode::Opaque {
+                luxel_gl::console::warn_once(
+                    "[luxel] setMaterialProperty: geometry_opacity has no effect on a material \
+                     whose alphaMode is OPAQUE (set it to BLEND or MASK in the model)",
+                );
+            }
             vec![(
                 "baseColorFactor",
                 vec![base[0], base[1], base[2], values[0]],

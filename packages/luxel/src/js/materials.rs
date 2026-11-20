@@ -206,8 +206,9 @@ impl Scene {
     /// Sets a material property (names as for `materialProperty`): a number,
     /// or 3 / 4 numbers for colors. Every mesh drawn with the material sees
     /// it; turning transmission, volume, clearcoat or dispersion on or off
-    /// switches their shader variant. Throws for an unknown material,
-    /// property, or wrong number of values.
+    /// switches their shader variant. `attenuationDistance` Infinity (as
+    /// glTF's default) or 0: no absorption. Throws for an unknown material,
+    /// property, wrong number of values, or a non-finite one.
     #[wasm_bindgen(js_name = setMaterialProperty)]
     pub fn set_material_property(
         &mut self,
@@ -217,10 +218,14 @@ impl Scene {
     ) -> Result<(), Error> {
         (|| -> Result<(), Error> {
             self.invalidate();
-            // Frozen shadows don't see this change on their own.
-            self.renderer.invalidate_shadows();
-            let values = options::numbers(&value)
-                .ok_or_else(|| Error::from(format!("\"{name}\" takes a number or numbers")))?;
+            // An infinite distance is no absorption (glTF's default), which
+            // the material stores as 0.
+            let no_medium = matches!(name, "attenuationDistance" | "transmission_depth")
+                && value.as_f64() == Some(f64::INFINITY);
+            let value = if no_medium { JsValue::from(0.0) } else { value };
+            let values = options::numbers(&value).ok_or_else(|| {
+                Error::from(format!("\"{name}\" takes a finite number or numbers"))
+            })?;
             // An OpenPBR name: the glTF-side properties that carry it.
             let record = self
                 .materials
@@ -253,7 +258,7 @@ impl Scene {
     pub fn set_material_semantics(
         &mut self,
         material: ParamGroupId,
-        semantics: &str,
+        #[wasm_bindgen(unchecked_param_type = "MaterialSemanticsName")] semantics: &str,
     ) -> Result<(), Error> {
         self.invalidate();
         let native = match semantics {
@@ -278,7 +283,10 @@ impl Scene {
 
     /// "gltf" or "openpbr" (see `setMaterialSemantics`); undefined for an
     /// unknown material.
-    #[wasm_bindgen(js_name = materialSemantics)]
+    #[wasm_bindgen(
+        js_name = materialSemantics,
+        unchecked_return_type = "MaterialSemanticsName | undefined"
+    )]
     pub fn material_semantics(&self, material: ParamGroupId) -> Option<String> {
         let record = self.materials.get(&material)?;
         Some(
@@ -343,7 +351,8 @@ impl Scene {
     /// the texture once it's decoded; rejects if the image can't be loaded
     /// (the texture is freed then). See `TextureOptions` for color space,
     /// wrapping and mipmaps; throws on bad options. After a context loss the
-    /// scene loads it again (a new handle, in the same materials).
+    /// scene loads it again (a new handle, in the same materials:
+    /// `currentTexture` maps yours to it).
     #[wasm_bindgen(js_name = loadTexture)]
     #[wasm_bindgen(unchecked_return_type = "Promise<TextureId>")]
     pub fn load_texture(
@@ -426,7 +435,8 @@ impl Scene {
     /// (G), `specularTexture` (A), `specularColorTexture`, `sheenColorTexture`,
     /// `sheenRoughnessTexture` (A), `iridescenceTexture` (R),
     /// `iridescenceThicknessTexture` (G), `anisotropyTexture` (RG direction, B
-    /// strength) — to `texture` (any texture of this context: `loadTexture`'s,
+    /// strength), `diffuseTransmissionTexture` (A),
+    /// `diffuseTransmissionColorTexture` (`MaterialMapName`) — to `texture` (any texture of this context: `loadTexture`'s,
     /// or your own), or removes it with `0`. A map multiplies its factor, and an
     /// extension's map counts only while its factor is on. Every mesh drawn
     /// with the material sees it; adding or removing a map switches their
@@ -436,7 +446,7 @@ impl Scene {
     pub fn set_material_texture(
         &mut self,
         material: ParamGroupId,
-        map: &str,
+        #[wasm_bindgen(unchecked_param_type = "MaterialMapName")] map: &str,
         texture: TextureId,
         #[wasm_bindgen(unchecked_param_type = "MaterialTextureOptions | undefined")] opts: Option<
             JsValue,
@@ -507,7 +517,11 @@ impl Scene {
     /// The texture of one of a material's maps (names as for
     /// `setMaterialTexture`), or `0` for none.
     #[wasm_bindgen(js_name = materialTexture)]
-    pub fn material_texture(&self, material: ParamGroupId, map: &str) -> TextureId {
+    pub fn material_texture(
+        &self,
+        material: ParamGroupId,
+        #[wasm_bindgen(unchecked_param_type = "MaterialMapName")] map: &str,
+    ) -> TextureId {
         let slot = MAP_NAMES.iter().position(|&n| n == map);
         match (slot, self.materials.get(&material)) {
             (Some(slot), Some(r)) => r.maps[slot],
@@ -531,6 +545,8 @@ impl Scene {
         values: &[f32],
     ) -> Result<(), Error> {
         self.invalidate();
+        // Frozen shadows don't see this change on their own.
+        self.renderer.invalidate_shadows();
         let record = self
             .materials
             .get_mut(&material)

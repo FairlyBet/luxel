@@ -269,7 +269,7 @@ async fn picking_on_the_gpu_finds_the_nearest_visible_part() {
     let band = s.scene.find_by_name(s.root, "band");
     let stone_b = s.scene.find_by_name(s.root, "stone_b");
     let pick = |s: &mut Setup, x: f32, y: f32| {
-        let p = s.scene.pick(s.camera, x, y).expect("pick");
+        let p = s.scene.pick(s.camera, x, y);
         async move {
             wasm_bindgen_futures::JsFuture::from(p)
                 .await
@@ -324,8 +324,12 @@ async fn picking_on_the_gpu_finds_the_nearest_visible_part() {
         pick(&mut s, -2.0 / 3.0, 0.0).await.is_null(),
         "nothing there"
     );
+    // Not a camera: a rejection, not a throw.
+    let not_a_camera = s.scene.pick(Entity::NULL, 0.0, 0.0);
     assert!(
-        s.scene.pick(Entity::NULL, 0.0, 0.0).is_err(),
+        wasm_bindgen_futures::JsFuture::from(not_a_camera)
+            .await
+            .is_err(),
         "not a camera"
     );
     s.scene.destroy();
@@ -614,7 +618,7 @@ async fn reverse_z_draws_and_picks_the_same() {
     // In front of the band now: the nearer one still wins.
     s.scene.set_translation(stone_b, -1.0, 0.0, 0.5);
     assert_eq!(s.frame().await, [WHITE, WHITE, [0, 0, 0, 255]]);
-    let p = s.scene.pick(s.camera, -2.0 / 3.0, 0.0).unwrap();
+    let p = s.scene.pick(s.camera, -2.0 / 3.0, 0.0);
     let hit = wasm_bindgen_futures::JsFuture::from(p).await.unwrap();
     let get = |k: &str| js_sys::Reflect::get(&hit, &k.into()).unwrap();
     let entity = Entity::from_raw(get("entity").as_f64().unwrap() as u32);
@@ -1420,7 +1424,7 @@ async fn capture_takes_a_picture_at_its_own_size() {
     let px = s.frame().await;
     assert_eq!(px[0], YELLOW);
     let opts = json(r#"{ "width": 192, "height": 64 }"#);
-    let blob = wasm_bindgen_futures::JsFuture::from(s.scene.capture(s.camera, Some(opts)).unwrap())
+    let blob = wasm_bindgen_futures::JsFuture::from(s.scene.capture(s.camera, Some(opts)))
         .await
         .expect("encoded");
     let canvas = s.ctx.default_framebuffer().canvas().unwrap();
@@ -1992,8 +1996,12 @@ async fn a_capture_that_loses_the_context_rejects() {
     )
     .call1(&JsValue::NULL, &s.gl)
     .unwrap();
-    let err = s.scene.capture(s.camera, Some(opts)).expect_err("rejects");
-    assert!(format!("{err:?}").contains("lost"), "{err:?}");
+    let err = wasm_bindgen_futures::JsFuture::from(s.scene.capture(s.camera, Some(opts)))
+        .await
+        .expect_err("rejects");
+    let err = js_sys::Error::from(err);
+    assert_eq!(err.name(), "ContextLostError");
+    assert!(String::from(err.message()).contains("lost"), "{err:?}");
     assert_eq!((canvas.width(), canvas.height()), size);
 }
 

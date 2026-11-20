@@ -180,12 +180,17 @@ impl Scene {
     #[wasm_bindgen(js_name = setHdr)]
     pub fn set_hdr(&mut self, on: bool) -> bool {
         self.invalidate();
+        self.sync_context();
         self.last_frame = None;
         self.hdr_wanted = on && HdrOutput::supported(&self.ctx);
-        if !self.hdr_wanted
-            && let Some(out) = self.hdr.take()
-        {
-            out.destroy(&self.ctx);
+        if !self.hdr_wanted {
+            if let Some(out) = self.hdr.take() {
+                out.destroy(&self.ctx);
+            }
+            // Its effects need it: their passes go too.
+            if let Some(o) = self.occlusion.take() {
+                o.destroy(&self.ctx);
+            }
         }
         self.hdr_wanted
     }
@@ -231,6 +236,7 @@ impl Scene {
     #[wasm_bindgen(js_name = setTaa)]
     pub fn set_taa(&mut self, on: bool) -> bool {
         self.invalidate();
+        let live = self.sync_context();
         if self.taa != on {
             self.taa = on;
             self.taa_previous = None;
@@ -238,9 +244,12 @@ impl Scene {
                 out.destroy(&self.ctx); // remade at the next frame
             }
         }
-        // Its shader compiling from now (whenReady waits for it).
+        // Its shader compiling from now (whenReady waits for it); while
+        // lost, the restore makes it.
         let on = self.taa();
-        self.renderer.set_motion_vectors(&self.ctx, on);
+        if live {
+            self.renderer.set_motion_vectors(&self.ctx, on);
+        }
         on
     }
 
@@ -320,6 +329,7 @@ impl Scene {
     #[wasm_bindgen(js_name = setSamples)]
     pub fn set_samples(&mut self, samples: i32) {
         self.invalidate();
+        self.sync_context();
         self.last_frame = None;
         self.samples = samples.max(0);
         if let Some(out) = self.hdr.take() {
@@ -417,16 +427,17 @@ impl Scene {
         }
         if let Some(out) = &mut self.hdr {
             // Contact shadows dim the key light's share: the opaque pass
-            // writes it then.
-            let pbr_only = self
-                .world
-                .storage::<crate::render::MeshRenderer>()
-                .is_none_or(|m| {
-                    m.data()
-                        .iter()
-                        .all(|m| m.transparent || m.transmissive || self.pbr.is_pbr(m.program))
-                });
-            out.set_key_output(&self.ctx, self.contact_shadows.is_some() && pbr_only);
+            // writes it then (every opaque mesh the built-in PBR's).
+            let key_output = self.contact_shadows.is_some()
+                && self
+                    .world
+                    .storage::<crate::render::MeshRenderer>()
+                    .is_none_or(|m| {
+                        m.data()
+                            .iter()
+                            .all(|m| m.transparent || m.transmissive || self.pbr.is_pbr(m.program))
+                    });
+            out.set_key_output(&self.ctx, key_output);
             out.set_transmission_scale(self.transmission_scale);
             out.set_fill(self.renderer.fill());
             match out.prepare_split(&self.ctx, w, h, pass, false) {
@@ -559,6 +570,14 @@ impl Scene {
             Some((c, view * at))
         });
         if ao.is_none() && contact.is_none() {
+            // Both off (or nothing to apply them to): their passes and
+            // targets go, made again when one comes back.
+            if self.ambient_occlusion.is_none()
+                && self.contact_shadows.is_none()
+                && let Some(o) = self.occlusion.take()
+            {
+                o.destroy(&self.ctx);
+            }
             return;
         }
         let Some(out) = self.hdr.as_mut() else {

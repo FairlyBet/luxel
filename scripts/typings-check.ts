@@ -38,8 +38,11 @@ export async function check(canvas: HTMLCanvasElement, ctx: Context, scene: Scen
   const tex: TextureId = await scene.loadTexture("a.png");
   const mats: Handles<ParamGroupId> = scene.materials(root);
   const m: ParamGroupId = mats[0];
+  scene.setMaterialTexture(m, "baseColorTexture", tex, undefined);
+  // @ts-expect-error not a map name
   scene.setMaterialTexture(m, "baseColor", tex, undefined);
-  for (const cam of scene.cameras(root)) scene.renderFrame(cam as Entity);
+  for (const cam of scene.cameras(root)) scene.renderFrame(cam);
+  scene.cameras(root).forEach((cam) => scene.renderFrame(cam));
   const ready: void = await scene.whenReady();
   scene.setToneMapping("agx");
   const name: "openpbr" | "gltf" = scene.shadingModel();
@@ -56,7 +59,7 @@ export async function check(canvas: HTMLCanvasElement, ctx: Context, scene: Scen
   // @ts-expect-error a plain number isn't a handle
   scene.despawn(5);
   // @ts-expect-error an entity isn't a material
-  scene.setMaterialTexture(e, "baseColor", tex, undefined);
+  scene.setMaterialTexture(e, "baseColorTexture", tex, undefined);
   // @ts-expect-error not a tone mapping
   scene.setToneMapping("filmic");
   // @ts-expect-error a material isn't a program

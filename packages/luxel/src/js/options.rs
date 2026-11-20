@@ -152,9 +152,43 @@ export type QualityName = "low" | "medium" | "high";
 /** `setShadingModel`'s names. */
 export type ShadingModelName = "openpbr" | "gltf";
 
+/** `setMaterialSemantics`' names. */
+export type MaterialSemanticsName = "openpbr" | "gltf";
+
+/** A material map's glTF name (`setMaterialTexture`, `materialTexture`). */
+export type MaterialMapName =
+  | "baseColorTexture"
+  | "metallicRoughnessTexture"
+  | "normalTexture"
+  | "occlusionTexture"
+  | "emissiveTexture"
+  | "clearcoatTexture"
+  | "clearcoatRoughnessTexture"
+  | "clearcoatNormalTexture"
+  | "transmissionTexture"
+  | "thicknessTexture"
+  | "specularTexture"
+  | "specularColorTexture"
+  | "sheenColorTexture"
+  | "sheenRoughnessTexture"
+  | "iridescenceTexture"
+  | "iridescenceThicknessTexture"
+  | "anisotropyTexture"
+  | "diffuseTransmissionTexture"
+  | "diffuseTransmissionColorTexture";
+
 /** Handles in a typed array (`cameras`, `lights`, `materials`): reading an
- *  element gives the handle type; it is a `Uint32Array` at run time. */
-export type Handles<T extends number> = Uint32Array & { readonly [index: number]: T };
+ *  element, iterating, `forEach` and `Array.from` give the handle type; it
+ *  is a `Uint32Array` at run time. */
+export type Handles<T extends number> = Omit<
+  Uint32Array,
+  number | typeof Symbol.iterator | "values" | "forEach"
+> & {
+  readonly [index: number]: T;
+  [Symbol.iterator](): IterableIterator<T>;
+  values(): IterableIterator<T>;
+  forEach(callback: (value: T, index: number) => void): void;
+};
 
 /** What `pick` found. */
 export interface PickHit {
@@ -198,10 +232,11 @@ pub(crate) fn f32_or(obj: &JsValue, key: &str, default: f32) -> Result<f32, Erro
         None => Ok(default),
         // NaN and the infinities would reach the shaders (and TAA's
         // history) as they are.
+        // Checked as f32: a finite double past f32::MAX is an infinity.
         Some(v) => v
             .as_f64()
-            .filter(|x| x.is_finite())
             .map(|x| x as f32)
+            .filter(|x| x.is_finite())
             .ok_or_else(|| format!("\"{key}\" must be a finite number").into()),
     }
 }
@@ -227,7 +262,7 @@ pub(crate) fn u32_or(obj: &JsValue, key: &str, default: u32) -> Result<u32, Erro
             .ok_or_else(|| Error::from(format!("\"{key}\" must be a number")))?,
     };
     if !(0.0..=f64::from(u32::MAX)).contains(&x) || x.fract() != 0.0 {
-        return Err(format!("\"{key}\" must be a handle (a non-negative integer)").into());
+        return Err(format!("\"{key}\" must be a non-negative integer").into());
     }
     Ok(x as u32)
 }
@@ -264,7 +299,8 @@ pub(crate) fn vec3_or(obj: &JsValue, key: &str, default: Vec3) -> Result<Vec3, E
 /// A number or an array-like of numbers as floats (None for anything else).
 pub(crate) fn numbers(v: &JsValue) -> Option<Vec<f32>> {
     if let Some(x) = v.as_f64() {
-        return x.is_finite().then(|| vec![x as f32]);
+        let x = x as f32;
+        return x.is_finite().then(|| vec![x]);
     }
     if !v.is_object() {
         return None;
@@ -275,8 +311,8 @@ pub(crate) fn numbers(v: &JsValue) -> Option<Vec<f32>> {
             Reflect::get_u32(v, i)
                 .ok()?
                 .as_f64()
-                .filter(|x| x.is_finite())
                 .map(|x| x as f32)
+                .filter(|x| x.is_finite())
         })
         .collect()
 }
@@ -298,5 +334,19 @@ pub(crate) fn vec2_or(obj: &JsValue, key: &str, default: [f32; 2]) -> Result<[f3
             Some(&[x, y]) => Ok([x, y]),
             _ => Err(format!("\"{key}\" needs 2 numbers").into()),
         },
+    }
+}
+
+#[cfg(test)]
+mod map_name_tests {
+    // `MaterialMapName` lists exactly the loader's map names.
+    #[test]
+    fn the_map_name_type_matches_the_maps() {
+        // The typings section, as written (the macro takes the const).
+        let ts = include_str!("options.rs");
+        let start = ts.find("export type MaterialMapName =").unwrap();
+        let end = start + ts[start..].find(';').unwrap();
+        let typed: Vec<&str> = ts[start..end].split('"').skip(1).step_by(2).collect();
+        assert_eq!(typed, luxel_gltf::MAP_NAMES);
     }
 }

@@ -190,8 +190,10 @@ impl Scene {
         }
     }
 
-    /// Seconds of animation per second of `advanceAnimations` (default 1;
-    /// negative plays backwards; a non-finite speed is reported and ignored).
+    /// Seconds of animation per second of `advanceAnimations` for the clip
+    /// `root` plays now (default 1; negative plays backwards). The next
+    /// `playAnimation` / `crossfadeAnimation` starts at 1 again; with
+    /// nothing playing, or a non-finite speed, it is reported and ignored.
     #[wasm_bindgen(js_name = setAnimationSpeed)]
     pub fn set_animation_speed(&mut self, root: Entity, speed: f32) {
         self.invalidate();
@@ -202,6 +204,11 @@ impl Scene {
             && let Some(p) = a.playing.as_mut()
         {
             p.speed = speed;
+        } else {
+            luxel_gl::console::warn_once(
+                "[luxel] setAnimationSpeed: nothing plays on that root; ignored \
+                 (set it after playAnimation)",
+            );
         }
     }
 
@@ -221,6 +228,9 @@ impl Scene {
     pub fn advance_animations(&mut self, seconds: f32) -> js_sys::Array {
         let _span = tracing::info_span!("scene.advanceAnimations").entered();
         let out = js_sys::Array::new();
+        if !options::finite("advanceAnimations", &[seconds]) {
+            return out;
+        }
         for event in advance(&mut self.world, seconds) {
             let (kind, root, clip) = match event {
                 AnimationEvent::Finished { root, clip } => ("finished", root, clip),

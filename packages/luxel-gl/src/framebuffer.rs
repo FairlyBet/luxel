@@ -369,7 +369,9 @@ impl DefaultFramebuffer {
         }
     }
 
-    pub(crate) fn viewport(&self) -> Viewport {
+    /// The viewport drawing into it uses (`setViewport`, or the whole
+    /// drawing buffer after a resize).
+    pub fn viewport(&self) -> Viewport {
         self.sync();
         self.inner.borrow().viewport
     }

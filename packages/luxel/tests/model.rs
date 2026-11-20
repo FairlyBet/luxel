@@ -169,7 +169,7 @@ async fn a_model_becomes_a_hierarchy_of_entities() {
     let model = load_model(&s.ctx, &asset_url()).await.expect("load");
     let buffers = model.buffers().to_vec();
     let program = s.ctx.create_program(VERT, FRAG).expect("program");
-    let root = s.scene.add_model_with_program(model, program);
+    let root = s.scene.add_model_with_program(model, program).unwrap();
     wasm_bindgen_futures::JsFuture::from(s.scene.when_ready())
         .await
         .unwrap();
@@ -264,7 +264,7 @@ async fn despawning_an_ancestor_frees_the_models_under_it() {
     let model = load_model(&s.ctx, &asset_url()).await.expect("load");
     let buffers = model.buffers().to_vec();
     let program = s.ctx.create_program(VERT, FRAG).expect("program");
-    let root = s.scene.add_model_with_program(model, program);
+    let root = s.scene.add_model_with_program(model, program).unwrap();
     let group = s.scene.spawn();
     s.scene.set_parent(root, group);
     assert!(s.scene.model_bounds(root).len() == 4);

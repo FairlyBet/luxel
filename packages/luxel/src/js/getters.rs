@@ -23,7 +23,7 @@ pub(super) fn object(pairs: &[(&str, JsValue)]) -> JsValue {
 
 #[wasm_bindgen]
 impl Scene {
-    /// The exposure (`setExposure`), in stops.
+    /// The exposure (`setExposure`): a linear scale of radiance, default 1.
     pub fn exposure(&self) -> f32 {
         self.renderer.exposure()
     }

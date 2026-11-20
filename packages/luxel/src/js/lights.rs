@@ -47,6 +47,9 @@ impl Scene {
             let cam = match options::string(&camera, "type")?.as_str() {
                 "perspective" => {
                     let fov = options::f32_or(&camera, "yfov", std::f32::consts::FRAC_PI_4)?;
+                    if !(fov > 0.0 && fov < std::f32::consts::PI) {
+                        return Err("setCamera: needs 0 < yfov < π".into());
+                    }
                     Camera::perspective(fov, aspect, near, far)
                 }
                 "orthographic" => {
@@ -54,6 +57,9 @@ impl Scene {
                         return Err("setCamera: an orthographic camera needs a finite zfar".into());
                     }
                     let ymag = options::f32_or(&camera, "ymag", 1.0)?;
+                    if ymag <= 0.0 {
+                        return Err("setCamera: needs ymag > 0".into());
+                    }
                     Camera::orthographic(ymag, aspect, near, far)
                 }
                 other => {
@@ -111,6 +117,9 @@ impl Scene {
             let color = options::vec3_or(&light, "color", Vec3::ONE)?;
             let intensity = options::f32_or(&light, "intensity", 1.0)?;
             let range = options::f32_or(&light, "range", 0.0)?;
+            if !(intensity >= 0.0 && range >= 0.0) {
+                return Err("setLight: needs intensity ≥ 0 and range ≥ 0 (0: unlimited)".into());
+            }
             let l = match options::string(&light, "type")?.as_str() {
                 "directional" => Light::directional(color, intensity),
                 "point" => Light::point(color, intensity, range),
@@ -144,6 +153,12 @@ impl Scene {
                     max_distance: options::f32_or(&light, "shadowMaxDistance", d.max_distance)?,
                     map_size: options::u32_or(&light, "shadowMapSize", d.map_size)?,
                 };
+                if !((0.0..=1.0).contains(&shadow.split_lambda) && shadow.max_distance >= 0.0) {
+                    return Err(
+                        "setLight: needs shadowSplitLambda in 0..1 and shadowMaxDistance ≥ 0"
+                            .into(),
+                    );
+                }
                 if !(1..=crate::lighting::MAX_CASCADES as u32).contains(&shadow.cascades) {
                     return Err(format!(
                         "setLight: shadowCascades is 1 to {}",
@@ -387,13 +402,23 @@ impl Scene {
     /// the background over the next few frames — the previous environment
     /// shows until it's done, and `whenReady` waits for it. A bake that fails
     /// (no half-float render targets) is reported on the console.
-    /// The bytes are kept (a copy) to bake it again after a context loss.
+    /// The bytes are kept (a copy) to bake it again after a context loss;
+    /// set while the context is lost, it bakes once it is restored.
     #[wasm_bindgen(js_name = setEnvironmentHdr)]
     pub fn set_environment_hdr(&mut self, bytes: &[u8], size: u32) -> Result<(), Error> {
         self.invalidate();
-        self.sync_context();
         let image = decode_hdr_rgbe(bytes)?;
-        self.start_environment(&image, size)?;
+        if !self.sync_context() {
+            // Lost: the restore bakes it (at the 1 a new environment starts
+            // at), not what was pending.
+            if let Some(p) = self.env_pending.take() {
+                p.cancel();
+            }
+            self.env_intensity_after_bake = None;
+            self.renderer.set_environment_intensity(Vec3::ONE);
+        } else {
+            self.start_environment(&image, size)?;
+        }
         // Kept to bake again after a context loss.
         self.env_source = Some((bytes.to_vec(), size));
         Ok(())
@@ -414,8 +439,10 @@ impl Scene {
             return Ok(());
         }
         self.compact_environment = on;
-        if let Some((bytes, size)) = self.env_source.clone() {
-            self.sync_context();
+        // Lost: the restore bakes it with the new setting.
+        if let Some((bytes, size)) = self.env_source.clone()
+            && self.sync_context()
+        {
             // The bake comes back at the intensity it has now (or was to
             // get once baked), not the default a new environment starts at.
             let keep = self.intensity_to_keep();
@@ -468,10 +495,14 @@ impl Scene {
         if !options::finite("setBackground", &[blur]) {
             return;
         }
+        let live = self.sync_context();
         self.renderer.set_fill([Vec4::ZERO; 2]);
         self.renderer.set_background(Some(blur));
-        // Start compiling now; `whenReady` waits for it.
-        self.renderer.background_program(&self.ctx);
+        // Start compiling now (`whenReady` waits for it); while lost, the
+        // restore does.
+        if live {
+            self.renderer.background_program(&self.ctx);
+        }
     }
 
     /// No background — no environment, color or gradient: the canvas's
@@ -481,6 +512,7 @@ impl Scene {
     #[wasm_bindgen(js_name = clearBackground)]
     pub fn clear_background(&mut self) {
         self.invalidate();
+        self.sync_context();
         self.renderer.set_background(None);
         self.renderer.set_fill([Vec4::ZERO; 2]);
     }
@@ -570,10 +602,13 @@ impl Scene {
     // background.
     fn set_fill(&mut self, a: Vec4, b: Vec4) {
         self.invalidate();
+        let live = self.sync_context();
         self.renderer.set_background(None);
         self.renderer.set_fill([a, b]);
         // Straight to the canvas it draws with the background shader.
-        self.renderer.background_program(&self.ctx);
+        if live {
+            self.renderer.background_program(&self.ctx);
+        }
     }
 
     /// `setCamera` from Rust.

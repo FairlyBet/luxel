@@ -22,10 +22,13 @@ impl Scene {
     /// hit, `distance` its distance from the camera. Meshes are drawn with
     /// their location-0 attribute as the position.
     #[wasm_bindgen(unchecked_return_type = "Promise<PickHit | null>")]
-    pub fn pick(&mut self, camera: Entity, x: f32, y: f32) -> Result<js_sys::Promise, Error> {
+    pub fn pick(&mut self, camera: Entity, x: f32, y: f32) -> js_sys::Promise {
+        let reject = |e: Error| js_sys::Promise::reject(&e.into());
         if !self.sync_context() {
-            return Err(Error::context_lost("pick: the WebGL context is lost"));
+            return reject(Error::context_lost("pick: the WebGL context is lost"));
         }
+        // The aspect the next frame draws at (as `frameBounds`).
+        self.sync_camera_aspect(camera);
         self.transforms.update(&mut self.world);
         let fb = self.ctx.default_framebuffer();
         let found = self.renderer.pick(
@@ -35,13 +38,17 @@ impl Scene {
             Vec2::new(x, y),
             fb.width().max(0) as u32,
             fb.height().max(0) as u32,
-        )?;
-        Ok(wasm_bindgen_futures::future_to_promise(async move {
+        );
+        let found = match found {
+            Ok(f) => f,
+            Err(e) => return reject(e),
+        };
+        wasm_bindgen_futures::future_to_promise(async move {
             let Some(hit) = found.await? else {
                 return Ok(JsValue::NULL);
             };
             Ok(hit_object(&hit))
-        }))
+        })
     }
 
     /// Points `camera` at `root` and everything under it, from the side it
@@ -96,6 +103,7 @@ impl Scene {
         let Some(p) = vec3("worldToScreen", "point", point) else {
             return Vec::new();
         };
+        self.sync_camera_aspect(camera);
         self.transforms.update(&mut self.world);
         crate::pick::world_to_ndc(&self.world, camera, p)
             .map_or_else(Vec::new, |v| v.to_array().to_vec())
@@ -107,6 +115,7 @@ impl Scene {
     /// `camera` isn't a camera.
     #[wasm_bindgen(js_name = screenToRay)]
     pub fn screen_to_ray(&mut self, camera: Entity, x: f32, y: f32) -> Vec<f32> {
+        self.sync_camera_aspect(camera);
         self.transforms.update(&mut self.world);
         crate::pick::camera_ray(&self.world, camera, Vec2::new(x, y)).map_or_else(Vec::new, |r| {
             [r.origin.to_array(), r.dir.to_array()].concat()
@@ -120,6 +129,7 @@ impl Scene {
     /// exactly under the pointer.
     #[wasm_bindgen(js_name = raycastBounds, unchecked_return_type = "PickHit | null")]
     pub fn raycast_bounds(&mut self, camera: Entity, x: f32, y: f32) -> JsValue {
+        self.sync_camera_aspect(camera);
         self.transforms.update(&mut self.world);
         let Some(hit) = crate::pick::pick_bounds(&self.world, camera, Vec2::new(x, y)) else {
             return JsValue::NULL;

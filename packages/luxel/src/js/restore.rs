@@ -239,11 +239,6 @@ impl Scene {
             .extend(remap.iter().map(|(&old, &new)| (old, new)));
     }
 
-    // A `loadTexture` handle as it is now (the reloaded one after a loss).
-    pub(crate) fn current_texture(&self, t: TextureId) -> TextureId {
-        self.texture_aliases.get(&t).copied().unwrap_or(t)
-    }
-
     // Points every material (groups and the scene's records) at new textures.
     fn remap_textures(
         &mut self,
@@ -292,13 +287,24 @@ impl Scene {
             if !model.is_lost(&self.ctx) {
                 return;
             }
-            let request = model.reload_request().filter(|_| self.restore_models);
-            let Some(request) = request else {
-                // The app reloads it (setRestoreModels(false)).
-                console::warn_once(
-                    "[luxel] restore: models aren't fetched again \
-                     (setRestoreModels(false)): their meshes stay out of frames until replaced",
-                );
+            let request = model.reload_request();
+            let has_source = request.is_some();
+            let Some(request) = request.filter(|_| self.restore_models) else {
+                if has_source {
+                    // The app reloads it (setRestoreModels(false)).
+                    console::warn_once(
+                        "[luxel] restore: models aren't fetched again \
+                         (setRestoreModels(false)): their meshes stay out of frames until \
+                         replaced",
+                    );
+                } else {
+                    // Built from data with nowhere to fetch it from again.
+                    console::warn(&format!(
+                        "[luxel] restore: model {} has no source to load again from (made \
+                         from bytes in memory?): its meshes stay out of frames until replaced",
+                        root.to_raw()
+                    ));
+                }
                 self.mark_reloading(root);
                 return;
             };
@@ -359,9 +365,11 @@ impl Scene {
             let fresh = match result {
                 Ok(fresh) => fresh,
                 Err(e) => {
-                    // A second loss mid-reload starts another reload; anything
-                    // else leaves the model out, reported.
-                    if !self.ctx.is_lost() && self.models.contains_key(&root) {
+                    // A second loss mid-reload starts another reload (the
+                    // context may be back by now: the error's kind says);
+                    // anything else leaves the model out, reported.
+                    let lost = e.kind() == luxel_gl::error::ErrorKind::ContextLost;
+                    if !lost && !self.ctx.is_lost() && self.models.contains_key(&root) {
                         console::error(&format!("[luxel] restore: a model: {e}"));
                     }
                     continue;
@@ -470,8 +478,9 @@ impl Scene {
     }
 
     /// Calls `f` once the scene has rebuilt itself after a context loss —
-    /// at its first call after the context is back (a frame, `needsRender`)
-    /// — to rebuild what the app made itself (`setMesh` meshes, programs
+    /// at its first call after the context is back that rebuilds it
+    /// (`renderFrame`, `render`, `capture`, `pick`, or a setter that makes
+    /// GPU objects; not `needsRender`) — to rebuild what the app made itself (`setMesh` meshes, programs
     /// from `ctx`). Models are being fetched again then: `whenReady`
     /// waits for them. Undefined removes it.
     #[wasm_bindgen(js_name = setOnRestored)]
@@ -494,6 +503,19 @@ impl Scene {
             .get(&program)
             .copied()
             .unwrap_or(program)
+    }
+
+    /// The live handle of a `loadTexture` texture: after a context loss the
+    /// scene loads it again under a new handle, and this maps the one you
+    /// hold to it (the same handle when there was no loss) — for a pass or
+    /// group of yours. `setMaterialTexture` and `destroyTexture` accept
+    /// either.
+    #[wasm_bindgen(js_name = currentTexture)]
+    pub fn current_texture(&self, texture: TextureId) -> TextureId {
+        self.texture_aliases
+            .get(&texture)
+            .copied()
+            .unwrap_or(texture)
     }
 
     /// Whether models are fetched again from their URL after a context loss

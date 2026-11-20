@@ -1319,6 +1319,9 @@ impl SceneRenderer {
         fresh.display_output = self.display_output;
         fresh.tone_mapping = self.tone_mapping;
         fresh.lights.keep_settings(&self.lights);
+        // TAA's motion vectors, made again (compiling before the first
+        // frame asks for them).
+        fresh.set_motion_vectors(ctx, self.motion.is_some());
         if matches!(self.skybox, Some(Ok(_))) {
             fresh.background_program(ctx);
         }

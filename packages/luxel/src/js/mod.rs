@@ -330,8 +330,12 @@ impl Scene {
         if !options::finite("setRotation", &[x, y, z, w]) {
             return;
         }
-        let q = Quat::from_xyzw(x, y, z, w).normalize();
-        self.edit_transform(e, "setRotation", |t| t.rotation = q);
+        // A zero (or overflowing) quaternion is no rotation: NaN otherwise.
+        let Some(q) = glam::Vec4::new(x, y, z, w).try_normalize() else {
+            luxel_gl::console::error_once("[luxel] setRotation: a zero-length quaternion; ignored");
+            return;
+        };
+        self.edit_transform(e, "setRotation", |t| t.rotation = Quat::from_vec4(q));
     }
 
     /// Rotation from Euler angles in radians, applied Y, then X, then Z.
@@ -573,6 +577,8 @@ impl Scene {
     #[wasm_bindgen(js_name = removeMesh)]
     pub fn remove_mesh(&mut self, e: Entity) {
         self.invalidate();
+        // Frozen shadows lose its shadow too.
+        self.renderer.rebake_shadows();
         self.world.remove::<MeshRenderer>(e);
     }
 
@@ -607,7 +613,10 @@ impl Scene {
     /// (camera, lights, environment, object; `scene_irradiance`,
     /// `scene_reflection`, `scene_output`), without `#version` or those
     /// declarations. The scene keeps its source to compile it again after a
-    /// context loss: free it with `scene.destroyProgram`.
+    /// context loss: free it with `scene.destroyProgram`. Where the browser
+    /// compiles in parallel (`KHR_parallel_shader_compile`, which the scene
+    /// turns on for its context) a bad shader doesn't throw here: it shows
+    /// in `ctx.programsReady([p])` / `ctx.programError(p)`.
     #[wasm_bindgen(js_name = createProgram)]
     pub fn create_program(&mut self, vert: &str, frag: &str) -> Result<ProgramId, Error> {
         self.sync_context();
@@ -754,9 +763,18 @@ impl Scene {
 
     /// `addModel` with your own `program` for every primitive (a scene
     /// shader from `createProgram` sees the camera, lights, environment and
-    /// object; the material group is the loader's).
+    /// object; the material group is the loader's). Its meshes cast no
+    /// shadows (a shadow map needs the built-in depth variant). Throws for
+    /// a null program (the model is freed).
     #[wasm_bindgen(js_name = addModelWithProgram)]
-    pub fn add_model_with_program(&mut self, model: Model, program: ProgramId) -> Entity {
+    pub fn add_model_with_program(
+        &mut self,
+        model: Model,
+        program: ProgramId,
+    ) -> Result<Entity, Error> {
+        if program.is_null() {
+            return Err("addModelWithProgram: needs a program (from createProgram)".into());
+        }
         self.invalidate();
         // Frozen shadows are baked again with it.
         self.renderer.rebake_shadows();
@@ -766,7 +784,7 @@ impl Scene {
         self.register_materials(&model);
         self.keep_model(root, model);
         self.reload_model(root);
-        root
+        Ok(root)
     }
 
     /// Bounding sphere of a model added with `addModel`, as loaded (before
@@ -1147,9 +1165,12 @@ impl Scene {
     /// GPU milliseconds per pass of recent frames, averaged: `opaque` (with
     /// the MSAA resolve), `late` (transmissive and transparent) and
     /// `present` (tone mapping) with HDR output; `opaque` alone without.
+    /// When they run, also `motion` (TAA's motion vectors), `fxaa`, and
+    /// `glass` (one glass layer: the average of the layers drawn, not
+    /// their sum).
     /// Results come a frame or two late; empty until then, or without
     /// `setGpuProfiling(true)`.
-    #[wasm_bindgen(js_name = gpuTimings)]
+    #[wasm_bindgen(js_name = gpuTimings, unchecked_return_type = "Record<string, number>")]
     pub fn gpu_timings(&self) -> js_sys::Object {
         let out = js_sys::Object::new();
         if let Some(p) = &self.profiler {

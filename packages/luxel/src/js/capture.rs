@@ -39,14 +39,15 @@ impl Scene {
     /// HDR, MSAA and TAA targets at that size for the moment, which a phone
     /// may not have (it usually loses the context then: rejected with a
     /// ContextLostError, the canvas back to its size, the scene rebuilt on
-    /// the restore). Rejects without a canvas or with a lost context.
+    /// the restore). Rejects without a canvas, with a lost context or bad
+    /// options (it doesn't throw).
     #[wasm_bindgen(unchecked_return_type = "Promise<Blob>")]
     pub fn capture(
         &mut self,
         camera: Entity,
         #[wasm_bindgen(unchecked_param_type = "CaptureOptions | undefined")] opts: Option<JsValue>,
-    ) -> Result<js_sys::Promise, Error> {
-        (|| -> Result<js_sys::Promise, Error> {
+    ) -> js_sys::Promise {
+        let made = (|| -> Result<js_sys::Promise, Error> {
             let opts = opts.unwrap_or(JsValue::UNDEFINED);
             let fb = self.ctx.default_framebuffer();
             let canvas = fb.canvas().ok_or("capture: the context has no canvas")?;
@@ -73,6 +74,8 @@ impl Scene {
             .clamp(1, 256);
 
             let resized = (w, h) != (old_w, old_h);
+            // The app's viewport, back after the capture's frames.
+            let old_viewport = fb.viewport();
             if resized {
                 canvas.set_width(w);
                 canvas.set_height(h);
@@ -88,7 +91,7 @@ impl Scene {
                 if resized {
                     canvas.set_width(old_w);
                     canvas.set_height(old_h);
-                    set_viewport_to_buffer(&fb);
+                    fb.set_viewport(&old_viewport);
                 }
                 return Err(Error::context_lost(
                     "capture: the WebGL context was lost while drawing the picture",
@@ -117,7 +120,7 @@ impl Scene {
             if resized {
                 canvas.set_width(old_w);
                 canvas.set_height(old_h);
-                set_viewport_to_buffer(&fb);
+                fb.set_viewport(&old_viewport);
                 // A resize cleared the canvas, and the camera has the picture's
                 // aspect: a frame at the canvas's size now (TAA settles on).
                 self.render_frame(camera);
@@ -125,8 +128,8 @@ impl Scene {
             }
             started.map_err(|e| Error::from(format!("capture: {e:?}")))?;
             Ok(promise)
-        })()
-        .map_err(|e| e.in_op("capture"))
+        })();
+        made.unwrap_or_else(|e| js_sys::Promise::reject(&e.in_op("capture").into()))
     }
 }
 

@@ -334,6 +334,8 @@ pub enum ShadingModel {
 #[derive(Default)]
 pub struct PbrShaders {
     programs: HashMap<PbrKey, ProgramId>,
+    // The same programs, for `is_pbr` (asked of every mesh a frame).
+    program_set: std::collections::HashSet<ProgramId>,
     model: ShadingModel,
     // Depth-only variants for shadow maps, by `PbrKey::shadow_key`.
     shadow_programs: HashMap<PbrKey, ProgramId>,
@@ -363,6 +365,7 @@ impl PbrShaders {
         let (vert, frag) = key.sources()?;
         let p = ctx.create_program_from(&vert, &frag)?;
         self.programs.insert(key, p);
+        self.program_set.insert(p);
         Ok(p)
     }
 
@@ -401,7 +404,7 @@ impl PbrShaders {
 
     /// Whether `program` is one of these variants.
     pub fn is_pbr(&self, program: ProgramId) -> bool {
-        self.programs.values().any(|&p| p == program)
+        self.program_set.contains(&program)
     }
 
     /// Variants compiled so far.

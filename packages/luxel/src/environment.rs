@@ -576,6 +576,8 @@ enum PendingState {
 pub struct PendingEnvironment {
     ctx: Context,
     state: Rc<RefCell<PendingState>>,
+    // The context generation its objects belong to.
+    generation: u32,
 }
 
 // Spacing of the stages: about one per 60 Hz frame.
@@ -595,9 +597,10 @@ impl PendingEnvironment {
         let state = Rc::new(RefCell::new(PendingState::Running));
         let shared = state.clone();
         let task_ctx = ctx.clone();
+        // The job's objects' generation (the task first runs later).
+        let generation = ctx.generation();
         wasm_bindgen_futures::spawn_local(async move {
             let ctx = task_ctx;
-            let generation = ctx.generation();
             ctx.programs_ready(baker.programs().to_vec()).await;
             let mut result = baker.check_linked().map(|()| None);
             while let Ok(None) = result {
@@ -605,7 +608,10 @@ impl PendingEnvironment {
                 // Lost, or lost and restored between two steps: the job's
                 // handles are gone either way.
                 if !running || ctx.is_lost() || ctx.generation() != generation {
-                    job.cancel();
+                    // After a restore its objects went with the old context.
+                    if ctx.generation() == generation {
+                        job.cancel();
+                    }
                     *shared.borrow_mut() = PendingState::Over;
                     return;
                 }
@@ -629,13 +635,16 @@ impl PendingEnvironment {
             let mut state = shared.borrow_mut();
             if matches!(*state, PendingState::Running) {
                 *state = PendingState::Done(result);
-            } else if let Ok(env) = result {
+            } else if let Ok(env) = result
+                && ctx.generation() == generation
+            {
                 env.destroy(&ctx); // cancelled meanwhile
             }
         });
         Ok(Self {
             ctx: ctx.clone(),
             state,
+            generation: ctx.generation(),
         })
     }
 
@@ -666,7 +675,10 @@ impl PendingEnvironment {
     /// is destroyed. Dropping does the same.
     pub fn cancel(&self) {
         let old = std::mem::replace(&mut *self.state.borrow_mut(), PendingState::Over);
-        if let PendingState::Done(Ok(env)) = old {
+        // A result of a lost generation went with its context.
+        if let PendingState::Done(Ok(env)) = old
+            && self.ctx.generation() == self.generation
+        {
             env.destroy(&self.ctx);
         }
     }
