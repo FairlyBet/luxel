@@ -530,3 +530,28 @@ async fn bad_animation_data_is_skipped_not_fatal() {
     );
     model.destroy(&ctx);
 }
+
+// A texture read for its color and, elsewhere, for its alpha only (sheen
+// color and sheen roughness) is made once: alpha is linear in the sRGB copy.
+#[wasm_bindgen_test]
+async fn an_alpha_only_map_shares_the_color_copy() {
+    let ctx = context();
+    let main = gltf(
+        &format!("data:application/octet-stream;base64,{}", b64(&bin())),
+        &format!("data:image/png;base64,{PNG}"),
+        true,
+    )
+    .replace(
+        r#""materials": [{ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } }]"#,
+        r#""materials": [{ "extensions": { "KHR_materials_sheen": {
+            "sheenColorFactor": [1, 1, 1], "sheenColorTexture": { "index": 0 },
+            "sheenRoughnessTexture": { "index": 0 } } } }],
+  "extensionsUsed": ["KHR_materials_sheen"]"#,
+    );
+    assert!(main.contains("sheenRoughnessTexture"));
+    let model = load(&ctx, bytes(main.as_bytes()), JsValue::UNDEFINED).await;
+    assert_eq!(model.texture_count(), 1);
+    loaded(&model).await;
+    assert_eq!(model.warnings(), Vec::<String>::new());
+    model.destroy(&ctx);
+}

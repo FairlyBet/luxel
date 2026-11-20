@@ -300,19 +300,37 @@ fn mime_from_path(url: &str) -> &'static str {
 /// color, sheen color), and those used in a linear one (normals, data
 /// maps). A texture in both is made twice, once in each colour space.
 pub(crate) fn texture_color_spaces(doc: &gltf::Document) -> (HashSet<usize>, HashSet<usize>) {
-    let (mut srgb, mut linear) = (HashSet::new(), HashSet::new());
+    let (mut srgb, mut linear, mut alpha) = (HashSet::new(), HashSet::new(), HashSet::new());
     for mat in doc.materials() {
         for (slot, m) in crate::material::MAP_SLOTS
             .iter()
             .zip(crate::material::doc_maps(&mat))
         {
             if let Some(m) = m {
-                if slot.srgb { &mut srgb } else { &mut linear }.insert(m.texture);
+                let set = if ALPHA_ONLY.contains(&slot.name) {
+                    &mut alpha
+                } else if slot.srgb {
+                    &mut srgb
+                } else {
+                    &mut linear
+                };
+                set.insert(m.texture);
             }
         }
     }
+    // Alpha is linear in an sRGB texture too: a map read for its alpha
+    // alone shares the color copy when there is one (not decoded twice).
+    linear.extend(alpha.into_iter().filter(|t| !srgb.contains(t)));
     (srgb, linear)
 }
+
+// Maps the shaders read only the alpha of (specular weight, sheen
+// roughness, diffuse transmission).
+const ALPHA_ONLY: [&str; 3] = [
+    "specularTexture",
+    "sheenRoughnessTexture",
+    "diffuseTransmissionTexture",
+];
 
 /// glTF min filter → (`TextureMinFilter`, build-mipmaps?). `None` = "auto".
 pub(crate) fn min_filter(f: Option<gltf::texture::MinFilter>) -> (TextureMinFilter, bool) {
