@@ -58,6 +58,14 @@ const float DISOCCLUSION_THRESHOLD = 2.5;
 const float DISOCCLUSION_SCALE = 0.01;
 
 float max3(vec3 c) { return max(c.r, max(c.g, c.b)); }
+// What the resolve reads, kept finite: radiance past half floats' range is
+// stored as infinity, and the tonemap would turn it into NaN (inf / inf),
+// which the history keeps and the Catmull-Rom spreads to the neighbours.
+// Infinity becomes the largest half float, NaN black.
+vec3 finite(vec3 c) {
+    c = min(c, vec3(65504.0));
+    return mix(vec3(0.0), c, equal(c, c));
+}
 // Karis' reversible tonemap, of the exposed color.
 // The display's exposure, auto exposure included.
 float exposure() {
@@ -90,12 +98,12 @@ vec4 clip_towards_aabb_center(vec4 history, vec4 lo, vec4 hi, bool coverage) {
 }
 
 vec3 sample_history(vec2 uv) {
-    return tonemap(textureLod(u_history, uv, 0.0).rgb);
+    return tonemap(finite(textureLod(u_history, uv, 0.0).rgb));
 }
 
 vec3 sample_current(ivec2 p) {
     ivec2 size = textureSize(u_current, 0);
-    return rgb_to_ycocg(tonemap(texelFetch(u_current, clamp(p, ivec2(0), size - 1), 0).rgb));
+    return rgb_to_ycocg(tonemap(finite(texelFetch(u_current, clamp(p, ivec2(0), size - 1), 0).rgb)));
 }
 
 float depth_at(vec2 uv) {
@@ -135,6 +143,7 @@ void main() {
     vec2 uv = gl_FragCoord.xy * texel;
     ivec2 px = ivec2(gl_FragCoord.xy);
     vec4 original = texelFetch(u_current, px, 0);
+    original.rgb = finite(original.rgb);
     if (u_taa.x > 0.5) {
         frag_color = vec4(original.rgb, 1.0 / MIN_HISTORY_BLEND_RATE);
         frag_motion = vec4(0.0, 0.0, original.a, 0.0);
@@ -203,7 +212,7 @@ void main() {
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
             vec4 c = texelFetch(u_current, clamp(px + ivec2(x, y), ivec2(0), isize - 1), 0);
-            vec3 t = (x == 0 && y == 0) ? current : tonemap(c.rgb);
+            vec3 t = (x == 0 && y == 0) ? current : tonemap(finite(c.rgb));
             vec4 s = vec4(rgb_to_ycocg(t), c.a * (1.0 - max3(t)));
             m1 += s;
             m2 += s * s;

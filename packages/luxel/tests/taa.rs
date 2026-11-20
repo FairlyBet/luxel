@@ -62,7 +62,7 @@ fn quad_url(qz: f32, qw: f32, gradient: bool, blend: bool) -> String {
     {{ "bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR" }},
     {{ "bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC3" }}
   ],
-  "materials": [{{ {alpha}"pbrMetallicRoughness": {{ "baseColorFactor": [1, 1, 1, 1] }},
+  "materials": [{{ "name": "Quad", {alpha}"pbrMetallicRoughness": {{ "baseColorFactor": [1, 1, 1, 1] }},
                    "extensions": {{ "KHR_materials_unlit": {{}} }} }}],
   "meshes": [{{ "primitives": [{{ "attributes": {{ "POSITION": 0{color} }}, "indices": 1, "material": 0 }}] }}],
   "nodes": [{{ "mesh": 0, "rotation": [0, 0, {qz}, {qw}] }}],
@@ -174,6 +174,60 @@ async fn taa_smooths_edges_and_follows_the_camera() {
     s.scene
         .look_at(s.camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
     assert_eq!(between(&s.frames(1).await), 0, "off again");
+    s.scene.destroy();
+}
+
+// Radiance past half floats' range lands in the HDR target as infinity:
+// the resolve keeps it the brightest value, not NaN that blacks the
+// pixel out and spreads through the history.
+#[wasm_bindgen_test]
+async fn taa_survives_infinite_radiance() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    if !scene.hdr() {
+        return;
+    }
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    let root = scene.add_model(load_model(&ctx, &asset_url()).await.expect("load"));
+    let quad = scene.find_material(root, "Quad");
+    let huge = js_sys::JSON::parse("[1e9, 1e9, 1e9, 1]").unwrap();
+    scene
+        .set_material_property(quad, "baseColorFactor", huge)
+        .unwrap();
+    let mut s = Setup { gl, scene, camera };
+    assert!(s.scene.set_taa(true));
+    let img = s.frames(16).await;
+    let centre = img[(SIZE / 2 * SIZE + SIZE / 2) as usize];
+    assert!(centre > 240, "the overflowing quad's middle: {centre}");
+    let lit = img.iter().filter(|&&v| v > 240).count();
+    assert!(lit > 20, "lit pixels: {lit}");
+    assert!(img[0] < 15, "outside stays black");
     s.scene.destroy();
 }
 
