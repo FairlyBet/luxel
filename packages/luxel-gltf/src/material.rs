@@ -1157,6 +1157,16 @@ pub(crate) fn assign_uv_slots(m: &mut Material) -> [u32; 2] {
     slots
 }
 
+// A property's name as `PROPERTIES` has it: the extension's own
+// (`iridescenceThicknessMaximum`; the first releases said
+// `iridescenceThickness`, still taken).
+fn canonical(name: &str) -> &str {
+    match name {
+        "iridescenceThickness" => "iridescenceThicknessMaximum",
+        n => n,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1405,15 +1415,5 @@ mod tests {
         plain.maps[0] = (0, 1);
         assert_eq!(assign_uv_slots(&mut plain), [0, 1]);
         assert_eq!(plain.maps[0], (0, 1));
-    }
-}
-
-// A property's name as `PROPERTIES` has it: the extension's own
-// (`iridescenceThicknessMaximum`; the first releases said
-// `iridescenceThickness`, still taken).
-fn canonical(name: &str) -> &str {
-    match name {
-        "iridescenceThickness" => "iridescenceThicknessMaximum",
-        n => n,
     }
 }
