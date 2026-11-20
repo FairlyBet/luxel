@@ -97,21 +97,31 @@ fn prop(m: &Material, name: &str) -> Vec<f32> {
     m.property(name).unwrap_or_default()
 }
 
-// The fuzz as (weight, color) from the sheen color; without fuzz the color
-// can't be recovered from it, so `remembered` (the last one set) stands in.
-fn fuzz(m: &Material, remembered: [f32; 3]) -> (f32, Vec<f32>) {
+/// OpenPBR's fuzz as (weight, color). glTF stores only their product (the
+/// sheen color), which can't be split back: the pair as last set is kept
+/// beside it and used while the sheen color still equals its product.
+pub type Fuzz = (f32, [f32; 3]);
+
+/// The fuzz behind `m`'s sheen color: `last` while it still matches,
+/// otherwise (a loaded material, or `sheenColorFactor` set by its glTF name)
+/// split as weight = the brightest channel, color = sheen / weight.
+pub fn fuzz(m: &Material, last: Fuzz) -> Fuzz {
     let sheen = prop(m, "sheenColorFactor");
+    let (w, c) = last;
+    if sheen.len() == 3 && (0..3).all(|i| (sheen[i] - w * c[i]).abs() <= 1e-6) {
+        return last;
+    }
     let w = sheen.iter().copied().fold(0.0, f32::max);
-    let color = if w > 0.0 {
-        sheen.iter().map(|c| c / w).collect()
+    let color = if w > 0.0 && sheen.len() == 3 {
+        [sheen[0] / w, sheen[1] / w, sheen[2] / w]
     } else {
-        remembered.to_vec()
+        c
     };
     (w, color)
 }
 
 /// The value of OpenPBR parameter `name`; None if it isn't one.
-pub fn get(m: &Material, name: &str, fuzz_color: [f32; 3]) -> Option<Vec<f32>> {
+pub fn get(m: &Material, name: &str, last_fuzz: Fuzz) -> Option<Vec<f32>> {
     if let Some((_, p)) = DIRECT.iter().find(|(n, _)| *n == name) {
         return Some(prop(m, p));
     }
@@ -134,8 +144,8 @@ pub fn get(m: &Material, name: &str, fuzz_color: [f32; 3]) -> Option<Vec<f32>> {
             let d = prop(m, "dispersion")[0];
             vec![if d > 0.0 { 20.0 / d } else { 0.0 }]
         }
-        "fuzz_weight" => vec![fuzz(m, fuzz_color).0],
-        "fuzz_color" => fuzz(m, fuzz_color).1,
+        "fuzz_weight" => vec![fuzz(m, last_fuzz).0],
+        "fuzz_color" => fuzz(m, last_fuzz).1.to_vec(),
         "thin_film_thickness" => vec![prop(m, "iridescenceThickness")[0] / 1000.0],
         "thin_film_ior" => prop(m, "iridescenceIor"),
         "emission_luminance" => prop(m, "emissiveStrength"),
@@ -150,7 +160,7 @@ pub fn set(
     m: &Material,
     name: &str,
     values: &[f32],
-    fuzz_color: [f32; 3],
+    last_fuzz: Fuzz,
 ) -> Option<Result<Writes, String>> {
     let want = |n: usize| -> Result<(), String> {
         if values.len() == n {
@@ -223,16 +233,13 @@ pub fn set(
             };
             vec![("dispersion", vec![d])]
         }),
+        // The caller keeps the new pair as `last_fuzz` (`fuzz_after`).
         "fuzz_weight" => want(1).map(|()| {
-            let (_, color) = fuzz(m, fuzz_color);
-            vec![(
-                "sheenColorFactor",
-                color.iter().map(|c| c * values[0]).collect(),
-            )]
+            let (_, color) = fuzz(m, last_fuzz);
+            vec![("sheenColorFactor", color.map(|c| c * values[0]).to_vec())]
         }),
         "fuzz_color" => want(3).map(|()| {
-            let (w, _) = fuzz(m, fuzz_color);
-            // Without fuzz the color is only remembered (the caller keeps it).
+            let (w, _) = fuzz(m, last_fuzz);
             vec![("sheenColorFactor", values.iter().map(|c| c * w).collect())]
         }),
         "thin_film_thickness" => {
@@ -244,4 +251,14 @@ pub fn set(
         _ => return None,
     };
     Some(result)
+}
+
+/// The fuzz pair to keep after setting parameter `name` = `values`.
+pub fn fuzz_after(m: &Material, name: &str, values: &[f32], last: Fuzz) -> Fuzz {
+    let (w, color) = fuzz(m, last);
+    match (name, values) {
+        ("fuzz_weight", &[v]) => (v, color),
+        ("fuzz_color", &[r, g, b]) => (w, [r, g, b]),
+        _ => (w, color),
+    }
 }

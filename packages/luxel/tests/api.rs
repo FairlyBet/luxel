@@ -1036,6 +1036,22 @@ async fn openpbr_parameter_names() {
     set(&mut s, "fuzz_weight", "0.8").unwrap();
     assert_eq!(get(&s, "sheenColorFactor"), [0.8, 0.4, 0.0]);
     assert_eq!(get(&s, "fuzz_color"), [1.0, 0.5, 0.0]);
+    // A color whose brightest channel isn't 1 keeps both parts: only their
+    // product is stored, so neither can be read back from it alone.
+    set(&mut s, "fuzz_weight", "1").unwrap();
+    set(&mut s, "fuzz_color", "[0.5, 0.2, 0.2]").unwrap();
+    assert_eq!(get(&s, "fuzz_weight"), [1.0]);
+    assert_eq!(get(&s, "fuzz_color"), [0.5, 0.2, 0.2]);
+    set(&mut s, "fuzz_weight", "0.5").unwrap();
+    assert_eq!(get(&s, "sheenColorFactor"), [0.25, 0.1, 0.1]);
+    // A black color keeps the weight for the next color.
+    set(&mut s, "fuzz_color", "[0, 0, 0]").unwrap();
+    set(&mut s, "fuzz_color", "[1, 0, 0]").unwrap();
+    assert_eq!(get(&s, "sheenColorFactor"), [0.5, 0.0, 0.0]);
+    // Written by its glTF name, the sheen color is split afresh.
+    set(&mut s, "sheenColorFactor", "[0.2, 0.1, 0.1]").unwrap();
+    assert_eq!(get(&s, "fuzz_weight"), [0.2]);
+    assert_eq!(get(&s, "fuzz_color"), [1.0, 0.5, 0.5]);
 
     // A layer turned on switches the variant, as with glTF names.
     let variants = s.scene.shader_variant_count();

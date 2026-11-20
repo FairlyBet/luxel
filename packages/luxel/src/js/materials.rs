@@ -43,9 +43,9 @@ pub(crate) struct MaterialRecord {
     pub(crate) cloned: bool,
     // The texture of each map (`MAP_NAMES` order), NULL for none.
     pub(crate) maps: [TextureId; MAP_COUNT],
-    // OpenPBR fuzz_color as last set: with no fuzz (weight 0) the stored
-    // sheen color can't carry it.
-    pub(crate) fuzz_color: [f32; 3],
+    // OpenPBR fuzz (weight, color) as last set: the stored sheen color is
+    // only their product (`openpbr::fuzz`).
+    pub(crate) fuzz: openpbr::Fuzz,
 }
 
 #[wasm_bindgen]
@@ -200,8 +200,7 @@ impl Scene {
     #[wasm_bindgen(js_name = materialProperty)]
     pub fn material_property(&self, material: ParamGroupId, name: &str) -> Option<Vec<f32>> {
         let record = self.materials.get(&material)?;
-        openpbr::get(&record.material, name, record.fuzz_color)
-            .or_else(|| record.material.property(name))
+        openpbr::get(&record.material, name, record.fuzz).or_else(|| record.material.property(name))
     }
 
     /// Sets a material property (names as for `materialProperty`): a number,
@@ -227,11 +226,10 @@ impl Scene {
                 .materials
                 .get_mut(&material)
                 .ok_or("setMaterialProperty: not a material of this scene")?;
-            if name == "fuzz_color" && values.len() == 3 {
-                record.fuzz_color = [values[0], values[1], values[2]];
-            }
-            if let Some(writes) = openpbr::set(&record.material, name, &values, record.fuzz_color) {
-                for (prop, v) in writes.map_err(Error::from)? {
+            if let Some(writes) = openpbr::set(&record.material, name, &values, record.fuzz) {
+                let writes = writes.map_err(Error::from)?;
+                record.fuzz = openpbr::fuzz_after(&record.material, name, &values, record.fuzz);
+                for (prop, v) in writes {
                     self.set_material_values(material, prop, &v)?;
                 }
                 return Ok(());
@@ -306,7 +304,7 @@ impl Scene {
             .material
             .clone();
         let maps = self.materials[&material].maps;
-        let fuzz_color = self.materials[&material].fuzz_color;
+        let fuzz = self.materials[&material].fuzz;
         let copy = self.ctx.copy_param_group(material)?;
         self.materials.insert(
             copy,
@@ -314,7 +312,7 @@ impl Scene {
                 material: data,
                 cloned: true,
                 maps,
-                fuzz_color,
+                fuzz,
             },
         );
         Ok(copy)
@@ -555,7 +553,7 @@ impl Scene {
                     material: material.clone(),
                     cloned: false,
                     maps,
-                    fuzz_color: [1.0; 3],
+                    fuzz: (1.0, [1.0; 3]),
                 },
             );
         }
