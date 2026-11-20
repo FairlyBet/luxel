@@ -10,7 +10,7 @@ use luxel_gl::buffer::BufferUsage;
 use luxel_gl::context::{Context, ContextOptions};
 use luxel_gl::draw::{DrawCommand, DrawMode, IndexType};
 use luxel_gl::framebuffer::ClearMask;
-use luxel_gl::ids::UniformBufferId;
+use luxel_gl::ids::{ParamGroupId, ParamLayoutId, UniformBufferId};
 use luxel_gl::param::ParamLayoutBuilder;
 use luxel_gl::pass::{Batch, Pass};
 use luxel_gl::render_state::{DepthFunc, RenderState};
@@ -43,10 +43,21 @@ void main() {
 "#;
 
 // Everything that lives on the GPU. Built once at startup and again after a
-// context restore: handles from before a context loss are dead.
+// context restore: handles from before a context loss are dead. The
+// parameter layout and group are CPU-side and outlive a loss: freed before
+// the rebuild (`free`), or each restore would leave another pair behind.
 struct Scene {
     pass: Pass,
     ubo: UniformBufferId,
+    params_layout: ParamLayoutId,
+    params: ParamGroupId,
+}
+
+impl Scene {
+    fn free(&self, ctx: &Context) {
+        ctx.destroy_param_group(self.params);
+        ctx.destroy_param_layout(self.params_layout);
+    }
 }
 
 fn build_scene(ctx: &Context) -> Result<Scene, String> {
@@ -116,7 +127,12 @@ fn build_scene(ctx: &Context) -> Result<Scene, String> {
     batch.draw(vao, &draw_cmd);
     pass.add(&batch);
 
-    Ok(Scene { pass, ubo })
+    Ok(Scene {
+        pass,
+        ubo,
+        params_layout,
+        params,
+    })
 }
 
 fn main() {
@@ -138,7 +154,7 @@ fn main() {
     // stale. The callback gets the context as an argument.
     let restore_scene = Rc::clone(&scene);
     ctx.on_restored(move |ctx| match build_scene(ctx) {
-        Ok(s) => *restore_scene.borrow_mut() = s,
+        Ok(s) => std::mem::replace(&mut *restore_scene.borrow_mut(), s).free(ctx),
         Err(e) => web_sys::console::error_1(&format!("rebuild failed: {e}").into()),
     });
 

@@ -96,9 +96,14 @@ fn main() {
     ctx.texture_storage_2d(tex, 1, &TextureFormat::rgba8(), 8, 8);
     ctx.texture_sub_image_2d(tex, 0, 0, 0, 8, 8, &TextureFormat::rgba8(), &checkerboard());
 
-    // (DOM path, for reference — loads asynchronously and uploads on `onload`:)
-    //   let cb = Closure::<dyn FnMut()>::new(|| {}).into_js_value();
-    //   ctx.texture_load_image(tex, "./photo.png", &TextureFormat::rgba8(), true, true, cb.into());
+    // (DOM path, for reference — into a texture without storage yet: it is
+    // sized to the image when it loads, and the callback gets (width,
+    // height), (0, 0) if it failed:)
+    //   let photo = ctx.create_texture(TextureTarget::Texture2D, ...)?;
+    //   let cb = Closure::<dyn FnMut(u32, u32)>::new(|_w, _h| {})
+    //       .into_js_value()
+    //       .unchecked_into::<js_sys::Function>();
+    //   ctx.texture_load_image(photo, "./photo.png", &TextureFormat::rgba8(), true, true, cb);
 
     let params_layout = ctx
         .create_param_layout(&ParamLayoutBuilder::new().texture("u_tex"))

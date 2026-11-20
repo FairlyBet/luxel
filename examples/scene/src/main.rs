@@ -17,6 +17,7 @@ use luxel_ecs::{Entity, World};
 use luxel_gl::context::{Context, ContextOptions};
 use luxel_gl::draw::{DrawCommand, DrawMode, IndexType};
 use luxel_gl::framebuffer::ClearMask;
+use luxel_gl::ids::{ParamGroupId, ParamLayoutId};
 use luxel_gl::param::ParamLayoutBuilder;
 use luxel_gl::pass::Pass;
 use luxel_gl::render_state::{CullFace, RenderState};
@@ -69,6 +70,9 @@ struct App {
     camera: Entity,
     pivot: Entity,
     spinners: Vec<Entity>,
+    // CPU-side (they outlive a context loss): freed before a rebuild.
+    material_layout: ParamLayoutId,
+    materials: [ParamGroupId; 2],
 }
 
 fn build(ctx: &Context) -> Result<App, String> {
@@ -163,10 +167,22 @@ fn build(ctx: &Context) -> Result<App, String> {
         camera,
         pivot,
         spinners,
+        material_layout,
+        materials,
     })
 }
 
 impl App {
+    // What survives a context loss (the renderer's groups and layouts, the
+    // materials), freed when the app is rebuilt after one.
+    fn free(self, ctx: &Context) {
+        self.scene.destroy(ctx);
+        for g in self.materials {
+            ctx.destroy_param_group(g);
+        }
+        ctx.destroy_param_layout(self.material_layout);
+    }
+
     fn frame(&mut self, t: f32, aspect: f32) -> String {
         // Animation: plain component writes; the systems pick up what changed.
         self.world
@@ -217,7 +233,7 @@ fn main() {
     // After a context loss every handle is stale: build the scene again.
     let restore = Rc::clone(&app);
     ctx.on_restored(move |ctx| match build(ctx) {
-        Ok(a) => *restore.borrow_mut() = a,
+        Ok(a) => std::mem::replace(&mut *restore.borrow_mut(), a).free(ctx),
         Err(e) => web_sys::console::error_1(&format!("rebuild failed: {e}").into()),
     });
 

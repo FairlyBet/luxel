@@ -26,7 +26,15 @@ const types = {
 };
 
 createServer(async (req, res) => {
-  const path = normalize(decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname));
+  // A malformed URL (a stray "%") answers 400; thrown here it would be an
+  // unhandled rejection, which ends the process.
+  let path;
+  try {
+    path = normalize(decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname));
+  } catch {
+    res.writeHead(400).end();
+    return;
+  }
   const file = join(root, /[\\/]$/.test(path) ? path + "index.html" : path);
   if (!file.startsWith(root)) {
     res.writeHead(403).end();
