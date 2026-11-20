@@ -477,6 +477,7 @@ impl DefaultFramebuffer {
             .canvas
             .clone()
             .ok_or("auto-resize needs a canvas (context was created from a raw gl)")?;
+        pin_css_size(&canvas);
 
         // Weak so the closures (owned by the inner) don't keep it alive.
         let weak = Rc::downgrade(&self.inner);
@@ -1700,4 +1701,44 @@ fn color_kind_problem(a: &ColorAttachment, textures: &Pool<TextureObj>) -> Optio
             t.target
         )
     })
+}
+
+// A canvas whose CSS box follows its width / height attributes (no CSS
+// size): resizing the drawing buffer to box × devicePixelRatio would grow
+// the box, and the next observation the buffer, without end on a HiDPI
+// screen. Its CSS size is pinned to what it is now (said once); a canvas
+// sized by CSS (a stylesheet, a container, aspect-ratio) is left alone.
+fn pin_css_size(canvas: &HtmlCanvasElement) {
+    // (canvas.style through JS: no web-sys feature for it.)
+    let set_style = |name: &str, value: &str| {
+        let style = js_sys::Reflect::get(canvas, &"style".into()).ok();
+        let set = style
+            .as_ref()
+            .and_then(|s| js_sys::Reflect::get(s, &"setProperty".into()).ok())
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
+        if let (Some(style), Some(set)) = (style, set) {
+            let _ = set.call2(&style, &name.into(), &value.into());
+        }
+    };
+    let mut pinned = false;
+    let (w, h) = (canvas.width(), canvas.height());
+    let (cw, ch) = (canvas.client_width(), canvas.client_height());
+    canvas.set_width(w + 1);
+    if canvas.client_width() != cw {
+        set_style("width", &format!("{cw}px"));
+        pinned = true;
+    }
+    canvas.set_width(w);
+    canvas.set_height(h + 1);
+    if canvas.client_height() != ch {
+        set_style("height", &format!("{ch}px"));
+        pinned = true;
+    }
+    canvas.set_height(h);
+    if pinned {
+        crate::console::warn_once(
+            "[luxel] enableAutoResize: the canvas has no CSS size (it would grow with its \
+             drawing buffer); its CSS size is kept as it is now — give it one in CSS",
+        );
+    }
 }

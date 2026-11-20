@@ -137,3 +137,36 @@ fn from_gl_covers_the_drawing_buffer() {
     fb.set_viewport(&vp);
     assert_eq!(fb.width(), 8);
 }
+
+// A canvas with no CSS size would grow with its drawing buffer (its box
+// follows the width attribute): its CSS size is pinned instead, and the
+// buffer settles.
+#[wasm_bindgen_test]
+async fn a_canvas_without_a_css_size_doesnt_grow() {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let canvas: HtmlCanvasElement = document
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_attribute("style", "display: block").unwrap();
+    canvas.set_width(60);
+    canvas.set_height(30);
+    document.body().unwrap().append_child(&canvas).unwrap();
+    let ctx = Context::from_canvas(&canvas, &ContextOptions::new()).expect("ctx");
+    let fb = ctx.default_framebuffer();
+    fb.enable_auto_resize().expect("auto-resize");
+    // Twice the device pixels, as a HiDPI screen would ask.
+    fb.set_resolution_scale(2.0);
+    let mut widths = Vec::new();
+    for _ in 0..4 {
+        settle().await;
+        widths.push(fb.width());
+    }
+    assert_eq!(widths[2], widths[3], "settled: {widths:?}");
+    assert!(widths[3] <= 2 * 60 * 3, "{widths:?}");
+    assert_eq!(canvas.client_width(), 60);
+    drop(fb);
+    drop(ctx);
+    canvas.remove();
+}
