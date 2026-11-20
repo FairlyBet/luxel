@@ -352,10 +352,29 @@ impl BakeJob {
     ) -> Result<Self, Error> {
         const MIN_SIZE: u32 = 1 << (SPECULAR_MIPS - 1);
         let size = size.clamp(MIN_SIZE, 2048).next_power_of_two() as i32;
-        let (w, h) = (image.width as i32, image.height as i32);
-        if image.rgbe.len() != (w * h * 4) as usize {
+        let texels = (image.width as usize).checked_mul(image.height as usize);
+        if image.width == 0 || image.height == 0 {
+            return Err("environment: the image is empty".into());
+        }
+        if texels.and_then(|n| n.checked_mul(4)) != Some(image.rgbe.len()) {
             return Err("environment: image data doesn't match its size".into());
         }
+        // Halved on the CPU while larger than the GPU takes, or than the
+        // bake reads (a cube face covers a quarter of the width: eight
+        // texels a cube texel is plenty) — an 8k image at size 256 held
+        // ~470 MB of GPU memory through the first stage otherwise.
+        let max = luxel_gl::limits::max_texture_size().max(1);
+        let enough = (8 * size as u32).max(64);
+        let mut halved: Option<RgbeImage> = None;
+        loop {
+            let img = halved.as_ref().unwrap_or(image);
+            let too_big = img.width > max || img.height > max || img.width > enough;
+            if !too_big || (img.width == 1 && img.height == 1) {
+                break;
+            }
+            halved = Some(crate::hdr::halve_rgbe(img));
+        }
+        let image = halved.as_ref().unwrap_or(image);
         let mut made: Vec<TextureId> = Vec::new();
         let result = Self::make(ctx, image, size, compact, &mut made);
         if result.is_err() {

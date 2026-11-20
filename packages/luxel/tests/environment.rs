@@ -500,3 +500,43 @@ async fn subsurface_wraps_light_and_coat_anisotropy_stretches_highlights() {
     assert!(diff > 100, "{round:?} vs {stretched:?}");
     scene.destroy();
 }
+
+// An image wider than the GPU takes bakes all the same (halved on the CPU
+// first), and shows as the same light as a small one.
+#[wasm_bindgen_test]
+async fn an_environment_larger_than_the_gpu_takes_bakes() {
+    let (ctx, gl) = context();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    let camera = scene.spawn();
+    scene.insert_camera(camera, Camera::perspective(1.0, 1.0, 0.1, 100.0));
+    scene.set_background(0.0);
+    ready(&mut scene).await;
+    let sky = |scene: &mut Scene| look(scene, &ctx, &gl, camera, [0.0, 0.0, -1.0]);
+    let w = luxel_gl::limits::max_texture_size() * 2;
+    let errors = js_sys::Array::new();
+    let console = js_sys::Reflect::get(&js_sys::global(), &"console".into()).unwrap();
+    let original = js_sys::Reflect::get(&console, &"error".into()).unwrap();
+    let push = js_sys::Function::new_with_args("m", "this.push(String(m))").bind0(&errors);
+    js_sys::Reflect::set(&console, &"error".into(), &push).unwrap();
+    scene
+        .set_environment_hdr(&encode_hdr(w, 2, &vec![0.4; (w * 2 * 3) as usize]), 32)
+        .expect("start");
+    ready(&mut scene).await;
+    let big = sky(&mut scene);
+    js_sys::Reflect::set(&console, &"error".into(), &original).unwrap();
+    let errors: Vec<String> = errors.iter().filter_map(|v| v.as_string()).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    scene
+        .set_environment_hdr(&encode_hdr(8, 4, &[0.4; 8 * 4 * 3]), 32)
+        .expect("start");
+    ready(&mut scene).await;
+    let small = sky(&mut scene);
+    assert!(big[0].abs_diff(small[0]) <= 2, "{big:?} vs {small:?}");
+    assert!(
+        scene
+            .set_environment_hdr(&encode_hdr(0, 0, &[]), 32)
+            .is_err(),
+        "empty"
+    );
+    scene.destroy();
+}

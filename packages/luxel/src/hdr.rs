@@ -211,3 +211,87 @@ pub fn encode_hdr(width: u32, height: u32, rgb: &[f32]) -> Vec<u8> {
     }
     out
 }
+
+/// `image` at half its width and height (2×2 texels averaged, a side of 1
+/// kept): for an environment larger than its bake needs or the GPU takes.
+pub fn halve_rgbe(image: &RgbeImage) -> RgbeImage {
+    let (w, h) = (image.width as usize, image.height as usize);
+    let (hw, hh) = ((w / 2).max(1), (h / 2).max(1));
+    let texel = |x: usize, y: usize| {
+        let q = &image.rgbe[(y.min(h - 1) * w + x.min(w - 1)) * 4..][..4];
+        if q[3] == 0 {
+            return [0.0f32; 3];
+        }
+        // 2^(e − 128) / 256 per mantissa step.
+        let f = f32::powi(2.0, q[3] as i32 - 136);
+        [q[0] as f32 * f, q[1] as f32 * f, q[2] as f32 * f]
+    };
+    let mut rgbe = Vec::with_capacity(hw * hh * 4);
+    for y in 0..hh {
+        for x in 0..hw {
+            let mut sum = [0.0f32; 3];
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let t = texel(2 * x + dx, 2 * y + dy);
+                for c in 0..3 {
+                    sum[c] += t[c] * 0.25;
+                }
+            }
+            let m = sum[0].max(sum[1]).max(sum[2]);
+            if m < 1e-32 {
+                rgbe.extend([0, 0, 0, 0]);
+                continue;
+            }
+            let e = m.log2().floor() as i32 + 1;
+            let scale = 256.0 / f32::powi(2.0, e);
+            rgbe.extend([
+                (sum[0] * scale).min(255.0) as u8,
+                (sum[1] * scale).min(255.0) as u8,
+                (sum[2] * scale).min(255.0) as u8,
+                (e + 128).clamp(0, 255) as u8,
+            ]);
+        }
+    }
+    RgbeImage {
+        width: hw as u32,
+        height: hh as u32,
+        rgbe,
+    }
+}
+
+#[cfg(test)]
+mod halve_tests {
+    use super::*;
+
+    #[test]
+    fn halving_averages_and_keeps_light() {
+        // 4×2: left half 1.0, right half 3.0 (grey).
+        let rgb: Vec<f32> = (0..8)
+            .flat_map(|i| {
+                let v = if i % 4 < 2 { 1.0 } else { 3.0 };
+                [v, v, v]
+            })
+            .collect();
+        let img = decode_hdr_rgbe(&encode_hdr(4, 2, &rgb)).unwrap();
+        let half = halve_rgbe(&img);
+        assert_eq!((half.width, half.height), (2, 1));
+        let back = decode_hdr(&encode_rgbe_file(&half)).unwrap();
+        assert!(
+            (back.rgb[0] - 1.0).abs() < 0.02 && (back.rgb[3] - 3.0).abs() < 0.05,
+            "{:?}",
+            back.rgb
+        );
+        let one = halve_rgbe(&halve_rgbe(&half));
+        assert_eq!((one.width, one.height), (1, 1));
+    }
+
+    // A flat Radiance file of an RGBE image.
+    fn encode_rgbe_file(img: &RgbeImage) -> Vec<u8> {
+        let mut out = format!(
+            "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n",
+            img.height, img.width
+        )
+        .into_bytes();
+        out.extend(&img.rgbe);
+        out
+    }
+}
