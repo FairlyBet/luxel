@@ -23,10 +23,12 @@ impl Ray {
     pub fn through(view_proj: &Mat4, ndc: Vec2) -> Self {
         let inv = view_proj.inverse();
         let near = inv.project_point3(ndc.extend(-1.0));
-        let far = inv.project_point3(ndc.extend(1.0));
+        // Mid-depth, not the far plane: with no far plane (`far` infinite)
+        // that one is at infinity, and the direction would come out zero.
+        let mid = inv.project_point3(ndc.extend(0.0));
         Self {
             origin: near,
-            dir: (far - near).normalize_or_zero(),
+            dir: (mid - near).normalize_or_zero(),
         }
     }
 

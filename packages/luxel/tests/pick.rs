@@ -46,6 +46,24 @@ fn boxes() {
     );
 }
 
+// glTF's infinite perspective (no `zfar`) has its far plane at infinity.
+#[test]
+fn rays_from_a_camera_with_no_far_plane() {
+    let cam = Camera::perspective(std::f32::consts::FRAC_PI_2, 1.0, 1.0, f32::INFINITY);
+    let view = Mat4::from_translation(Vec3::new(0.0, 0.0, 10.0)).inverse();
+    let vp = cam.projection_matrix() * view;
+    let center = Ray::through(&vp, Vec2::ZERO);
+    assert!(center.origin.abs_diff_eq(Vec3::new(0.0, 0.0, 9.0), 1e-4));
+    assert!(center.dir.abs_diff_eq(Vec3::NEG_Z, 1e-5), "{center:?}");
+    let right = Ray::through(&vp, Vec2::new(1.0, 0.0));
+    assert!(
+        right
+            .dir
+            .abs_diff_eq(Vec3::new(1.0, 0.0, -1.0).normalize(), 1e-4),
+        "{right:?}"
+    );
+}
+
 #[test]
 fn camera_rays_go_through_the_screen_point() {
     let cam = Camera::perspective(std::f32::consts::FRAC_PI_2, 1.0, 1.0, 100.0);
