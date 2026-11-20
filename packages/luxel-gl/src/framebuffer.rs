@@ -641,7 +641,6 @@ impl DefaultFramebuffer {
 // destroying it while attached is deferred until the framebuffer lets go. The
 // three texture variants encode the only three ways WebGL2 attaches a texture:
 // a 2D image, a cube-map face, or a layer of a 3D / 2D-array texture.
-
 #[derive(Clone, Copy)]
 enum ColorAttachment {
     Texture2D {
@@ -1148,6 +1147,14 @@ impl Context {
         {
             return console::error(&format!("[luxel] {op}: {p}; ignored"));
         }
+        // GL refuses a texture of another kind than the call attaches
+        // (keeping the old attachment): refused here, before the pool
+        // records it.
+        if let Some(a) = &att
+            && let Some(p) = color_kind_problem(a, textures)
+        {
+            return console::error(&format!("[luxel] {op}: {p}; ignored"));
+        }
         if let Some(a) = &att
             && !retain(self, a.source(), textures, renderbuffers, op)
         {
@@ -1193,6 +1200,21 @@ impl Context {
         let Some(f) = framebuffers.get_mut(fb.0) else {
             return self.stale("framebuffer", op, fb);
         };
+        if let Some(DepthAttachment::Texture { tex, layer, .. }) = &att
+            && let Some(t) = textures.get(tex.0)
+        {
+            let want = if layer.is_some() {
+                &[crate::texture::TextureTarget::Texture2DArray][..]
+            } else {
+                &[crate::texture::TextureTarget::Texture2D][..]
+            };
+            if !want.contains(&t.target) {
+                return console::error(&format!(
+                    "[luxel] {op}: a {:?} texture can't be attached there (needs {want:?}); ignored",
+                    t.target
+                ));
+            }
+        }
         if let Some(a) = &att
             && !retain(self, a.source(), textures, renderbuffers, op)
         {
@@ -1650,4 +1672,32 @@ fn color_index_in_range(index: u32) -> bool {
         ));
     }
     index < max
+}
+
+// Why GL would refuse attaching `a` (its texture of another kind than the
+// attach call needs), if it would.
+fn color_kind_problem(a: &ColorAttachment, textures: &Pool<TextureObj>) -> Option<String> {
+    let (tex, want): (TextureId, &[crate::texture::TextureTarget]) = match a {
+        ColorAttachment::Texture2D { tex, .. } => {
+            (*tex, &[crate::texture::TextureTarget::Texture2D])
+        }
+        ColorAttachment::CubeFace { tex, .. } => {
+            (*tex, &[crate::texture::TextureTarget::TextureCubeMap])
+        }
+        ColorAttachment::Layer { tex, .. } => (
+            *tex,
+            &[
+                crate::texture::TextureTarget::Texture3D,
+                crate::texture::TextureTarget::Texture2DArray,
+            ],
+        ),
+        _ => return None,
+    };
+    let t = textures.get(tex.0)?;
+    (!want.contains(&t.target)).then(|| {
+        format!(
+            "a {:?} texture can't be attached there (needs {want:?})",
+            t.target
+        )
+    })
 }

@@ -303,3 +303,28 @@ fn deprecated_names_forward_to_the_new_ones() {
     let q = f.ctx.create_query(QueryKind::AnySamplesPassed).unwrap();
     assert!(!f.ctx.query_pending(q) && !f.ctx.query_is_pending(q));
 }
+
+// A block range GL would refuse (misaligned, past the buffer, empty) is
+// refused when set, with the reason, instead of failing at draw.
+#[wasm_bindgen_test]
+fn a_bad_block_range_is_refused() {
+    let f = fixture();
+    let ubo = color_block(&f.ctx, "c", [255, 0, 0, 255]);
+    let layout = f
+        .ctx
+        .create_param_layout(&ParamLayoutBuilder::new().block("Colors"))
+        .unwrap();
+    let g = f.ctx.create_param_group(layout).unwrap();
+    let field = f.ctx.param_field(layout, "Colors").unwrap();
+    let align = luxel_gl::limits::uniform_buffer_offset_alignment() as i32;
+    for (offset, size) in [(0, 0), (-align, 16), (1, 16), (0, 4096 * 64)] {
+        let errors = capture_console("error", || {
+            f.ctx.param_set_block_range(g, field, ubo, offset, size);
+        });
+        assert_eq!(errors.len(), 1, "{offset}+{size}: {errors:?}");
+    }
+    let errors = capture_console("error", || {
+        f.ctx.param_set_block_range(g, field, ubo, 0, 16)
+    });
+    assert!(errors.is_empty(), "{errors:?}");
+}

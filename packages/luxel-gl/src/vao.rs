@@ -154,6 +154,15 @@ fn attr_index_in_range(index: u32) -> bool {
     index < max
 }
 
+impl VertexArrayObj {
+    // Nothing set on it yet (no attributes, index buffer or owned buffers).
+    pub(crate) fn is_fresh(&self) -> bool {
+        self.attribs.iter().all(Option::is_none)
+            && self.index_buffer.is_none()
+            && self.owned.is_empty()
+    }
+}
+
 impl Context {
     pub(crate) fn insert_vertex_array(
         &self,

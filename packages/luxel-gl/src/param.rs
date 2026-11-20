@@ -536,12 +536,30 @@ impl Context {
         offset: i32,
         size: i32,
     ) {
+        // GL would refuse the range at draw time (INVALID_VALUE, the block
+        // left on its old buffer): refused here, with the reason.
         let align = limits::uniform_buffer_offset_alignment() as i32;
-        if align > 0 && offset % align != 0 {
-            console::warn_once(&format!(
-                "[luxel] param_set_block_range: offset {offset} is not a multiple of \
-                 UNIFORM_BUFFER_OFFSET_ALIGNMENT ({align})"
-            ));
+        let total = self
+            .res()
+            .uniform_buffers
+            .get(ubo.0)
+            .map(|u| u.byte_size() as i64);
+        let problem = if offset < 0 || size <= 0 {
+            Some(format!("offset {offset} / size {size} out of range"))
+        } else if align > 0 && offset % align != 0 {
+            Some(format!(
+                "offset {offset} is not a multiple of UNIFORM_BUFFER_OFFSET_ALIGNMENT ({align})"
+            ))
+        } else if total.is_some_and(|t| offset as i64 + size as i64 > t) {
+            Some(format!(
+                "range {offset}+{size} is past the buffer's {} bytes",
+                total.unwrap_or(0)
+            ))
+        } else {
+            None
+        };
+        if let Some(p) = problem {
+            return console::error(&format!("[luxel] param_set_block_range: {p}; ignored"));
         }
         self.with_group_field(
             group,

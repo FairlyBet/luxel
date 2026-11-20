@@ -136,7 +136,12 @@ pub(crate) fn after_load(
     then: js_sys::Function,
 ) -> (js_sys::Function, Rc<Cell<TextureId>>) {
     let tex = Rc::new(Cell::new(TextureId::NULL));
-    let Some((kind, comp)) = kind.zip(compressor(ctx)) else {
+    // The shared compressor made (and its context pinned) only when there
+    // is something to compress.
+    let Some(kind) = kind else {
+        return (then, tex);
+    };
+    let Some(comp) = compressor(ctx) else {
         return (then, tex);
     };
     if !comp.supports(kind) {

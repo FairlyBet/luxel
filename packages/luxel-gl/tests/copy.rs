@@ -261,3 +261,28 @@ fn copy_from_an_antialiased_canvas() {
     assert_eq!(px, BLUE);
     assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
 }
+
+// A texture of another kind than the attach call needs is refused (GL
+// would keep the old attachment while luxel recorded the new).
+#[wasm_bindgen_test]
+fn attaching_the_wrong_kind_of_texture_is_refused() {
+    let f = fixture();
+    let (fb, tex) = texture_framebuffer(&f, 2, 2);
+    let cube = f
+        .ctx
+        .create_texture(
+            TextureTarget::TextureCubeMap,
+            TextureMinFilter::Nearest,
+            TextureMagFilter::Nearest,
+        )
+        .unwrap();
+    f.ctx
+        .texture_storage_2d(cube, 1, &TextureFormat::rgba8(), 2, 2);
+    let errors = capture_console("error", || {
+        f.ctx.framebuffer_attach_color_texture_2d(fb, 0, cube, 0);
+        f.ctx.framebuffer_attach_color_layer(fb, 0, tex, 0, 0);
+    });
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert_eq!(f.ctx.framebuffer_color_texture(fb, 0), tex);
+    assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
+}

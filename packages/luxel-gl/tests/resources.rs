@@ -376,3 +376,19 @@ fn dropping_the_context_deletes_its_objects() {
     assert!(!gl.is_program(Some(&raw_program)), "program deleted");
     assert_eq!(gl.get_error(), WebGl2RenderingContext::NO_ERROR);
 }
+
+// buildInto sets up an empty vertex array only: on one already set up its
+// old buffers and attributes would stay alive and enabled.
+#[wasm_bindgen_test]
+fn build_into_needs_an_empty_vertex_array() {
+    use luxel_gl::vao_builder::{AttrKind, VaoBuilder};
+    let f = fixture();
+    let vao = f.ctx.create_vertex_array().unwrap();
+    let build = || {
+        let mut b = VaoBuilder::new(&f.ctx);
+        b.add_f32(0, AttrKind::F32x2, &[0.0, 0.0, 1.0, 0.0, 1.0, 1.0]);
+        b.build_into(vao)
+    };
+    build().expect("an empty one");
+    assert!(build().is_err(), "set up already");
+}

@@ -372,14 +372,28 @@ impl VaoBuilder {
         Ok(vao)
     }
 
-    /// Configures an existing vertex array. The buffers created here are owned
-    /// by it and destroyed with it. Consumes the builder, like `build`.
+    /// Configures an existing, empty vertex array (as `createVertexArray`
+    /// makes it). The buffers created here are owned by it and destroyed with
+    /// it. Consumes the builder, like `build`. An error for one already set
+    /// up: its old buffers and attributes would stay (to rebuild, destroy it
+    /// and build a new one).
     #[wasm_bindgen(js_name = buildInto)]
     pub fn build_into(self, vao: VertexArrayId) -> Result<(), Error> {
         // A stale vertex array: an error before any buffer is made (they
         // would leak, owned by nothing).
         if !self.ctx.vertex_array_is_valid(vao) {
             return Err(err!("VaoBuilder: the vertex array is stale or destroyed"));
+        }
+        if !self
+            .ctx
+            .res()
+            .vertex_arrays
+            .get(vao.0)
+            .is_some_and(|v| v.is_fresh())
+        {
+            return Err(err!(
+                "VaoBuilder: buildInto needs an empty vertex array (this one is set up already)"
+            ));
         }
         // 1. Source type matches declared kind
         for e in &self.attrs {
