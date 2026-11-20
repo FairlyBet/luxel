@@ -809,3 +809,81 @@ async fn contact_shadows_without_a_shadow_map() {
     );
     scene.destroy();
 }
+
+// A thin sheet lit from behind (diffuse transmission) still glows with its
+// light casting shadows: its own shadow doesn't cut the light through it.
+#[wasm_bindgen_test]
+async fn light_through_a_sheet_isnt_cut_by_its_own_shadow() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    canvas.set_width(SIZE as u32);
+    canvas.set_height(SIZE as u32);
+    let mut options = ContextOptions::new();
+    options.antialias = false;
+    let ctx = Context::from_canvas(&canvas, &options).expect("ctx");
+    let gl: Gl = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let mut scene = Scene::new(&ctx).expect("scene");
+    scene.set_tone_mapping("none").unwrap();
+    scene.set_dither(false);
+    scene.set_samples(0);
+    scene.set_environment_intensity(0.0, 0.0, 0.0);
+    let camera = scene.spawn();
+    let cam =
+        js_sys::JSON::parse(r#"{ "type": "orthographic", "ymag": 1, "znear": 0.1, "zfar": 100 }"#)
+            .unwrap();
+    scene.set_camera(camera, cam).unwrap();
+    scene.look_at(camera, &[0.0, 0.0, 5.0], &[0.0, 0.0, 0.0]);
+    // Only the floor: a double-sided sheet that lets light through.
+    let url = asset_url_with("[0]");
+    let json = String::from_utf8(
+        base64::engine::general_purpose::STANDARD
+            .decode(url.trim_start_matches("data:model/gltf+json;base64,"))
+            .unwrap(),
+    )
+    .unwrap()
+    .replace(
+        r#""metallicFactor": 0, "roughnessFactor": 1 } }"#,
+        r#""metallicFactor": 0, "roughnessFactor": 1 }, "doubleSided": true,
+           "extensions": { "KHR_materials_diffuse_transmission": { "diffuseTransmissionFactor": 1 } } }"#,
+    )
+    .replace(
+        r#""asset": { "version": "2.0" },"#,
+        r#""asset": { "version": "2.0" }, "extensionsUsed": ["KHR_materials_diffuse_transmission"],"#,
+    );
+    assert!(json.contains("diffuseTransmissionFactor") && json.contains("extensionsUsed"));
+    let url = format!(
+        "data:model/gltf+json;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(json.as_bytes())
+    );
+    scene.add_model(load_model(&ctx, &url).await.expect("load"));
+    // From behind the sheet.
+    let sun = scene.spawn();
+    scene.look_at(sun, &[0.5, 0.0, -8.0], &[0.0, 0.0, 0.0]);
+    let light = |cast: bool| {
+        js_sys::JSON::parse(&format!(
+            r#"{{ "type": "directional", "intensity": 3, "castShadow": {cast} }}"#
+        ))
+        .unwrap()
+    };
+    scene.set_light(sun, light(false)).unwrap();
+    let (open, _) = sides(&gl, &mut scene, camera).await;
+    assert!(open > 20, "lit through: {open}");
+    scene.set_light(sun, light(true)).unwrap();
+    let (shadowed, _) = sides(&gl, &mut scene, camera).await;
+    assert!(
+        shadowed as u32 * 10 >= open as u32 * 8,
+        "with shadows: {shadowed} (without: {open})"
+    );
+    scene.destroy();
+}

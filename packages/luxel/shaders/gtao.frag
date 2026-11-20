@@ -69,8 +69,15 @@ float fetch_depth(ivec2 p) {
     return texelFetch(u_depth, p, 0).r;
 }
 
+// Nothing drawn there (the far plane; at infinity, with reverse-Z or an
+// infinite far plane, where unprojecting gives inf / NaN).
+bool is_far(float depth) {
+    return u_gtao_frame.y > 0.5 ? depth <= 0.0 : depth >= 1.0;
+}
+
 // The view-space normal from the depth around `uv`: on each axis the side
-// whose depth continues the center's line (no edge across a silhouette).
+// whose depth continues the center's line (no edge across a silhouette),
+// never a side with nothing drawn; with neither, facing the camera.
 vec3 normal_from_depth(vec2 uv) {
     vec2 size = vec2(textureSize(u_depth, 0));
     ivec2 p = ivec2(uv * size);
@@ -87,7 +94,16 @@ vec3 normal_from_depth(vec2 uv) {
     float dr = abs((2.0 * r1 - r2) - c0);
     float db = abs((2.0 * b1 - b2) - c0);
     float dt = abs((2.0 * t1 - t2) - c0);
+    const float NEVER = 1e30;
+    if (is_far(l1)) dl = NEVER;
+    if (is_far(r1)) dr = NEVER;
+    if (is_far(b1)) db = NEVER;
+    if (is_far(t1)) dt = NEVER;
     vec3 ce = view_position(uv, c0);
+    if ((dl == NEVER && dr == NEVER) || (db == NEVER && dt == NEVER)) {
+        // A sliver one pixel across: facing the camera.
+        return u_proj[3][3] > 0.5 ? vec3(0.0, 0.0, 1.0) : -normalize(ce);
+    }
     vec3 dpdx = (dl < dr)
         ? ce - view_position(uv - vec2(1.0 / size.x, 0.0), l1)
         : -ce + view_position(uv + vec2(1.0 / size.x, 0.0), r1);
@@ -140,8 +156,7 @@ float contact_shadow(vec3 view_pos, vec3 n, vec3 l) {
 void main() {
     vec2 uv = v_ndc * 0.5 + 0.5;
     float depth = depth_at(uv);
-    bool far = u_gtao_frame.y > 0.5 ? depth <= 0.0 : depth >= 1.0;
-    if (far) {
+    if (is_far(depth)) {
         frag_color = vec4(1.0);
         return;
     }

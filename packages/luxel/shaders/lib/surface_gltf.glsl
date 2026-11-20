@@ -116,6 +116,14 @@ vec3 shade_gltf(Surface s) {
         Light light = u_lights[i];
         vec3 to_light = light_vector(light, s.position);
         vec3 l = normalize(to_light);
+        // The shadow's normal faces the light: light passing through (from
+        // behind) isn't cut by the surface's own shadow, which the normal
+        // offset would put the receiver behind.
+#if defined(HAS_TRANSMISSION) || defined(HAS_DIFFUSE_TRANSMISSION) || defined(HAS_SUBSURFACE)
+        vec3 shadow_ng = dot(s.ng, l) < 0.0 ? -s.ng : s.ng;
+#else
+        vec3 shadow_ng = s.ng;
+#endif
         vec3 h = normalize(l + v);
         float NdotL = clamp(dot(n, l), 0.0, 1.0);
         float NdotH = clamp(dot(n, h), 0.0, 1.0);
@@ -123,7 +131,7 @@ vec3 shade_gltf(Surface s) {
         vec3 dielectric_fresnel = F_Schlick(f0_dielectric * specular_weight, f90_dielectric, VdotH);
         vec3 metal_fresnel = F_Schlick(base, vec3(1.0), VdotH);
         vec3 intensity = light.color.rgb * light.color.w * light_attenuation(light, to_light)
-            * light_shadow_rgb(i, light, s.position, s.ng);
+            * light_shadow_rgb(i, light, s.position, shadow_ng);
 
         vec3 l_diffuse = intensity * NdotL * base * INV_PI;
 #ifdef HAS_DIFFUSE_TRANSMISSION

@@ -290,7 +290,16 @@ vec3 shade_openpbr(Surface s) {
         if (i >= count) break;
         Light light = u_lights[i];
         vec3 l;
-        vec3 radiance = light_radiance(light, s.position, l) * light_shadow_rgb(i, light, s.position, s.ng);
+        vec3 radiance = light_radiance(light, s.position, l);
+        // The shadow's normal faces the light: light passing through (from
+        // behind) isn't cut by the surface's own shadow, which the normal
+        // offset would put the receiver behind.
+#if defined(HAS_TRANSMISSION) || defined(HAS_DIFFUSE_TRANSMISSION) || defined(HAS_SUBSURFACE)
+        vec3 shadow_ng = dot(s.ng, l) < 0.0 ? -s.ng : s.ng;
+#else
+        vec3 shadow_ng = s.ng;
+#endif
+        radiance *= light_shadow_rgb(i, light, s.position, shadow_ng);
         vec3 h = normalize(l + v);
         float NdotL = dot(n, l);
         float VdotH = clamp(dot(v, h), 0.0, 1.0);
