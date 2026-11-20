@@ -241,7 +241,8 @@ fn draws_through_the_camera_and_rewrites_only_moved_objects() {
     set_parent(&mut s.world, b, Some(a)).unwrap();
     s.world
         .insert(b, Transform::from_translation(Vec3::new(2.0, 0.0, 0.0)));
-    assert_eq!(s.frame(), stats(2, 0, 2), "rebuild rewrites everything");
+    // A rebuild (the reparent) rewrites only what moved: b, not a.
+    assert_eq!(s.frame(), stats(2, 0, 1), "rebuild rewrites what moved");
     assert_eq!(s.read(), [RED, BLACK, GREEN]);
 }
 
