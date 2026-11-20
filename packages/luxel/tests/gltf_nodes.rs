@@ -231,3 +231,32 @@ async fn node_visibility_hides_meshes_and_lights_not_cameras() {
     );
     scene.destroy();
 }
+
+// A node's transform is the file's translation, rotation and scale (not
+// read back from their matrix): a mirroring scale stays the axis it was, so
+// a clip replacing only the rotation keeps the mirror where it was.
+#[wasm_bindgen_test]
+async fn a_mirrored_node_keeps_its_own_scale() {
+    let canvas: HtmlCanvasElement = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let ctx = Context::from_canvas(&canvas, &ContextOptions::new()).expect("ctx");
+    let mut scene = Scene::new(&ctx).expect("scene");
+    let url = asset_url_with(|json| {
+        json.replace(
+            r#"{ "name": "quad", "mesh": 0 }"#,
+            r#"{ "name": "quad", "mesh": 0, "scale": [1, -1, 1] }"#,
+        )
+    });
+    let root = scene.add_model(load_model(&ctx, &url).await.expect("load"));
+    let quad = scene.find_by_name(root, "quad");
+    let t = *scene.world().get::<luxel::Transform>(quad).unwrap();
+    assert_eq!(t.scale, glam::Vec3::new(1.0, -1.0, 1.0));
+    assert_eq!(t.rotation, glam::Quat::IDENTITY);
+    scene.destroy();
+}

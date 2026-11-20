@@ -109,7 +109,16 @@ fn walk(
     }
     let local = Mat4::from_cols_array_2d(&node.transform().matrix());
     let world = parent_world * local;
+    let trs = match node.transform() {
+        gltf::scene::Transform::Decomposed {
+            translation,
+            rotation,
+            scale,
+        } => Some((translation, rotation, scale)),
+        gltf::scene::Transform::Matrix { .. } => None,
+    };
     nodes.push(SceneNode {
+        trs,
         index: node.index() as u32,
         parent,
         matrix: local.to_cols_array(),

@@ -257,6 +257,11 @@ pub struct SceneNode {
     pub parent: Option<u32>,
     /// Local transform, column-major.
     pub matrix: [f32; 16],
+    /// The file's translation, rotation (quaternion xyzw) and scale, when
+    /// it gave them (not a matrix): a mirroring scale can't be read back
+    /// from the matrix as the file has it, and animations replace one of
+    /// the three at a time.
+    pub trs: Option<([f32; 3], [f32; 4], [f32; 3])>,
     pub name: Option<String>,
     /// The node's camera (glTF `cameras`), looking down its local −Z.
     pub camera: Option<NodeCamera>,

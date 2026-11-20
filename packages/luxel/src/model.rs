@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use luxel_ecs::{Entity, World};
 use luxel_gl::ids::{ProgramId, TextureId};
 use luxel_gltf::{DrawItem, Model, NodeCamera, NodeLight, NodeLightKind};
@@ -80,10 +80,15 @@ pub fn spawn_model(
     // Parents come first in `nodes()`, so a parent's entity always exists.
     for node in model.nodes() {
         let e = world.spawn();
-        world.insert(
-            e,
-            Transform::from_matrix(Mat4::from_cols_array(&node.matrix)),
-        );
+        let transform = match node.trs {
+            Some((t, r, s)) => Transform {
+                translation: Vec3::from(t),
+                rotation: Quat::from_array(r).normalize(),
+                scale: Vec3::from(s),
+            },
+            None => Transform::from_matrix(Mat4::from_cols_array(&node.matrix)),
+        };
+        world.insert(e, transform);
         let parent = node
             .parent
             .and_then(|p| by_index.get(&p).copied())
