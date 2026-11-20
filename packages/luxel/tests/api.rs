@@ -1941,3 +1941,29 @@ async fn a_failed_reload_rejects_when_ready_and_settles() {
     assert_eq!(s.scene.pending(), 0);
     s.scene.destroy();
 }
+
+// Dropping a Scene or a Model (JS free(), the garbage collector) frees its
+// GPU objects as destroy does.
+#[wasm_bindgen_test]
+async fn dropping_frees_gpu_objects() {
+    let count = |ctx: &Context, key: &str| {
+        js_sys::Reflect::get(&ctx.resource_stats(), &key.into())
+            .unwrap()
+            .as_f64()
+            .unwrap()
+    };
+    let Setup { ctx, scene, .. } = setup().await;
+    let textures = count(&ctx, "textures");
+    let model = load_model(&ctx, &asset_url()).await.expect("load");
+    wasm_bindgen_futures::JsFuture::from(model.when_loaded())
+        .await
+        .unwrap();
+    let buffers = count(&ctx, "buffers");
+    drop(model);
+    assert!(count(&ctx, "buffers") < buffers, "the model's buffers");
+    drop(scene);
+    for key in ["buffers", "vertexArrays", "framebuffers", "programs"] {
+        assert_eq!(count(&ctx, key), 0.0, "{key} after the scene");
+    }
+    assert!(count(&ctx, "textures") < textures, "textures");
+}

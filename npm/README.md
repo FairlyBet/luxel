@@ -270,15 +270,15 @@ number"`.
 `visible(e)` is `e`'s own flag. `isShown(e)` also counts hidden ancestors,
 as glTF's `KHR_node_visibility` does.
 
-GPU memory is freed by `destroy`, not by the garbage collector:
 `scene.destroy()` frees everything the scene owns (its models, targets,
 shadow maps, environment, cloned materials, loaded textures), and
 `model.destroy(ctx)` a model you didn't add to a scene. A `Scene` or
-`Model` dropped without it leaves its GPU objects in the context.
+`Model` you only drop is freed the same way by `free()`, or by the
+garbage collector once unreachable — but when it gets round to it:
+destroy large ones yourself so the GPU memory comes back now.
 
-The JS wrapper objects themselves (`Scene`, `Model`, `Pass`, `FrameStats`,
-`RenderState`, …) are freed by the garbage collector once unreachable, or
-at once by `free()`; `destroy()` already frees its own.
+The other objects (`Pass`, `FrameStats`, `RenderState`, …) are freed by
+the garbage collector, or at once by `free()`.
 
 ## License
 

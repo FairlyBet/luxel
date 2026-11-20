@@ -368,6 +368,20 @@ pub struct Model {
     pub(crate) variants: Vec<String>,
     // The settings it was built with.
     pub(crate) options: LoadOptions,
+    // The context its objects are on, to free them when the model is
+    // dropped without `destroy` (JS `free()`, the garbage collector).
+    pub(crate) ctx: Context,
+    // Freed already (`destroy`, or its objects taken by `adopt`).
+    pub(crate) released: std::cell::Cell<bool>,
+}
+
+impl Drop for Model {
+    fn drop(&mut self) {
+        if !self.released.get() {
+            let ctx = self.ctx.clone();
+            self.destroy(&ctx);
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -443,8 +457,12 @@ impl Model {
     /// material groups and their layout. Handles from this model are stale
     /// afterwards.
     /// After a context loss the GPU objects are gone already: only the
-    /// material groups and layout (CPU-side) are freed then.
+    /// material groups and layout (CPU-side) are freed then. Dropping the
+    /// model (`free()`, the garbage collector) does the same; once.
     pub fn destroy(&self, ctx: &Context) {
+        if self.released.replace(true) {
+            return;
+        }
         for &g in &self.material_groups {
             ctx.destroy_param_group(g);
         }
@@ -485,6 +503,9 @@ impl Model {
             fresh.destroy(ctx);
             return Err(format!("reloading {}: the file has changed", self.source).into());
         }
+        let mut fresh = fresh;
+        // Its objects are this model's from here (its groups freed below).
+        fresh.released.set(true);
         let textures = self
             .textures
             .iter()
@@ -506,13 +527,13 @@ impl Model {
             ctx.destroy_param_group(g);
         }
         ctx.destroy_param_layout(fresh.material_layout);
-        self.textures = fresh.textures;
-        self.samplers = fresh.samplers;
-        self.vertex_arrays = fresh.vertex_arrays;
-        self.buffers = fresh.buffers;
-        self.morph_textures = fresh.morph_textures;
+        self.textures = std::mem::take(&mut fresh.textures);
+        self.samplers = std::mem::take(&mut fresh.samplers);
+        self.vertex_arrays = std::mem::take(&mut fresh.vertex_arrays);
+        self.buffers = std::mem::take(&mut fresh.buffers);
+        self.morph_textures = std::mem::take(&mut fresh.morph_textures);
         self.generation = fresh.generation;
-        self.loading = fresh.loading;
+        self.loading = fresh.loading.clone();
         Ok(())
     }
 
@@ -1021,6 +1042,8 @@ async fn load(ctx: &Context, request: LoadRequest) -> Result<Model, Error> {
         generation,
         variants,
         options,
+        ctx: ctx.clone(),
+        released: std::cell::Cell::new(false),
     })
 }
 

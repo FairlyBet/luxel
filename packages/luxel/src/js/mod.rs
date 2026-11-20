@@ -1,8 +1,8 @@
 //! The scene for JS: one `Scene` object owning the world, the transform system
 //! and the scene renderer. Entities are plain numbers; components are set and
 //! read through methods taking the entity — no JS object per entity. The
-//! scene's GPU objects go with `destroy()`, not with `.free()` or the
-//! garbage collector.
+//! scene's GPU objects go with `destroy()` (or when the scene is dropped:
+//! `.free()`, the garbage collector).
 //!
 //! ```js
 //! const scene = new Scene(ctx);
@@ -73,7 +73,8 @@ pub struct Scene {
     ctx: Context,
     world: World,
     transforms: TransformSystem,
-    renderer: SceneRenderer,
+    // Freed by `release` (taken out once, from `Drop`).
+    renderer: std::mem::ManuallyDrop<SceneRenderer>,
     // Models added with `addModel`, by their root entity: their GPU
     // resources go when the root is despawned.
     models: HashMap<Entity, Model>,
@@ -206,7 +207,7 @@ impl Scene {
             ctx: ctx.clone(),
             world: World::new(),
             transforms: TransformSystem::new(),
-            renderer: SceneRenderer::new(ctx)?,
+            renderer: std::mem::ManuallyDrop::new(SceneRenderer::new(ctx)?),
             models: HashMap::new(),
             model_roots: HashMap::new(),
             active_variants: HashMap::new(),
@@ -1261,10 +1262,26 @@ impl Scene {
 
     /// Frees everything the scene owns: its renderer resources, the built-in
     /// shaders, the models added with `addModel`, the cloned materials and
-    /// the textures `loadTexture` made.
-    /// Handles you passed in (`setMesh`) stay yours.
-    pub fn destroy(mut self) {
-        self.alive.set(false);
+    /// the textures `loadTexture` made. Dropping the scene does the same
+    /// (`free()`, or the garbage collector once it's unreachable); this does
+    /// it now. Handles you passed in (`setMesh`) stay yours.
+    pub fn destroy(self) {
+        drop(self);
+    }
+}
+
+impl Drop for Scene {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+impl Scene {
+    // What `destroy` frees; once.
+    fn release(&mut self) {
+        if !self.alive.replace(false) {
+            return;
+        }
         // The context's shared texture compressor (models' maps, the
         // environment) goes with the scene that compressed on it.
         luxel_gl::texture_compressor::TextureCompressor::release_shared(&self.ctx);
@@ -1282,21 +1299,21 @@ impl Scene {
                 self.ctx.destroy_param_group(*g);
             }
         }
-        for model in self.models.into_values() {
+        for (_, model) in self.models.drain() {
             model.destroy(&self.ctx);
         }
         if let Some(o) = self.occlusion.take() {
             o.destroy(&self.ctx);
         }
-        if let Some(d) = self.direct {
+        if let Some(d) = self.direct.take() {
             d.destroy(&self.ctx);
         }
-        if let Some(out) = self.hdr {
+        if let Some(out) = self.hdr.take() {
             out.destroy(&self.ctx);
         }
         // GPU objects of a context lost since are gone already.
         let current = self.generation == self.ctx.generation();
-        for t in self.textures {
+        for t in std::mem::take(&mut self.textures) {
             if current && self.ctx.texture_is_valid(t.id) {
                 self.ctx.destroy_texture(t.id);
             }
@@ -1306,9 +1323,13 @@ impl Scene {
                 model.destroy(&self.ctx);
             }
         }
-        self.renderer.destroy(&self.ctx);
+        // SAFETY: taken once (`alive` guards this function) and never used
+        // again: the scene is being dropped.
+        let renderer = unsafe { std::mem::ManuallyDrop::take(&mut self.renderer) };
+        renderer.destroy(&self.ctx);
+        let pbr = std::mem::replace(&mut self.pbr, PbrShaders::new());
         if current {
-            self.pbr.destroy(&self.ctx);
+            pbr.destroy(&self.ctx);
         }
     }
 }

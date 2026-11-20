@@ -208,7 +208,7 @@ fn ease(last_ms: f64, now_ms: f64, speed: f32) -> (f32, bool) {
     if last_ms <= 0.0 || dt > 1000.0 {
         return (1.0, true);
     }
-    if !(dt > 0.0) {
+    if dt.is_nan() || dt <= 0.0 {
         return (0.0, false);
     }
     ((speed * (dt as f32 / 1000.0)).min(1.0), false)
