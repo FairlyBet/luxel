@@ -32,13 +32,15 @@ vec3 scene_reflection(vec3 r, float roughness) {
 // this frame, 0 else; u_output.w its last mip). Needs frame.glsl.
 uniform sampler2D u_scene_color;
 
-// Depth peeling (the frame sets it; u_shading.z the mode, w 1 under
+// Depth peeling (the frame sets it; u_shading.z the mode, + 4 for a pass
+// writing depth alone; w 1 under
 // reverse-Z): mode 1 keeps only what lies beyond the layer in u_peel_depth
 // (peeling the next one), mode 2 only what lies on it (shading that layer).
 uniform highp sampler2D u_peel_depth;
 
 void peel_discard() {
-    float mode = u_shading.z;
+    // + 4: a depth pass of the peel (`peel_depth_only`).
+    float mode = mod(u_shading.z, 4.0);
     if (mode < 0.5) return;
     float layer = texelFetch(u_peel_depth, ivec2(gl_FragCoord.xy), 0).r;
     // > 0: farther than the layer. Without reverse-Z depth is 24-bit (a step
@@ -48,6 +50,11 @@ void peel_discard() {
     float beyond = reverse ? layer - gl_FragCoord.z : gl_FragCoord.z - layer;
     float EPS = reverse ? max(abs(layer) * 1e-5, 1e-10) : 4e-7;
     if (mode < 1.5 ? beyond <= EPS : abs(beyond) > EPS) discard;
+}
+
+// A peel pass that writes depth alone: nothing to shade.
+bool peel_depth_only() {
+    return u_shading.z > 3.5;
 }
 
 bool scene_color_available() {

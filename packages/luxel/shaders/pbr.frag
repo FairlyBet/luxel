@@ -334,6 +334,12 @@ void main() {
     if (base.a < u_alpha_cutoff) discard;
     base.a = 1.0;
 #endif
+    // Peeling the layers' depths: the shading would go nowhere.
+    if (peel_depth_only()) {
+        frag_color = vec4(0.0);
+        frag_key = vec4(0.0);
+        return;
+    }
 #ifdef ALPHAMODE_OPAQUE
     base.a = 1.0;
 #endif

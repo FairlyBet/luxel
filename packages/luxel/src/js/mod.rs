@@ -1206,7 +1206,8 @@ impl Scene {
                 return;
             };
             self.renderer
-                .set_peel(&self.ctx, if k == 0 { 0 } else { 1 }, previous);
+                // + 4: depth only (the shader skips the shading).
+                .set_peel(&self.ctx, if k == 0 { 4 } else { 5 }, previous);
             glass.set_target(fb);
             self.ctx.render(glass);
         }
