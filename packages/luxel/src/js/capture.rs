@@ -37,7 +37,9 @@ impl Scene {
     /// size after. At most 8192 a side (and what the GPU and browser allow:
     /// a smaller buffer comes out stretched); memory grows with the size —
     /// HDR, MSAA and TAA targets at that size for the moment, which a phone
-    /// may not have. Rejects without a canvas or with a lost context.
+    /// may not have (it usually loses the context then: rejected with a
+    /// ContextLostError, the canvas back to its size, the scene rebuilt on
+    /// the restore). Rejects without a canvas or with a lost context.
     #[wasm_bindgen(unchecked_return_type = "Promise<Blob>")]
     pub fn capture(
         &mut self,
@@ -78,6 +80,19 @@ impl Scene {
             }
             for _ in 0..frames {
                 self.render_frame(camera);
+            }
+            // Lost while drawing (a size the GPU had no memory for usually
+            // ends this way): no picture — the canvas back to its size, a
+            // rejection the app can tell (the scene rebuilds on the restore).
+            if self.ctx.is_lost() {
+                if resized {
+                    canvas.set_width(old_w);
+                    canvas.set_height(old_h);
+                    set_viewport_to_buffer(&fb);
+                }
+                return Err(Error::context_lost(
+                    "capture: the WebGL context was lost while drawing the picture",
+                ));
             }
             // The drawing buffer is read now, before it's shown (and cleared):
             // toBlob copies the bitmap at once and encodes later.

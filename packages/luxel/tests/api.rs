@@ -1967,3 +1967,24 @@ async fn dropping_frees_gpu_objects() {
     }
     assert!(count(&ctx, "textures") < textures, "textures");
 }
+
+// The context lost while a picture is drawn (a size the GPU has no memory
+// for): capture fails with the loss, and the canvas is back to its size.
+#[wasm_bindgen_test]
+async fn a_capture_that_loses_the_context_rejects() {
+    let mut s = setup().await;
+    s.frame().await;
+    let canvas = s.ctx.default_framebuffer().canvas().unwrap();
+    let size = (canvas.width(), canvas.height());
+    // Lost once capture has started (reading its options).
+    let opts = js_sys::Function::new_with_args(
+        "gl",
+        "return { width: 192, height: 64, \
+         get frames() { gl.getExtension('WEBGL_lose_context').loseContext(); return 2; } }",
+    )
+    .call1(&JsValue::NULL, &s.gl)
+    .unwrap();
+    let err = s.scene.capture(s.camera, Some(opts)).expect_err("rejects");
+    assert!(format!("{err:?}").contains("lost"), "{err:?}");
+    assert_eq!((canvas.width(), canvas.height()), size);
+}

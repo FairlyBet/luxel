@@ -13,7 +13,7 @@
 | 4 | `luxel-gl/src/copy.rs:206` | blit_framebuffer skips the format and same-image checks, so rejected blits end as silent GL errors | подтверждена | открыта | blit без проверки форматов/same-fb: GL-ошибка без объяснения |
 | 5 | `luxel-gl/src/copy.rs:374` | copy_texture_sub_image_2d refuses an antialiased canvas source, which WebGL allows | подтверждена | исправлена 5b82c2f |  |
 | 6 | `luxel-gl/src/feedback.rs:352` | Transform feedback binding accepts sizes that are not a multiple of 4; GL rejects them and luxel still records | подтверждена | исправлена 5b82c2f |  |
-| 7 | `luxel-gl/src/framebuffer.rs:290` | Auto-resize sets canvas.width/height inside the ResizeObserver callback, so resized frames are presented blank | подтверждена (не проверено в браузере) | решить | resize в ResizeObserver → кадр пустой; нужен отложенный resize при отрисовке |
+| 7 | `luxel-gl/src/framebuffer.rs:290` | Auto-resize sets canvas.width/height inside the ResizeObserver callback, so resized frames are presented blank | подтверждена (не проверено в браузере) | исправлена 760fe8a | ресайз применяется перед отрисовкой; мерцание подтверждено в Chrome и ушло |
 | 8 | `luxel-gl/src/framebuffer.rs:419` | DefaultFramebuffer.setViewport takes its Viewport by value and consumes the JS object | подтверждена | исправлена 5b82c2f |  |
 | 9 | `luxel-gl/src/framebuffer.rs:447` | Auto-resize on a canvas without a CSS size grows the canvas without bound on HiDPI screens | подтверждена | открыта | канвас без CSS-размера растёт на HiDPI; доки + предупреждение |
 | 10 | `luxel-gl/src/framebuffer.rs:1065` | Invalidating only depth (or only stencil) on a depth-stencil attachment discards both | подтверждена | исправлена 5b82c2f |  |
@@ -22,7 +22,7 @@
 | 13 | `luxel-gl/src/limits.rs:49` | Limits are frozen from the first context ever created and never re-queried | подтверждена | открыта | лимиты замораживаются с первого (возможно потерянного) контекста |
 | 14 | `luxel-gl/src/param.rs:552` | paramSetBlockRange stores any offset/size unvalidated; a bad range fails at draw and is cached as bound | подтверждена | открыта | paramSetBlockRange без проверки диапазона |
 | 15 | `luxel-gl/src/program.rs:181` | All parked samplers share one texture unit, so two unsupported sampler arrays of different types fail every dr | подтверждена | открыта | запаркованные sampler-массивы разных типов на одном юните |
-| 16 | `luxel-gl/src/render_state.rs:687` | Interned render states are never freed and are found by a linear scan, so per-frame-varying state grows withou | подтверждена | решить | render states не освобождаются; NaN-offset плодит новые; нужен destroyRenderState? |
+| 16 | `luxel-gl/src/render_state.rs:687` | Interned render states are never freed and are found by a linear scan, so per-frame-varying state grows withou | подтверждена | исправлена 3f4dff0 | scissor перенесён в Pass; NaN-offset → 0 |
 | 17 | `luxel-gl/src/shader_source.rs:80` | Include-once ignores preprocessor conditionals: a chunk first included inside a false #if is dropped everywher | подтверждена | задокументирована 4d8ad29 | include-once не видит #if |
 | 18 | `luxel-gl/src/texture.rs:1679` | Image load with generate_mipmaps allocates a full mip chain before checking the format can have mipmaps genera | подтверждена | исправлена 5b82c2f |  |
 | 19 | `luxel-gl/src/texture_compressor.rs:440` | The shared texture compressor pins its Context for the life of the page; only Scene::destroy lets go, and a la | подтверждена частично | открыта | общий компрессор держит один Context |
@@ -58,7 +58,7 @@
 | 49 | `luxel/src/exposure.rs:177` | One Inf/NaN texel in the HDR frame poisons the metered exposure (black screen for many seconds, or for good wi | дубль 38 | исправлена 2b9fca4 |  |
 | 50 | `luxel/src/gpu_pick.rs:120` | GPU pick draws back faces the scene culls, so invisible surfaces are picked | подтверждена | открыта | GPU-пикинг не отсекает задние грани |
 | 51 | `luxel/src/hierarchy.rs:215` | A hierarchy rebuild restamps every WorldMatrix as changed, invalidating all shadow-map caches and object group | подтверждена | открыта | перестройка иерархии штампует все WorldMatrix |
-| 52 | `luxel/src/js/capture.rs:79` | A capture too big for the GPU permanently turns off TAA / HDR / MSAA for the live canvas | неясно | решить | capture слишком большого размера навсегда выключает TAA/HDR/MSAA (если устройство так падает) |
+| 52 | `luxel/src/js/capture.rs:79` | A capture too big for the GPU permanently turns off TAA / HDR / MSAA for the live canvas | неясно | исправлена иначе | по опыту нехватка памяти теряет контекст: capture теперь отклоняется ContextLostError и возвращает размер канваса |
 | 53 | `luxel/src/js/lights.rs:421` | setCompactEnvironment during a first bake leaves the new environment at the old intensity (0.2) | подтверждена | исправлена b79e023 | setCompactEnvironment во время первого запекания: интенсивность 0.2 |
 | 54 | `luxel/src/js/materials.rs:366` | loadTexture promise rejects with "can't load" when the context is lost mid-load, although the scene reloads th | подтверждена | открыта | loadTexture при потере контекста отклоняется, хотя текстура перезагружается |
 | 55 | `luxel/src/js/materials.rs:366` | loadTexture in flight at a loss rejects with "can't load" while the scene keeps and reloads the texture; faile | дубль 54 |  |  |
@@ -89,7 +89,7 @@
 | 80 | `luxel/src/js/restore.rs:308` | App meshes parented under a model get Reloading and never lose it | подтверждена | исправлена b79e023 | меши приложения под моделью навсегда Reloading |
 | 81 | `luxel/src/js/restore.rs:308` | App meshes parented under a model are marked Reloading at a restore and never unmarked | дубль 80 | исправлена b79e023 |  |
 | 82 | `luxel/src/js/restore.rs:308` | App meshes parented under a model are marked Reloading after a loss and never unmarked | дубль 80 | исправлена b79e023 |  |
-| 83 | `luxel/src/js/restore.rs:346` | A failed model reload leaves the model invisible for good, with needsRender stuck true and no signal to the ap | подтверждена | частично b79e023 | needsRender успокаивается; whenReady по-прежнему не сообщает о неудаче (решить: отклонять?) |
+| 83 | `luxel/src/js/restore.rs:346` | A failed model reload leaves the model invisible for good, with needsRender stuck true and no signal to the ap | подтверждена | исправлена 4fd9e30 | whenReady отклоняется при неудачной перезагрузке |
 | 84 | `luxel/src/js/restore.rs:346` | A failed (or disabled) model reload leaves the meshes Reloading forever: needsRender stuck true, whenReady res | дубль 83 | исправлена b79e023 |  |
 | 85 | `luxel/src/lighting/maps.rs:152` | The shadow array is never shrunk back once no light casts shadows | подтверждена | открыта | массив теней не сжимается |
 | 86 | `luxel/src/lighting/mod.rs:584` | Shadow map array is never shrunk or freed once no light casts shadows | дубль 85 | открыта |  |
