@@ -203,6 +203,9 @@ impl Context {
                  (no scaling or offset); ignored"
             ));
         }
+        if let Some(p) = blit_format_problem(&res, src, dst, multisampled, mask, filter) {
+            return console::error(&format!("[luxel] {OP}: {p}; ignored"));
+        }
         self.gl_state().forget_target();
         blit(gl, s, d, *src_rect, *dst_rect, mask.as_gl(), filter as u32);
     }
@@ -398,4 +401,70 @@ impl Context {
             gl.copy_tex_sub_image_2d(target, level, x_offset, y_offset, x, y, width, height);
         });
     }
+}
+
+// What GLES 3.0 refuses in a blit (INVALID_OPERATION) beyond sizes and
+// sample counts, by the attachments' formats: one framebuffer into itself;
+// a multisampled source into another format; integer and non-integer
+// color mixed; Linear on integer color; depth / stencil of other formats.
+// The canvas counts as RGBA8 (its depth format unknown: not checked).
+fn blit_format_problem(
+    res: &crate::context::Resources,
+    src: FramebufferId,
+    dst: FramebufferId,
+    multisampled: bool,
+    mask: &ClearMask,
+    filter: TextureMagFilter,
+) -> Option<String> {
+    const RGBA8: u32 = 0x8058;
+    if !src.is_null() && src == dst {
+        return Some("the source and destination are the same framebuffer".into());
+    }
+    let fb = |id: FramebufferId| res.framebuffers.get(id.0);
+    if mask.color {
+        let from = if src.is_null() {
+            Some(RGBA8)
+        } else {
+            fb(src).and_then(|f| f.color_format(res, 0)).map(|(i, _)| i)
+        };
+        let into: Vec<u32> = if dst.is_null() {
+            vec![RGBA8]
+        } else {
+            fb(dst).map_or_else(Vec::new, |f| {
+                (0..crate::limits::max_color_attachments())
+                    .filter_map(|i| f.color_format(res, i).map(|(fmt, _)| fmt))
+                    .collect()
+            })
+        };
+        if let Some(a) = from {
+            let int = crate::framebuffer::integer_kind(a);
+            if int.is_some() && filter == TextureMagFilter::Linear {
+                return Some(format!("integer color (0x{a:X}) copies with Nearest only"));
+            }
+            for b in into {
+                // (The canvas's own format isn't known: not checked from it.)
+                if multisampled && !src.is_null() && a != b {
+                    return Some(format!(
+                        "a multisampled source (0x{a:X}) resolves into the same format only (0x{b:X})"
+                    ));
+                }
+                if int != crate::framebuffer::integer_kind(b) {
+                    return Some(format!(
+                        "integer and non-integer color don't mix (0x{a:X} into 0x{b:X})"
+                    ));
+                }
+            }
+        }
+    }
+    if (mask.depth || mask.stencil) && !src.is_null() && !dst.is_null() {
+        let depth = |id| fb(id).and_then(|f| f.depth_format(&res.textures, &res.renderbuffers));
+        if let (Some((a, _)), Some((b, _))) = (depth(src), depth(dst))
+            && a != b
+        {
+            return Some(format!(
+                "depth / stencil formats differ (0x{a:X} into 0x{b:X})"
+            ));
+        }
+    }
+    None
 }

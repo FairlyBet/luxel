@@ -286,3 +286,67 @@ fn attaching_the_wrong_kind_of_texture_is_refused() {
     assert_eq!(f.ctx.framebuffer_color_texture(fb, 0), tex);
     assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
 }
+
+// Blits GL would refuse by format are refused with the reason, before GL:
+// a framebuffer into itself, a multisampled source into another format,
+// Linear on integer color.
+#[wasm_bindgen_test]
+fn blits_gl_refuses_by_format_are_refused() {
+    let f = fixture();
+    let (fb, _) = texture_framebuffer(&f, 2, 2);
+    let r = Viewport::new(0, 0, 2, 2);
+    let msaa = f.ctx.create_framebuffer(2, 2).unwrap();
+    let rb = f
+        .ctx
+        .create_renderbuffer_multisample(RenderbufferFormat::Rgba8, 4, 2, 2)
+        .unwrap();
+    f.ctx.framebuffer_attach_color_renderbuffer(msaa, 0, rb);
+    let (half, _) = {
+        let t = f
+            .ctx
+            .create_texture(
+                TextureTarget::Texture2D,
+                TextureMinFilter::Nearest,
+                TextureMagFilter::Nearest,
+            )
+            .unwrap();
+        f.ctx
+            .texture_storage_2d(t, 1, &TextureFormat::srgb8_alpha8(), 2, 2);
+        let h = f.ctx.create_framebuffer(2, 2).unwrap();
+        f.ctx.framebuffer_attach_color_texture_2d(h, 0, t, 0);
+        (h, t)
+    };
+    let errors = capture_console("error", || {
+        f.ctx.blit_framebuffer(
+            fb,
+            &r,
+            fb,
+            &r,
+            &ClearMask::color(),
+            TextureMagFilter::Nearest,
+        );
+        f.ctx.blit_framebuffer(
+            msaa,
+            &r,
+            half,
+            &r,
+            &ClearMask::color(),
+            TextureMagFilter::Nearest,
+        );
+    });
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
+    // The same pair the right way: accepted.
+    let errors = capture_console("error", || {
+        f.ctx.blit_framebuffer(
+            msaa,
+            &r,
+            fb,
+            &r,
+            &ClearMask::color(),
+            TextureMagFilter::Nearest,
+        );
+    });
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(f.gl.get_error(), web_sys::WebGl2RenderingContext::NO_ERROR);
+}
