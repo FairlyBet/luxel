@@ -440,9 +440,15 @@ fn on_source_loaded(
     free_sources();
 }
 
-/// A nullary image-load callback for fire-and-forget textures.
+/// A no-op image-load callback for fire-and-forget textures. A wasm closure,
+/// made once: `new Function("")` is eval, which a page's CSP without
+/// 'unsafe-eval' refuses.
 fn empty_callback() -> js_sys::Function {
-    js_sys::Function::new_no_args("")
+    thread_local! {
+        static EMPTY: js_sys::Function =
+            Closure::<dyn Fn()>::new(|| {}).into_js_value().unchecked_into();
+    }
+    EMPTY.with(Clone::clone)
 }
 
 // What makes two glTF textures the same GPU texture: the image and whether it
