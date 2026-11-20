@@ -93,6 +93,9 @@ pub(crate) fn install(core: &Rc<Core>) {
         console::log("[luxel] WebGL context restored");
         if let Some(core) = weak.upgrade() {
             core.invalidate_state();
+            // The restored context may be on another GPU (or the first was
+            // lost before its limits were read).
+            crate::limits::init(&core.gl);
             // The extensions back on the new context; one the device no
             // longer offers is dropped (and reported), not assumed back.
             core.loss.extensions.borrow_mut().retain(|ext| {
