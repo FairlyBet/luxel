@@ -196,7 +196,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "luxel"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "glam",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "luxel-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -222,14 +222,14 @@ dependencies = [
 
 [[package]]
 name = "luxel-ecs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "luxel-core",
 ]
 
 [[package]]
 name = "luxel-gl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "js-sys",
  "luxel-core",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "luxel-gltf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "bevy_mikktspace",

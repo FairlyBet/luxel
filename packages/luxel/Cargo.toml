@@ -1,6 +1,6 @@
 [package]
 name = "luxel"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 autotests = false
 description = "Scene for luxel-gl on luxel-ecs: transforms, hierarchy, culling, draw-list assembly, glTF models, the JS facade"
