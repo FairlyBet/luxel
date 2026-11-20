@@ -1766,3 +1766,50 @@
   - description: `setMaterialTexture(map: string)`, `materialTexture`, `setMaterialProperty(name: string)` and `setMaterialSemantics(semantics: string)` accept any string, while tone mapping, quality and shading model have literal unions. The typings check calls `scene.setMaterialTexture(m, "baseColor", tex, undefined)`: `"baseColor"` is not in `MAP_NAMES` (the name is `"baseColorTexture"`), so this call, which type-checks, throws 'no map "baseColor"' at run time. `gpuTimings()` is typed `object` (js/mod.rs:1090), so `scene.gpuTimings().opaque` does not type-check.
   - scenario: A user writes `scene.setMaterialTexture(mat, 'baseColor', tex)` following the typings check or by guessing. TypeScript accepts it and it throws at run time.
   - fix: Add `MaterialMapName` and `MaterialSemanticsName` unions (generated from `MAP_NAMES`) and `unchecked_return_type = "Record<string, number>"` for gpuTimings; fix the name in the check.
+
+---
+
+# Добор: файлы, не попавшие в ночные куски
+
+Два дополнительных ревьюера (Fable, 20.11): `fullscreen.rs`, `loader.js`, `decoders.js`; примеры (Rust и JS), `serve.mjs`, `ubo-bench.js`, `trace-summary.mjs`. Тоже не проверены.
+
+- [ ] **[medium/api] `examples/js-cube/README.md` L22: The documented `tsc --checkJs` command fails for js-cube**
+  - description: programsReady(programs: Uint32Array | ProgramId[]) (luxel-gl/src/program.rs:864) references ProgramId, declared only by brand-handles.mjs -> TS2304 in pkg/luxel_gl.d.ts. Against branded typings main.js fails: number not assignable to FramebufferId/ProgramId at main.js:166,174,177,245 (NULL constants).
+  - scenario: Run the two README commands in order; tsc exits non-zero.
+  - fix: Declare handle type names in the crate's own typings (typescript_custom_section), or brand the example pkg and type the NULL constants.
+- [ ] **[medium/correctness] `examples/js-cube/main.js` L167: Render loop stops for good if the MSAA target is rebuilt while the context is lost**
+  - description: frame() calls framePass every frame, also while lost; a stale MSAA target makes it call createFramebuffer/createRenderbufferMultisample, which throw on a lost context (check_alive). The throw skips requestAnimationFrame(frame) at line 257; on_restored does not restart the loop.
+  - scenario: Press M, L, then M again within 500 ms (or resize while lost): uncaught 'WebGL context is lost', canvas frozen after restore.
+  - fix: At the top of frame: if (ctx.isLost()) { requestAnimationFrame(frame); return; } or schedule rAF first / try-finally.
+- [ ] **[medium/api] `examples/js-scene/README.md` L29: The documented `tsc --checkJs` command fails for js-scene**
+  - description: The plain wasm-pack .d.ts uses Entity/ProgramId/StateId/VertexArrayId/ParamGroupId/TextureId, declared only by scripts/brand-handles.mjs (13x TS2304); main.js:36 TS2554 (loadModel options not optional, luxel-gltf/src/lib.rs:633); main.js:110 TS2345 (toneMappers is string[], setToneMapping takes ToneMappingName). Against branded dist/npm/luxel.d.ts: plain numbers not assignable to Entity (main.js:82,84,125).
+  - scenario: Follow the README: wasm-pack build, then the tsc command -> ~15 errors.
+  - fix: Run brand-handles.mjs on the example pkg in the README and type toneMappers/picked; or declare handle names in a typescript_custom_section and make options optional so plain wasm-pack output is self-contained.
+- [ ] **[low/leaks] `examples/cube/src/main.rs` L106: Each context restore leaks a parameter layout and group (same in examples/scene/src/main.rs:98-105)**
+  - description: build_scene runs again from on_restored and creates a new param layout/group; those are CPU-side and survive loss (Resources::forget_all, context.rs:167-180), so the old ones stay in the pools. Comment at lines 45-46 is wrong about them.
+  - scenario: Press L repeatedly: one more layout and group per cycle.
+  - fix: Create layout/group once and re-point the block on restore, or destroy them before rebuilding.
+- [ ] **[low/correctness] `examples/js-cube/serve.mjs` L18: Dev server exits on a malformed request URL (same in examples/js-scene/serve.mjs:18)**
+  - description: decodeURIComponent(new URL(...).pathname) runs outside try in an async handler; URIError becomes an unhandled rejection and Node exits. examples/viewer/serve.mjs already guards with handle(...).catch.
+  - scenario: GET /% -> process exits with code 1.
+  - fix: Use the viewer's handle(req,res).catch(...) wrapper, answer 400 on URIError.
+- [ ] **[low/correctness] `examples/npm-consumer/serve.mjs` L29: Dev server can be killed by one malformed request, from the LAN with --lan**
+  - description: Same pattern as js-cube server; with --lan it listens on 0.0.0.0.
+  - scenario: node serve.mjs --lan; curl http://<ip>:8091/% from another machine -> server exits.
+  - fix: Same wrapper as examples/viewer/serve.mjs.
+- [ ] **[low/api] `examples/texture/src/main.rs` L101: Commented reference snippet for `texture_load_image` does not compile as written**
+  - description: Closure::<dyn FnMut()>::new(..).into_js_value() then cb.into() where js_sys::Function is expected (texture.rs:1159-1167); callback is (width,height); targets tex that already has immutable storage (line 96).
+  - scenario: Uncomment the lines -> trait-bound error.
+  - fix: Closure::<dyn FnMut(u32,u32)>::new(|_w,_h|{}).into_js_value().unchecked_into::<js_sys::Function>() on a fresh texture.
+- [ ] **[low/async] `packages/luxel-gltf/src/loader.js` L36: Without `AbortSignal.any`, `cancel()` stops nothing when the app gave a signal, and a second signal is dropped**
+  - description: Line 36 falls back to `this.signal ?? this.stop.signal` when `AbortSignal.any` is missing (Safari < 17.4, Chrome < 116, Firefox < 124). If the app passed a signal, `cancel()` (lib.rs:846) aborts `stop` without reaching any running fetch. Line 31: when both `signal` and `request.signal` are given, only `signals[0]` is used.
+  - scenario: On Safari 16, a .gltf with five external buffers where the first returns 404: the load rejects, but the other four downloads run to completion.
+  - fix: Fallback for `any`: a new AbortController aborted by `abort` listeners on each source signal.
+- [ ] **[low/api] `packages/luxel-gltf/src/loader.js` L156: `onProgress` reports `total == loaded` for responses without Content-Length, though the docs say `total` is 0 while unknown**
+  - description: With no Content-Length `expected` is 0, and every chunk adds `grow = length - counted` to the total (lines 156-158), so the callback gets `(n, n)` on every chunk. The viewer works around it with `total > loaded`.
+  - scenario: A chunked 200 MB .glb without Content-Length: an app drawing `total ? loaded / total : indeterminate` shows a full bar from the first chunk.
+  - fix: Add unknown sizes to `total` only when the stream ends, or change the docs.
+- [ ] **[low/correctness] `packages/luxel-gltf/src/loader.js` L185: A dropped file whose URI has a bare '%' is never found in `files` and is fetched from https://files.invalid/ instead**
+  - description: `lookup` runs `decodeURIComponent(new URL(url).pathname…)` inside a try and returns null on any throw. The URL parser keeps a lone `%` as it is, so a glTF URI such as `wood 50%.png` resolves to `https://files.invalid/wood%2050%.png`, and `decodeURIComponent` throws URIError. Returning null skips both the map lookup and the `isn't among the files given` error at line 192. `bytes()` / `blob()` then send a real request to the placeholder host.
+  - scenario: The user drops `model.gltf` and `wood 50%.png`. `loadModel(file, { files })` requests `https://files.invalid/wood%2050%.png`, fails with `Failed to fetch`, the texture stays empty. For a `.bin` named this way the whole load rejects.
+  - fix: Decode per segment with a fallback on URIError; for a URL under FILES_BASE never fall through to the network: throw the `isn't among the files given` error.
