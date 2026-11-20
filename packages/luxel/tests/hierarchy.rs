@@ -215,6 +215,53 @@ fn transform_round_trips_through_a_matrix() {
     assert_eq!(Transform::default().matrix(), Mat4::IDENTITY);
 }
 
+// A node scaled to zero on some axes (glTF's way to hide one) keeps a real
+// rotation, so animating the scale back shows it turned the right way.
+#[test]
+fn a_zero_scale_axis_gives_no_nan() {
+    let rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.3, -1.1, 2.0);
+    for scale in [
+        Vec3::new(0.0, 2.0, 3.0),
+        Vec3::new(2.0, 0.0, 3.0),
+        Vec3::new(2.0, 3.0, 0.0),
+        Vec3::new(2.0, 0.0, 0.0),
+        Vec3::new(0.0, 2.0, 0.0),
+        Vec3::new(0.0, 0.0, 2.0),
+        Vec3::ZERO,
+    ] {
+        let t = Transform {
+            translation: Vec3::new(1.0, -2.0, 3.0),
+            rotation,
+            scale,
+        };
+        let back = Transform::from_matrix(t.matrix());
+        assert!(
+            back.rotation.is_finite() && back.rotation.is_normalized(),
+            "{scale}: {back:?}"
+        );
+        assert!(
+            back.matrix().abs_diff_eq(t.matrix(), 1e-5),
+            "{scale}: {back:?}"
+        );
+        assert!(back.scale.abs_diff_eq(scale, 1e-5), "{scale}: {back:?}");
+        if scale.cmpne(Vec3::ZERO).bitmask().count_ones() >= 2 {
+            assert!(
+                back.rotation.abs_diff_eq(rotation, 1e-5)
+                    || back.rotation.abs_diff_eq(-rotation, 1e-5),
+                "{scale}"
+            );
+        }
+    }
+    // A mirrored matrix still comes back as itself.
+    let m = Transform {
+        translation: Vec3::ZERO,
+        rotation,
+        scale: Vec3::new(-1.0, 2.0, 3.0),
+    }
+    .matrix();
+    assert!(Transform::from_matrix(m).matrix().abs_diff_eq(m, 1e-5));
+}
+
 // One despawn and one spawn in the same frame keep the count of transforms
 // the same; the removal log still tells the system to rebuild.
 #[test]

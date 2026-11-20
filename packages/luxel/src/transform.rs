@@ -1,4 +1,4 @@
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use luxel_ecs::Entity;
 
 /// Local position, rotation and scale — relative to the [`Parent`] if the
@@ -38,9 +38,34 @@ impl Transform {
         }
     }
 
-    /// From a matrix with no shear (glTF node matrices are such).
+    /// From a matrix with no shear (glTF node matrices are such). An axis
+    /// scaled to zero (a hidden node) gets scale 0 and a rotation completed
+    /// from the other axes, never NaN.
     pub fn from_matrix(m: Mat4) -> Self {
-        let (scale, rotation, translation) = m.to_scale_rotation_translation();
+        let translation = m.w_axis.truncate();
+        let cols = [
+            m.x_axis.truncate(),
+            m.y_axis.truncate(),
+            m.z_axis.truncate(),
+        ];
+        let mut scale = Vec3::from_array(cols.map(|c| c.length()));
+        if m.determinant() < 0.0 {
+            scale.x = -scale.x;
+        }
+        let axis = |i: usize| (scale[i] != 0.0).then(|| cols[i] / scale[i]);
+        let rotation = match (axis(0), axis(1), axis(2)) {
+            (Some(x), Some(y), Some(z)) => Quat::from_mat3(&Mat3::from_cols(x, y, z)),
+            (Some(x), Some(y), None) => basis(x, y),
+            (Some(x), None, Some(z)) => basis(x, z.cross(x)),
+            (None, Some(y), Some(z)) => basis(y.cross(z), y),
+            (Some(x), None, None) => basis(x, x.any_orthonormal_vector()),
+            (None, Some(y), None) => basis(y.any_orthonormal_vector().cross(y), y),
+            (None, None, Some(z)) => {
+                let x = z.any_orthonormal_vector();
+                basis(x, z.cross(x))
+            }
+            (None, None, None) => Quat::IDENTITY,
+        };
         Self {
             translation,
             rotation,
@@ -52,6 +77,11 @@ impl Transform {
     pub fn matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
+}
+
+// The rotation taking the X and Y axes to `x` and `y` (unit, at right angles).
+fn basis(x: Vec3, y: Vec3) -> Quat {
+    Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y)))
 }
 
 impl Default for Transform {
