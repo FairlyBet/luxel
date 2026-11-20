@@ -228,19 +228,15 @@ fn run_pass(
             .and_then(|id| render_states.get(id.0))
             .filter(|rs| !rs.has_target_overrides());
         let opened = open_for_clear(gl, pass.clear, cur);
-        // A clear rectangle: scissored to it, then the scissor left for the
-        // next draw's state to set in full.
-        if let Some(r) = pass.clear_rect {
-            gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
-            gl.scissor(r.x, r.y, r.width, r.height);
-        }
+        // Scissored to the clear rectangle, if any (not to the draws').
+        st.set_scissor(gl, pass.clear_rect);
         match target {
             Some(f) => f.clear(gl, pass.clear, st.reverse_z, textures, renderbuffers),
             None => clear_default(default_fb, gl, pass.clear, st.reverse_z),
         }
         match cur {
-            Some(rs) if pass.clear_rect.is_none() => opened.restore(gl, rs),
-            _ => st.forget_render_state(),
+            Some(rs) => opened.restore(gl, rs),
+            None => st.forget_render_state(),
         }
     }
 
@@ -283,6 +279,13 @@ fn run_pass(
             st.stats.skipped += 1;
             continue;
         }
+        // The pass's scissor, else (deprecated) the state's.
+        let scissor = pass.scissor.or_else(|| {
+            render_states
+                .get(d.state.0)
+                .and_then(RenderState::legacy_scissor)
+        });
+        st.set_scissor(gl, scissor);
         if float32_target
             && render_states
                 .get(d.state.0)
@@ -563,7 +566,6 @@ struct Opened {
     color: bool,
     depth: bool,
     stencil: bool,
-    scissor: bool,
 }
 
 impl Opened {
@@ -582,15 +584,11 @@ impl Opened {
         if self.stencil {
             gl.stencil_mask(rs.stencil_write_mask);
         }
-        if self.scissor {
-            gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
-        }
     }
 }
 
-// Opens the write masks and scissor the given clear touches (all of them if
-// the current render state `cur` is unknown), so the clear isn't silently
-// masked off or scissored down.
+// Opens the write masks the given clear touches (all of them if the current
+// render state `cur` is unknown), so the clear isn't silently masked off.
 fn open_for_clear(
     gl: &WebGl2RenderingContext,
     mask: ClearMask,
@@ -605,7 +603,6 @@ fn open_for_clear(
         depth: mask.depth && closed(|rs| !rs.depth_mask),
         stencil: mask.stencil
             && closed(|rs| rs.stencil_write_mask != crate::render_state::STENCIL_ALL),
-        scissor: closed(|rs| rs.scissor_test),
     };
     if opened.color {
         gl.color_mask(true, true, true, true);
@@ -615,9 +612,6 @@ fn open_for_clear(
     }
     if opened.stencil {
         gl.stencil_mask(crate::render_state::STENCIL_ALL);
-    }
-    if opened.scissor {
-        gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
     }
     opened
 }
@@ -633,6 +627,8 @@ pub(crate) struct GlState {
     // FramebufferId::NULL = the default framebuffer.
     target: Option<FramebufferId>,
     viewport: Option<Viewport>,
+    // The scissor GL has: None unknown, Some(None) off, Some(Some(r)) on r.
+    scissor: Option<Option<Viewport>>,
     render_state: Option<StateId>,
     program: Option<ProgramId>,
     // VertexArrayId::NULL = explicitly no VAO.
@@ -701,6 +697,25 @@ impl GlState {
             gl.bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, raw);
             self.target = Some(id);
         }
+    }
+
+    fn set_scissor(&mut self, gl: &WebGl2RenderingContext, want: Option<Viewport>) {
+        if self.scissor == Some(want) {
+            return;
+        }
+        let was = self.scissor.flatten();
+        match want {
+            Some(r) => {
+                if self.scissor.is_none() || was.is_none() {
+                    gl.enable(WebGl2RenderingContext::SCISSOR_TEST);
+                }
+                if was != Some(r) {
+                    gl.scissor(r.x, r.y, r.width, r.height);
+                }
+            }
+            None => gl.disable(WebGl2RenderingContext::SCISSOR_TEST),
+        }
+        self.scissor = Some(want);
     }
 
     fn set_viewport(&mut self, gl: &WebGl2RenderingContext, vp: Viewport) {

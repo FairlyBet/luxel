@@ -315,3 +315,36 @@ fn clear_opens_and_restores_masks() {
     assert_eq!(read_quads(&f.gl), [BLACK; 3]);
     assert_eq!(f.ctx.frame_stats().states, 0);
 }
+
+// A pass's scissor clips its draws (not its clear), and moving it every
+// frame makes no new render states.
+#[wasm_bindgen_test]
+fn a_pass_scissor_clips_its_draws() {
+    let f = fixture();
+    let red = solid_program(&f, RED);
+    let open = default_state(&f);
+    let states = || {
+        js_sys::Reflect::get(&f.ctx.resource_stats(), &"renderStates".into())
+            .unwrap()
+            .as_f64()
+            .unwrap()
+    };
+    let before = states();
+    for (col, want) in [(0, [RED, BLACK, BLACK]), (2, [BLACK, BLACK, RED])] {
+        let mut pass = canvas_pass();
+        pass.set_scissor(&luxel_gl::draw::Viewport::new(col * W / 3, 0, W / 3, H));
+        for c in 0..3 {
+            push_quad(&f, &mut pass, red, open, c);
+        }
+        f.ctx.render(&pass);
+        assert_eq!(read_quads(&f.gl), want, "scissored to column {col}");
+    }
+    assert_eq!(states(), before);
+    // Without it again: all three.
+    let mut pass = canvas_pass();
+    for c in 0..3 {
+        push_quad(&f, &mut pass, red, open, c);
+    }
+    f.ctx.render(&pass);
+    assert_eq!(read_quads(&f.gl), [RED; 3]);
+}

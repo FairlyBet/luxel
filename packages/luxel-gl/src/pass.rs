@@ -186,6 +186,8 @@ pub struct Pass {
     pub(crate) clear: ClearMask,
     // Some = the clear only within this rectangle (scissored).
     pub(crate) clear_rect: Option<Viewport>,
+    // Some = every draw scissored to this rectangle.
+    pub(crate) scissor: Option<Viewport>,
     pub(crate) invalidate: InvalidateMask,
     // Some(NULL) = resolve into the canvas.
     pub(crate) resolve: Option<FramebufferId>,
@@ -208,6 +210,7 @@ impl Pass {
             viewport: None,
             clear: ClearMask::none(),
             clear_rect: None,
+            scissor: None,
             invalidate: InvalidateMask::none(),
             resolve: None,
             resolve_color: Vec::new(),
@@ -291,10 +294,24 @@ impl Pass {
         self.clear = *mask;
     }
 
+    /// Scissors every draw of the pass to `rect` (in the target's pixels):
+    /// clipping a panel, drawing into a tile. Per pass, so a rectangle that
+    /// changes every frame costs nothing (it used to be a render state's).
+    /// The clear isn't scissored by it (`setClearRect` for that).
+    #[wasm_bindgen(js_name = setScissor)]
+    pub fn set_scissor(&mut self, rect: &Viewport) {
+        self.scissor = Some(*rect);
+    }
+
+    /// Draws unscissored again (the default).
+    #[wasm_bindgen(js_name = clearScissor)]
+    pub fn clear_scissor(&mut self) {
+        self.scissor = None;
+    }
+
     /// Limits the clear to `rect` (in the target's pixels), whatever the
     /// draws' scissor: for passes that each fill a tile of one target (a
-    /// shadow atlas). Default: the clear covers the whole target (within
-    /// the current scissor, if a render state left one on).
+    /// shadow atlas). Default: the clear covers the whole target.
     #[wasm_bindgen(js_name = setClearRect)]
     pub fn set_clear_rect(&mut self, rect: &Viewport) {
         self.clear_rect = Some(*rect);

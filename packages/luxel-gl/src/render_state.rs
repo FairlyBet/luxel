@@ -277,6 +277,10 @@ pub struct RenderState {
     #[wasm_bindgen(js_name = stencilWriteMask)]
     pub stencil_write_mask: u32,
 
+    /// Deprecated: use `Pass.setScissor`. A state is kept for good once made,
+    /// so a scissor rectangle that changes (a panel being clipped) made a new
+    /// one each time; a pass's scissor costs nothing. Still honoured on a
+    /// pass without its own scissor.
     #[wasm_bindgen(js_name = scissorTest)]
     pub scissor_test: bool,
     #[wasm_bindgen(js_name = scissorX)]
@@ -405,6 +409,18 @@ pub(crate) const STENCIL_ALL: u32 = 0xFFFF_FFFF;
 impl RenderState {
     // Every parameter is set, enabled or not: `apply_diff` compares them all,
     // so a parameter skipped here would be assumed set by the next diff.
+    // The deprecated per-state scissor, if on.
+    pub(crate) fn legacy_scissor(&self) -> Option<crate::draw::Viewport> {
+        self.scissor_test.then(|| {
+            crate::draw::Viewport::new(
+                self.scissor_x,
+                self.scissor_y,
+                self.scissor_width,
+                self.scissor_height,
+            )
+        })
+    }
+
     pub(crate) fn apply(&self, gl: &WebGl2RenderingContext, reverse_z: bool) {
         type Gl = WebGl2RenderingContext;
         let toggle = |cap: u32, on: bool| toggle(gl, cap, on);
@@ -434,13 +450,8 @@ impl RenderState {
         );
         gl.stencil_mask(self.stencil_write_mask);
 
-        toggle(Gl::SCISSOR_TEST, self.scissor_test);
-        gl.scissor(
-            self.scissor_x,
-            self.scissor_y,
-            self.scissor_width,
-            self.scissor_height,
-        );
+        // (The scissor is the renderer's: `Pass::set_scissor`, or this
+        // state's deprecated fields — see `GlState::set_scissor`.)
 
         toggle(Gl::POLYGON_OFFSET_FILL, self.polygon_offset_fill);
         gl.polygon_offset(self.polygon_offset_factor, self.polygon_offset_units);
@@ -620,23 +631,6 @@ impl RenderState {
             gl.stencil_mask(self.stencil_write_mask);
         }
 
-        // Scissor
-        if self.scissor_test != prev.scissor_test {
-            toggle(gl, WebGl2RenderingContext::SCISSOR_TEST, self.scissor_test);
-        }
-        if self.scissor_x != prev.scissor_x
-            || self.scissor_y != prev.scissor_y
-            || self.scissor_width != prev.scissor_width
-            || self.scissor_height != prev.scissor_height
-        {
-            gl.scissor(
-                self.scissor_x,
-                self.scissor_y,
-                self.scissor_width,
-                self.scissor_height,
-            );
-        }
-
         // Color mask
         if self.color_mask_r != prev_blend.color_mask_r
             || self.color_mask_g != prev_blend.color_mask_g
@@ -687,6 +681,22 @@ impl Context {
     pub fn render_state(&self, state: &RenderState) -> StateId {
         let mut owned;
         let mut state = state;
+        // A NaN offset never equals itself: each call would keep a new state.
+        if !state.polygon_offset_factor.is_finite() || !state.polygon_offset_units.is_finite() {
+            crate::console::error_once(
+                "[luxel] render state: a polygon offset isn't a finite number; 0 used",
+            );
+            owned = state.clone();
+            owned.polygon_offset_factor = finite_or_zero(owned.polygon_offset_factor);
+            owned.polygon_offset_units = finite_or_zero(owned.polygon_offset_units);
+            state = &owned;
+        }
+        if state.scissor_test {
+            crate::console::warn_once(
+                "[luxel] render state: scissorTest is deprecated (a state is kept for good, \
+                 one per rectangle); use Pass.setScissor",
+            );
+        }
         if !state.targets.is_empty() {
             let max = crate::limits::max_draw_buffers();
             let usable = self.can_blend_per_target();
@@ -716,4 +726,8 @@ impl Context {
             .map(Into::into)
             .unwrap_or(StateId::NULL)
     }
+}
+
+fn finite_or_zero(v: f32) -> f32 {
+    if v.is_finite() { v } else { 0.0 }
 }
