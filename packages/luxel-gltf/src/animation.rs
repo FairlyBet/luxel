@@ -3,7 +3,8 @@
 //! (glTF 2.0 §3.11 and Appendix C). Sampling and applying them is the
 //! scene's (`luxel` `animation.rs`).
 
-use gltf::animation::util::ReadOutputs;
+use gltf::accessor::Dimensions;
+use gltf::animation::Property;
 
 /// What a channel animates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,12 +62,31 @@ pub(crate) fn read_animations(doc: &gltf::Document, buffers: &[Vec<u8>]) -> Vec<
     doc.animations()
         .map(|anim| {
             let mut channels = Vec::new();
-            for channel in anim.channels() {
-                let reader = channel.reader(|b| buffers.get(b.index()).map(|v| v.as_slice()));
-                let Some(times) = reader.read_inputs().map(|i| i.collect::<Vec<f32>>()) else {
+            for (c, channel) in anim.channels().enumerate() {
+                let sampler = channel.sampler();
+                let skip = |why: &str| {
+                    crate::fetch::warn(format!(
+                        "animation {} channel {c}: {why}; skipped",
+                        anim.index()
+                    ))
+                };
+                // Read with the crate's own accessor reader: gltf's iterators
+                // panic on a stride smaller than the element and on output
+                // types the spec forbids.
+                let input = sampler.input();
+                if input.dimensions() != Dimensions::Scalar {
+                    skip("keyframe times aren't scalars");
+                    continue;
+                }
+                let Some(times) = crate::accessor::read_floats(&input, buffers) else {
+                    skip("keyframe times can't be read");
                     continue;
                 };
-                let interpolation = match channel.sampler().interpolation() {
+                if !times.iter().all(|t| t.is_finite()) || times.windows(2).any(|w| w[0] > w[1]) {
+                    skip("keyframe times aren't finite and increasing");
+                    continue;
+                }
+                let interpolation = match sampler.interpolation() {
                     gltf::animation::Interpolation::Step => Interpolation::Step,
                     gltf::animation::Interpolation::Linear => Interpolation::Linear,
                     gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
@@ -78,26 +98,26 @@ pub(crate) fn read_animations(doc: &gltf::Document, buffers: &[Vec<u8>]) -> Vec<
                 } else {
                     1
                 };
-                let (path, values, components) = match reader.read_outputs() {
-                    Some(ReadOutputs::Translations(v)) => {
-                        (AnimationPath::Translation, v.flatten().collect(), 3)
-                    }
-                    Some(ReadOutputs::Rotations(v)) => {
-                        (AnimationPath::Rotation, v.into_f32().flatten().collect(), 4)
-                    }
-                    Some(ReadOutputs::Scales(v)) => {
-                        (AnimationPath::Scale, v.flatten().collect(), 3)
-                    }
-                    Some(ReadOutputs::MorphTargetWeights(v)) => {
-                        let values: Vec<f32> = v.into_f32().collect();
-                        let n = if times.is_empty() {
-                            0
-                        } else {
-                            values.len() / (times.len() * per_key)
-                        };
-                        (AnimationPath::Weights, values, n)
-                    }
-                    None => continue,
+                let (path, dims) = match channel.target().property() {
+                    Property::Translation => (AnimationPath::Translation, Dimensions::Vec3),
+                    Property::Rotation => (AnimationPath::Rotation, Dimensions::Vec4),
+                    Property::Scale => (AnimationPath::Scale, Dimensions::Vec3),
+                    Property::MorphTargetWeights => (AnimationPath::Weights, Dimensions::Scalar),
+                };
+                let output = sampler.output();
+                if output.dimensions() != dims {
+                    skip("its values have the wrong type");
+                    continue;
+                }
+                let Some(values) = crate::accessor::read_floats(&output, buffers) else {
+                    skip("its values can't be read");
+                    continue;
+                };
+                let components = match path {
+                    AnimationPath::Translation | AnimationPath::Scale => 3,
+                    AnimationPath::Rotation => 4,
+                    AnimationPath::Weights if times.is_empty() => 0,
+                    AnimationPath::Weights => values.len() / (times.len() * per_key),
                 };
                 if times.is_empty()
                     || components == 0

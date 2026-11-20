@@ -54,6 +54,10 @@ pub fn build_draw_list(
     nodes: &mut Vec<SceneNode>,
 ) -> ([f32; 3], f32) {
     let mut bounds = Aabb::new();
+    // Nodes walked already: glTF's graph is a forest, but nothing stops a
+    // file from making a cycle (endless recursion) or giving a node two
+    // parents.
+    let mut visited = vec![false; doc.nodes().len()];
     if let Some(scene) = doc.default_scene().or_else(|| doc.scenes().next()) {
         for node in scene.nodes() {
             walk(
@@ -68,6 +72,7 @@ pub fn build_draw_list(
                 out,
                 nodes,
                 &mut bounds,
+                &mut visited,
             );
         }
     }
@@ -94,7 +99,14 @@ fn walk(
     out: &mut Vec<DrawItem>,
     nodes: &mut Vec<SceneNode>,
     bounds: &mut Aabb,
+    visited: &mut [bool],
 ) {
+    if std::mem::replace(&mut visited[node.index()], true) {
+        return crate::fetch::warn(format!(
+            "node {} is reached twice (a cycle, or two parents); skipped there",
+            node.index()
+        ));
+    }
     let local = Mat4::from_cols_array_2d(&node.transform().matrix());
     let world = parent_world * local;
     nodes.push(SceneNode {
@@ -183,6 +195,7 @@ fn walk(
             out,
             nodes,
             bounds,
+            visited,
         );
     }
 }
@@ -212,7 +225,6 @@ fn gpu_instances(
         let i = attrs.get(name)?.as_u64()? as usize;
         doc.accessors().nth(i)
     };
-    let get = |b: gltf::Buffer| buffers.get(b.index()).map(Vec::as_slice);
 
     // Each attribute is optional; all present ones share one count.
     let t = doc_accessor("TRANSLATION");
@@ -233,23 +245,36 @@ fn gpu_instances(
             return None;
         }
     }
-    let read3 = |a: &Option<gltf::Accessor>, default: [f32; 3]| -> Vec<[f32; 3]> {
-        a.clone()
-            .and_then(|a| gltf::accessor::Iter::<[f32; 3]>::new(a, get))
-            .map_or_else(|| vec![default; count], Iterator::collect)
-    };
-    let translations = read3(&t, [0.0; 3]);
-    let scales = read3(&s, [1.0; 3]);
-    let rotations: Vec<[f32; 4]> = r
-        .and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get))
-        .map_or_else(|| vec![[0.0, 0.0, 0.0, 1.0]; count], Iterator::collect);
-    if translations.len() != count || scales.len() != count || rotations.len() != count {
+    // Read with the crate's reader: it checks the data backs the count and
+    // the type (gltf's iterator panics on a short stride).
+    let out_of_range = || {
         crate::fetch::warn(format!(
             "node {}: EXT_mesh_gpu_instancing data out of range; drawn once",
             node.index()
         ));
-        return None;
-    }
+        None
+    };
+    let translations = match &t {
+        None => vec![[0.0; 3]; count],
+        Some(a) => match crate::accessor::read_vecs::<3>(a, buffers) {
+            Some(v) => v,
+            None => return out_of_range(),
+        },
+    };
+    let scales = match &s {
+        None => vec![[1.0; 3]; count],
+        Some(a) => match crate::accessor::read_vecs::<3>(a, buffers) {
+            Some(v) => v,
+            None => return out_of_range(),
+        },
+    };
+    let rotations = match &r {
+        None => vec![[0.0, 0.0, 0.0, 1.0]; count],
+        Some(a) => match crate::accessor::read_vecs::<4>(a, buffers) {
+            Some(v) => v,
+            None => return out_of_range(),
+        },
+    };
     Some(
         (0..count)
             .map(|i| {

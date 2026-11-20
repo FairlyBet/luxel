@@ -49,7 +49,7 @@ impl Fetcher {
     ) -> Result<(Vec<u8>, String, String), JsValue> {
         let got = JsFuture::from(self.main(source, base_url)).await?;
         let get = |k: &str| js_sys::Reflect::get(&got, &k.into());
-        let bytes = js_sys::Uint8Array::new(&get("bytes")?).to_vec();
+        let bytes = as_bytes(get("bytes")?).to_vec();
         let base = get("base")?.as_string().unwrap_or_default();
         let name = get("name")?.as_string().unwrap_or_default();
         Ok((bytes, base, name))
@@ -64,7 +64,7 @@ impl Fetcher {
         let pending = JsFuture::from(self.bytes(url));
         async move {
             let v = pending.await?;
-            Ok(js_sys::Uint8Array::new(&v).to_vec())
+            Ok(as_bytes(v).to_vec())
         }
     }
 
@@ -218,4 +218,11 @@ pub struct Load {
     pub(crate) fetcher: Fetcher,
     pub(crate) base: String,
     pub(crate) loading: Rc<Loading>,
+}
+
+// A loader result as bytes: a Uint8Array as it is (`new Uint8Array(array)`
+// would copy it once more), anything else (an ArrayBuffer) viewed.
+fn as_bytes(v: JsValue) -> js_sys::Uint8Array {
+    v.dyn_into::<js_sys::Uint8Array>()
+        .unwrap_or_else(|v| js_sys::Uint8Array::new(&v))
 }

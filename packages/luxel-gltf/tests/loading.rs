@@ -420,3 +420,113 @@ async fn morph_targets_widen_the_bounds() {
     assert_eq!((min, max), ([0.0, -3.0, 0.0], [3.0, 1.0, 0.0]));
     model.destroy(&ctx);
 }
+
+// A texture no material reads is neither fetched nor made (nothing could
+// sample it).
+#[wasm_bindgen_test]
+async fn an_unused_texture_is_not_loaded() {
+    let ctx = context();
+    let main = gltf(
+        &format!("data:application/octet-stream;base64,{}", b64(&bin())),
+        &format!("data:image/png;base64,{PNG}"),
+        true,
+    )
+    .replace(
+        r#""textures": [{ "source": 0 }]"#,
+        r#""textures": [{ "source": 0 }, { "source": 1 }]"#,
+    )
+    .replace(
+        &format!(r#""images": [{{ "uri": "data:image/png;base64,{PNG}" }}]"#),
+        &format!(r#""images": [{{ "uri": "data:image/png;base64,{PNG}" }}, {{ "uri": "never-fetched.png" }}]"#),
+    );
+    assert!(main.contains("never-fetched"));
+    let model = load(&ctx, bytes(main.as_bytes()), JsValue::UNDEFINED).await;
+    assert_eq!(model.texture_count(), 1);
+    loaded(&model).await;
+    assert_eq!(model.warnings(), Vec::<String>::new());
+    model.destroy(&ctx);
+}
+
+// A node graph with a cycle loads (each node once), with a warning.
+#[wasm_bindgen_test]
+async fn a_node_cycle_is_cut() {
+    let ctx = context();
+    let main = gltf(
+        &format!("data:application/octet-stream;base64,{}", b64(&bin())),
+        &format!("data:image/png;base64,{PNG}"),
+        true,
+    )
+    .replace(
+        r#""nodes": [{ "mesh": 0 }]"#,
+        r#""nodes": [{ "mesh": 0, "children": [0] }]"#,
+    );
+    assert!(main.contains(r#""children": [0]"#));
+    let model = load(&ctx, bytes(main.as_bytes()), JsValue::UNDEFINED).await;
+    assert_eq!(model.nodes().len(), 1);
+    assert_eq!(model.draw_item_count(), 1);
+    let w = model.warnings();
+    assert!(w.iter().any(|w| w.contains("reached twice")), "{w:?}");
+    model.destroy(&ctx);
+}
+
+// Bad animation data: a channel whose keyframe times aren't increasing is
+// skipped with a warning; a stride shorter than the values, or an output
+// type the spec forbids, reads without trapping the loader.
+#[wasm_bindgen_test]
+async fn bad_animation_data_is_skipped_not_fatal() {
+    let ctx = context();
+    let mut anim = Vec::new();
+    for v in [f32::NAN, 1.0] {
+        anim.extend_from_slice(&v.to_le_bytes()); // 0: times [NaN, 1]
+    }
+    for v in [0.0f32, 1.0] {
+        anim.extend_from_slice(&v.to_le_bytes()); // 8: times [0, 1]
+    }
+    for v in [0.0f32; 8] {
+        anim.extend_from_slice(&v.to_le_bytes()); // 16: 32 bytes of values
+    }
+    let main = gltf(
+        &format!("data:application/octet-stream;base64,{}", b64(&bin())),
+        &format!("data:image/png;base64,{PNG}"),
+        true,
+    )
+    .replace(
+        r#""buffers": [{ "byteLength": 44,"#,
+        &format!(
+            r#""buffers": [{{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }}, {{ "byteLength": 44,"#,
+            anim.len(),
+            b64(&anim)
+        ),
+    )
+    .replace(r#"{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }"#, r#"{ "buffer": 1, "byteOffset": 0, "byteLength": 36 }"#)
+    .replace(r#"{ "buffer": 0, "byteOffset": 36, "byteLength": 6, "target": 34963 }"#, r#"{ "buffer": 1, "byteOffset": 36, "byteLength": 6, "target": 34963 },
+    { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 8, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 16, "byteLength": 16, "byteStride": 4 },
+    { "buffer": 0, "byteOffset": 16, "byteLength": 32 }"#)
+    .replace(r#"{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }"#, r#"{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" },
+    { "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR" },
+    { "bufferView": 3, "componentType": 5126, "count": 2, "type": "SCALAR" },
+    { "bufferView": 4, "componentType": 5126, "count": 2, "type": "VEC3" },
+    { "bufferView": 5, "componentType": 5125, "count": 2, "type": "VEC4" }"#)
+    .replace(r#""scene": 0"#, r#""scene": 0,
+  "animations": [
+    { "samplers": [{ "input": 2, "output": 4 }], "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }] },
+    { "samplers": [{ "input": 3, "output": 4 }], "channels": [{ "sampler": 0, "target": { "node": 0, "path": "translation" } }] },
+    { "samplers": [{ "input": 3, "output": 5 }], "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }] }
+  ]"#);
+    assert!(main.contains("animations") && main.contains("byteStride"));
+    let model = load(&ctx, bytes(main.as_bytes()), JsValue::UNDEFINED).await;
+    let channels: Vec<usize> = model
+        .animations()
+        .iter()
+        .map(|a| a.channels.len())
+        .collect();
+    assert_eq!(channels, [0, 1, 1]);
+    let w = model.warnings();
+    assert!(
+        w.iter().any(|w| w.contains("finite and increasing")),
+        "{w:?}"
+    );
+    model.destroy(&ctx);
+}

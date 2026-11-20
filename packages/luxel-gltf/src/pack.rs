@@ -69,15 +69,14 @@ pub fn build_texture_set(
 
     let consumed: HashSet<usize> = accepted.iter().flat_map(|&(o, m)| [o, m]).collect();
     let (srgb, linear) = texture_color_spaces(doc);
-    // The colour spaces document texture `i` is used in (linear when in
-    // none: decoded as data).
+    // The colour spaces document texture `i` is used in; none for a texture
+    // no material reads (nothing could sample it: not fetched at all).
     let spaces = |i: usize| -> Vec<bool> {
-        let s: Vec<bool> = [(false, linear.contains(&i)), (true, srgb.contains(&i))]
+        [(false, linear.contains(&i)), (true, srgb.contains(&i))]
             .into_iter()
             .filter(|&(_, used)| used)
             .map(|(space, _)| space)
-            .collect();
-        if s.is_empty() { vec![false] } else { s }
+            .collect()
     };
 
     // [linear, sRGB] per document texture.

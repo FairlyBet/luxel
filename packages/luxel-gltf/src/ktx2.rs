@@ -127,6 +127,12 @@ fn upload(
         return Ok((0, 0));
     }
     let (width, height) = (number(r, "width")?, number(r, "height")?);
+    // Too large for this GPU: refused here, so the load reports it (the
+    // storage call would only log and leave the texture empty).
+    let max = luxel_gl::limits::max_texture_size() as i32;
+    if width > max || height > max {
+        return Err(format!("{width}×{height} is larger than this GPU's {max}").into());
+    }
     let tf = number(r, "format")? as u32;
     let levels: js_sys::Array = Reflect::get(r, &"levels".into())?.dyn_into()?;
     let count = levels.length() as i32;

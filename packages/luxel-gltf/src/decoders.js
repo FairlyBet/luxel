@@ -65,8 +65,14 @@ function transcode(bytes, srgb, config) {
 self.onmessage = (e) => {
   const m = e.data;
   if (m.type === 'init') {
-    ready = new Promise((resolve) => {
-      Basis = { wasmBinary: m.wasm, onRuntimeInitialized: resolve };
+    // onAbort: a .wasm that fails to compile or link aborts Emscripten's
+    // start, which would otherwise leave every job waiting for ever.
+    ready = new Promise((resolve, reject) => {
+      Basis = {
+        wasmBinary: m.wasm,
+        onRuntimeInitialized: resolve,
+        onAbort: (why) => reject(new Error(String(why))),
+      };
       BASIS(Basis);
     }).then(() => Basis.initializeBasis());
     return;
@@ -128,8 +134,12 @@ function decode(draco, decoder, array, attributes) {
 self.onmessage = (e) => {
   const m = e.data;
   if (m.type === 'init') {
-    ready = new Promise((resolve) => {
-      DracoDecoderModule({ wasmBinary: m.wasm, onModuleLoaded: (draco) => resolve({ draco }) });
+    ready = new Promise((resolve, reject) => {
+      DracoDecoderModule({
+        wasmBinary: m.wasm,
+        onModuleLoaded: (draco) => resolve({ draco }),
+        onAbort: (why) => reject(new Error(String(why))),
+      });
     });
     return;
   }
@@ -230,6 +240,8 @@ export function setDecoderPath(kind, path) {
   // Relative paths ("./draco/") resolve against the page, as three.js'.
   const base = new URL(dir, location.href).href;
   const old = decoders[kind];
+  // The same path again keeps the pool (and the decodes it is running).
+  if (old && old.base === base) return;
   if (old && old.pool) old.pool.then((p) => p.close(), () => {});
   decoders[kind] = { base, pool: null };
 }
