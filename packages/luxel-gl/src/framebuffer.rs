@@ -192,6 +192,11 @@ struct DefaultFramebufferInner {
     max_pixel_ratio: f64,
     // The device-pixel size last observed, to apply a new scale at once.
     device_size: Option<(i32, i32)>,
+    // A size the observer saw, applied when the next frame asks for the
+    // size (`sync`): resizing the canvas clears it, and from the observer
+    // (which runs after the frame's drawing, before the page is shown) the
+    // cleared buffer would be what's shown — a blank frame each resize.
+    pending_size: Option<(i32, i32)>,
 }
 
 impl DefaultFramebufferInner {
@@ -353,6 +358,7 @@ impl DefaultFramebuffer {
                 resolution_scale: 1.0,
                 max_pixel_ratio: f64::INFINITY,
                 device_size: None,
+                pending_size: None,
             })),
         }
     }
@@ -364,7 +370,19 @@ impl DefaultFramebuffer {
     }
 
     pub(crate) fn viewport(&self) -> Viewport {
+        self.sync();
         self.inner.borrow().viewport
+    }
+
+    // Applies a size the observer saw since (see `pending_size`).
+    fn sync(&self) {
+        let pending = {
+            let mut s = self.inner.borrow_mut();
+            s.pending_size.take().zip(s.canvas.clone())
+        };
+        if let Some((size, canvas)) = pending {
+            resize_to_display(&self.inner, &canvas, size);
+        }
     }
 
     /// The clear color (RGBA, as set with `set_clear_color`).
@@ -405,13 +423,17 @@ impl DefaultFramebuffer {
 
 #[wasm_bindgen]
 impl DefaultFramebuffer {
-    /// Current drawing-buffer width in device pixels (tracks auto-resize).
+    /// Current drawing-buffer width in device pixels (tracks auto-resize:
+    /// a new size is applied when asked for, so that the frame asking draws
+    /// at it).
     pub fn width(&self) -> i32 {
+        self.sync();
         self.inner.borrow().viewport.width
     }
 
     /// Current drawing-buffer height in device pixels (tracks auto-resize).
     pub fn height(&self) -> i32 {
+        self.sync();
         self.inner.borrow().viewport.height
     }
 
@@ -439,8 +461,10 @@ impl DefaultFramebuffer {
     /// content box in device pixels (CSS size × devicePixelRatio, exact
     /// where the browser reports device pixels), also when only the ratio
     /// changes (zoom, another screen); the viewport follows the drawing
-    /// buffer the browser actually gave (it may clamp a huge one). Fires once
-    /// immediately for the current size. No-op if already enabled; errors if
+    /// buffer the browser actually gave (it may clamp a huge one). Sizes the
+    /// canvas at once; later sizes land when the next frame asks for the size
+    /// (`width`, `height`, a render): resized from the observer, the frame
+    /// already drawn would be cleared before it's shown (a blank flash). No-op if already enabled; errors if
     /// there is no canvas (context created from a raw gl). Opt-in — call
     /// `disable_auto_resize` to stop.
     #[wasm_bindgen(js_name = enableAutoResize)]
@@ -463,8 +487,8 @@ impl DefaultFramebuffer {
                     .get(0)
                     .dyn_into::<web_sys::ResizeObserverEntry>()
                     .ok();
-                let size = device_size(entry.as_ref(), &cb_canvas);
-                resize_to_display(&inner, &cb_canvas, size);
+                // Kept for the next frame (`pending_size`).
+                inner.borrow_mut().pending_size = Some(device_size(entry.as_ref(), &cb_canvas));
             }
         });
         let observer = ResizeObserver::new(closure.as_ref().unchecked_ref())
@@ -484,7 +508,7 @@ impl DefaultFramebuffer {
         let dpr_canvas = canvas.clone();
         let dpr_closure = Closure::<dyn FnMut()>::new(move || {
             if let Some(inner) = weak.upgrade() {
-                resize_to_display(&inner, &dpr_canvas, device_size(None, &dpr_canvas));
+                inner.borrow_mut().pending_size = Some(device_size(None, &dpr_canvas));
                 // The ratio moved on: listen for it leaving the new one.
                 let mut s = inner.borrow_mut();
                 if let (Some(query), Some(closure)) = (s.dpr_query.take(), &s.dpr_closure) {
@@ -501,6 +525,9 @@ impl DefaultFramebuffer {
         s.resize_closure = Some(closure);
         s.dpr_closure = Some(dpr_closure);
         arm_dpr_query(&mut s);
+        // Sized now (not a frame later, when the observer first reports).
+        drop(s);
+        resize_to_display(&self.inner, &canvas, device_size(None, &canvas));
         Ok(())
     }
 
@@ -508,6 +535,7 @@ impl DefaultFramebuffer {
     /// (it may be smaller than the canvas asks for, past what it allows).
     #[wasm_bindgen(js_name = drawingBufferSize)]
     pub fn drawing_buffer_size(&self) -> Vec<i32> {
+        self.sync();
         let s = self.inner.borrow();
         vec![s.gl.drawing_buffer_width(), s.gl.drawing_buffer_height()]
     }

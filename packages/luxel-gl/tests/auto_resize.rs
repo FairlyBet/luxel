@@ -82,12 +82,20 @@ async fn resolution_scale_and_pixel_ratio_cap() {
     fb.set_resolution_scale(0.5);
     assert_eq!(fb.width() as f64, (device(80.0) * 0.5).round());
     assert_eq!(canvas.height() as f64, (device(40.0) * 0.5).round());
-    // A later resize keeps the scale.
+    // A later resize keeps the scale. It lands when the next frame asks
+    // for the size, not in the observer (which runs after the frame's
+    // drawing: resizing there would show a cleared canvas).
     canvas
         .set_attribute("style", "display: block; width: 120px; height: 40px")
         .unwrap();
     settle().await;
+    assert_eq!(
+        canvas.width() as f64,
+        (device(80.0) * 0.5).round(),
+        "not yet"
+    );
     assert_eq!(fb.width() as f64, (device(120.0) * 0.5).round());
+    assert_eq!(canvas.width() as f64, (device(120.0) * 0.5).round());
 
     // At most 0.25 pixels per CSS pixel: smaller than the scale here.
     fb.set_resolution_scale(1.0);
