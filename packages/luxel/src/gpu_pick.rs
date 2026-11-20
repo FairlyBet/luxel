@@ -80,6 +80,9 @@ pub(crate) struct GpuPicker {
     group: ParamGroupId,
     f_view_proj: ParamField,
     state: StateId,
+    // The pick state for each mesh state: the depth test, plus the mesh's
+    // face culling (a face the scene culls can't be picked).
+    states: std::cell::RefCell<std::collections::HashMap<StateId, StateId>>,
 }
 
 impl GpuPicker {
@@ -131,6 +134,20 @@ impl GpuPicker {
             group,
             f_view_proj: ctx.param_field(layout, "u_pick_view_proj")?,
             state: ctx.render_state(&state),
+            states: Default::default(),
+        })
+    }
+
+    fn state_for(&self, ctx: &Context, mesh: StateId) -> StateId {
+        *self.states.borrow_mut().entry(mesh).or_insert_with(|| {
+            let Some(m) = ctx.render_state_of(mesh) else {
+                return self.state;
+            };
+            let mut state = ctx.render_state_of(self.state).unwrap_or_default();
+            state.cull_face = m.cull_face;
+            state.cull_mode = m.cull_mode;
+            state.front_face = m.front_face;
+            ctx.render_state(&state)
         })
     }
 
@@ -185,7 +202,8 @@ impl GpuPicker {
             let mut groups = [ParamGroupId::NULL; GROUP_SLOTS];
             groups[0] = self.group;
             groups[OBJECT_SLOT] = *object;
-            pass.push_groups(self.program, self.state, mesh.vao, groups, &mesh.command);
+            let state = self.state_for(ctx, mesh.state);
+            pass.push_groups(self.program, state, mesh.vao, groups, &mesh.command);
         }
         ctx.render(&pass);
         let entity = ctx.read_pixels_async(self.fb, 0, 0, 0, 1, 1, ReadFormat::RgbaU32);

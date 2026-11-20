@@ -672,6 +672,13 @@ impl Context {
     }
 }
 
+impl Context {
+    /// The state `id` stands for (None for a stale id).
+    pub fn render_state_of(&self, id: StateId) -> Option<RenderState> {
+        self.res().render_states.get(id.0).cloned()
+    }
+}
+
 #[wasm_bindgen]
 impl Context {
     /// The id of `state`, interned: equal states get the same id, so draws

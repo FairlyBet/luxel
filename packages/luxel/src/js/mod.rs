@@ -635,6 +635,11 @@ impl Scene {
         self.sync_context();
         let (ctx, pbr) = (&self.ctx, &mut self.pbr);
         let root = spawn_model(&mut self.world, &model, |item| {
+            // Lost: no shader can be made now. NULL stands for "PBR, chosen
+            // at the restore" (the mesh waits for its model's reload).
+            if ctx.is_lost() {
+                return Some(ProgramId::NULL);
+            }
             pbr.program_for(ctx, &model, item)
                 .map_err(|e| {
                     console::error_once(&format!(
@@ -694,6 +699,7 @@ impl Scene {
             let index = items.iter().position(|i| std::ptr::eq(i, item))? as u32;
             match programs.get(&index) {
                 Some(&p) => Some(p),
+                None if ctx.is_lost() => Some(ProgramId::NULL),
                 None => pbr
                     .program_for(ctx, model, item)
                     .map_err(|e| {

@@ -356,14 +356,25 @@ impl Scene {
             let opts = opts.unwrap_or(JsValue::UNDEFINED);
             self.sync_context();
             let spec = TextureSpec::parse(url, &opts)?;
+            self.textures.retain(|t| !t.failed.get());
+            let failed = std::rc::Rc::new(std::cell::Cell::new(false));
             let mut result = Ok(TextureId::NULL);
             let promise = js_sys::Promise::new(&mut |resolve, reject| {
                 let (ctx, url) = (self.ctx.clone(), spec.url.clone());
+                let generation = self.ctx.generation();
+                let failed = failed.clone();
                 let on_load = move |tex: TextureId| -> js_sys::Function {
                     Closure::once_into_js(move |w: f64, _h: f64| {
                         if w > 0.0 {
                             let _ = resolve.call1(&JsValue::NULL, &tex.to_raw().into());
+                        } else if ctx.generation() != generation {
+                            // Gone with a context loss, not a bad image: the
+                            // scene loads it again on the restore, and this
+                            // handle leads there (setMaterialTexture and
+                            // destroyTexture take it).
+                            let _ = resolve.call1(&JsValue::NULL, &tex.to_raw().into());
                         } else {
+                            failed.set(true);
                             if ctx.texture_is_valid(tex) {
                                 ctx.destroy_texture(tex);
                             }
@@ -376,7 +387,11 @@ impl Scene {
                 result = spec.start(&self.ctx, on_load);
             });
             let tex = result?;
-            self.textures.push(LoadedTexture { id: tex, spec });
+            self.textures.push(LoadedTexture {
+                id: tex,
+                spec,
+                failed,
+            });
             Ok(promise)
         })()
         .map_err(|e| e.in_op("loadTexture"))
@@ -698,7 +713,7 @@ impl Scene {
             Self::set_vertex_array(&mut self.world, e, vao, attributes);
             return;
         };
-        if !self.pbr.is_pbr(mesh.program) {
+        if !self.pbr.is_pbr(mesh.program) && !mesh.program.is_null() {
             // The app's shader: the layout at once.
             Self::set_vertex_array(&mut self.world, e, vao, attributes);
             return;
@@ -786,6 +801,8 @@ impl TextureSpec {
 pub(crate) struct LoadedTexture {
     pub(crate) id: TextureId,
     pub(crate) spec: TextureSpec,
+    // Its image didn't load: dropped (not loaded again after a loss).
+    pub(crate) failed: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl TextureSpec {

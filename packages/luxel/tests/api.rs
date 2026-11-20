@@ -308,6 +308,13 @@ async fn picking_on_the_gpu_finds_the_nearest_visible_part() {
     let d = field(&hit, "distance").as_f64().unwrap();
     assert!((d - (1.0 + 4.5f64 * 4.5).sqrt()).abs() < 1e-2, "{d}");
 
+    // Turned away (single-sided: the scene culls its back), it can't be
+    // picked either: what's behind it is.
+    s.scene.set_rotation(stone_b, 0.0, 1.0, 0.0, 0.0);
+    let hit = pick(&mut s, -2.0 / 3.0, 0.0).await;
+    assert_eq!(node_of(&s, &hit), band, "a culled face isn't picked");
+    s.scene.set_rotation(stone_b, 0.0, 0.0, 0.0, 1.0);
+
     // Hidden parts aren't there; empty space is null.
     s.scene.set_visible(stone_b, false);
     let hit = pick(&mut s, -2.0 / 3.0, 0.0).await;
@@ -1987,4 +1994,88 @@ async fn a_capture_that_loses_the_context_rejects() {
     let err = s.scene.capture(s.camera, Some(opts)).expect_err("rejects");
     assert!(format!("{err:?}").contains("lost"), "{err:?}");
     assert_eq!((canvas.width(), canvas.height()), size);
+}
+
+// loadTexture across a context loss: one in flight resolves (the scene loads
+// it again on the restore, under the handle it gives); one whose image is bad
+// rejects and isn't tried again after a loss.
+#[wasm_bindgen_test]
+async fn load_texture_across_a_loss() {
+    let mut s = setup().await;
+    s.frame().await;
+    let bad = s
+        .scene
+        .load_texture("data:image/png;base64,AAAA", None)
+        .unwrap();
+    assert!(await_texture(bad).await.is_err(), "a bad image rejects");
+    let p = s.scene.load_texture(&png_url(BLUE), None).unwrap();
+    assert!(s.ctx.simulate_context_loss());
+    let generation = s.ctx.generation();
+    for _ in 0..100 {
+        if s.ctx.generation() != generation {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    let console = js_sys::Reflect::get(&js_sys::global(), &"console".into()).unwrap();
+    let original = js_sys::Reflect::get(&console, &"error".into()).unwrap();
+    let errors = js_sys::Array::new();
+    let push = js_sys::Function::new_with_args("m", "this.push(String(m))").bind0(&errors);
+    js_sys::Reflect::set(&console, &"error".into(), &push).unwrap();
+    assert!(s.ctx.simulate_context_restore());
+    for _ in 0..200 {
+        if !s.ctx.is_lost() {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    let got = await_texture(p).await;
+    s.frame().await;
+    // The handle is the scene's (the reloaded texture's): it can be freed.
+    if let Ok(tex) = &got {
+        s.scene.destroy_texture(*tex);
+    }
+    js_sys::Reflect::set(&console, &"error".into(), &original).unwrap();
+    got.expect("resolves across the loss");
+    let errors: Vec<String> = errors.iter().filter_map(|v| v.as_string()).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    s.scene.destroy();
+}
+
+// A model added while the context is lost comes back whole with the
+// scene: its meshes wait for the restore instead of being left out.
+#[wasm_bindgen_test]
+async fn a_model_added_while_lost_comes_back() {
+    let mut s = setup().await;
+    s.frame().await;
+    assert_eq!(s.scene.drawn(), 3);
+    // Its PBR variant (a textured base color) isn't made yet.
+    let second = load_model(&s.ctx, &textured_quad_url(RED))
+        .await
+        .expect("load");
+    assert!(s.ctx.simulate_context_loss());
+    let generation = s.ctx.generation();
+    for _ in 0..100 {
+        if s.ctx.generation() != generation {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    let root = s.scene.add_model(second);
+    s.scene.set_translation(root, 0.0, 0.0, -1.0);
+    assert!(s.ctx.simulate_context_restore());
+    let mut drawn = 0;
+    for _ in 0..200 {
+        sleep_ms(10).await;
+        if s.ctx.is_lost() {
+            continue;
+        }
+        s.frame().await;
+        drawn = s.scene.drawn();
+        if drawn == 4 {
+            break;
+        }
+    }
+    assert_eq!(drawn, 4, "the model and the one added while lost");
+    s.scene.destroy();
 }

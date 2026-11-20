@@ -165,7 +165,8 @@ impl Scene {
             .map(|m| m.iter().map(|(e, m)| (e, m.program)).collect())
             .unwrap_or_default();
         for (e, program) in meshes {
-            let new = if old_pbr.is_pbr(program) {
+            // NULL: a model added while lost, PBR to be chosen now.
+            let new = if old_pbr.is_pbr(program) || program.is_null() {
                 self.pbr_program(e)
             } else {
                 remap.get(&program).copied()
@@ -195,6 +196,8 @@ impl Scene {
 
     // Loads `loadTexture`'s textures again and points materials at them.
     fn restore_textures(&mut self) {
+        // Ones whose image never loaded aren't tried again.
+        self.textures.retain(|t| !t.failed.get());
         let mut remap = HashMap::new();
         for t in &mut self.textures {
             let url = t.spec.url().to_string();
