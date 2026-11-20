@@ -145,6 +145,8 @@ impl Scene {
                     p.id = new;
                     true
                 }
+                // Lost again meanwhile: kept for the next restore.
+                Err(e) if e.kind() == luxel_gl::error::ErrorKind::ContextLost => true,
                 Err(e) => {
                     console::error(&format!("[luxel] restore: a scene shader: {e}"));
                     false

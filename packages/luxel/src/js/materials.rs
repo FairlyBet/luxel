@@ -464,6 +464,14 @@ impl Scene {
                 .materials
                 .get_mut(&material)
                 .ok_or("setMaterialTexture: not a material of this scene")?;
+            // texCoord names a TEXCOORD set; the material reads its sets
+            // through two slots (TEXCOORD_2 and up take a free one).
+            let sets = record.material.uv_sets();
+            let uv = sets.iter().position(|&s| s == uv).ok_or_else(|| {
+                Error::from(format!(
+                    "setMaterialTexture: texCoord {uv} isn't one of this material's UV sets ({sets:?})"
+                ))
+            })? as u32;
             let index = if texture.is_null() {
                 -1
             } else {

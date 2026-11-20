@@ -2079,3 +2079,44 @@ async fn a_model_added_while_lost_comes_back() {
     assert_eq!(drawn, 4, "the model and the one added while lost");
     s.scene.destroy();
 }
+
+// A scene shader freed with destroyProgram isn't compiled again after a
+// loss (its source is forgotten).
+#[wasm_bindgen_test]
+async fn a_destroyed_scene_shader_stays_destroyed() {
+    let mut s = setup().await;
+    s.frame().await;
+    let vert = "layout(location = 0) in vec3 a_position;\n\
+                void main() { gl_Position = u_view_proj * u_model * vec4(a_position, 1.0); }";
+    let frag = "out vec4 frag_color;\n\
+                void main() { frag_color = vec4(scene_output(vec3(0.0, 0.0, 1.0)), 1.0); }";
+    let p = s.scene.create_program(vert, frag).expect("program");
+    s.scene.destroy_program(p);
+    assert!(!s.ctx.program_is_valid(p));
+    let programs = |s: &Setup| {
+        js_sys::Reflect::get(&s.ctx.resource_stats(), &"programs".into())
+            .unwrap()
+            .as_f64()
+            .unwrap()
+    };
+    let before = programs(&s);
+    assert!(s.ctx.simulate_context_loss());
+    let generation = s.ctx.generation();
+    for _ in 0..100 {
+        if s.ctx.generation() != generation {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    assert!(s.ctx.simulate_context_restore());
+    for _ in 0..200 {
+        if !s.ctx.is_lost() {
+            break;
+        }
+        sleep_ms(10).await;
+    }
+    s.frame().await;
+    assert_eq!(s.scene.current_program(p), p, "no new handle for it");
+    assert!(programs(&s) <= before, "{} > {before}", programs(&s));
+    s.scene.destroy();
+}

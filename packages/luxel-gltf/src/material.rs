@@ -666,11 +666,18 @@ impl Material {
         self.maps.get(slot).copied()
     }
 
-    /// Sets map `slot`: `texture` as for `map`, `uv` its TEXCOORD set (0 or 1).
+    /// Sets map `slot`: `texture` as for `map`, `uv` the UV slot it reads (0
+    /// or 1: `uv_sets` says which TEXCOORD set each holds).
     pub fn set_map(&mut self, slot: usize, texture: i32, uv: u32) {
         if let Some(m) = self.maps.get_mut(slot) {
             *m = (texture, if texture < 0 { 0 } else { uv });
         }
+    }
+
+    /// The TEXCOORD sets in the shader's two UV slots ([slot 0, slot 1]): a
+    /// map's `uv` (`set_map`, `map`) is a slot, this says which set it is.
+    pub fn uv_sets(&self) -> [u32; 2] {
+        self.uv_sets
     }
 
     /// What it needs of a primitive's vertex array (`Model::vertex_array_for`):

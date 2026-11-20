@@ -606,10 +606,16 @@ impl Scene {
     /// Compiles a scene shader: your code on top of the scene's preludes
     /// (camera, lights, environment, object; `scene_irradiance`,
     /// `scene_reflection`, `scene_output`), without `#version` or those
-    /// declarations. The program is yours to destroy (`ctx.destroyProgram`).
+    /// declarations. The scene keeps its source to compile it again after a
+    /// context loss: free it with `scene.destroyProgram`.
     #[wasm_bindgen(js_name = createProgram)]
     pub fn create_program(&mut self, vert: &str, frag: &str) -> Result<ProgramId, Error> {
         self.sync_context();
+        // Ones destroyed through the context instead are forgotten too.
+        if !self.ctx.is_lost() && self.generation == self.ctx.generation() {
+            let ctx = &self.ctx;
+            self.scene_programs.retain(|p| ctx.program_is_valid(p.id));
+        }
         let id = create_scene_program(&self.ctx, vert, frag)?;
         self.scene_programs.push(SceneProgram {
             id,
@@ -617,6 +623,26 @@ impl Scene {
             frag: frag.to_string(),
         });
         Ok(id)
+    }
+
+    /// Frees a `createProgram` shader (its handle from before a context
+    /// loss too) and forgets its source: it isn't compiled again after a
+    /// loss. Meshes still drawn with it stop drawing (reported).
+    #[wasm_bindgen(js_name = destroyProgram)]
+    pub fn destroy_program(&mut self, program: ProgramId) {
+        self.invalidate();
+        let live = self.current_program(program);
+        let Some(i) = self.scene_programs.iter().position(|p| p.id == live) else {
+            console::error_once(
+                "[luxel] destroyProgram: not a program of this scene's createProgram; ignored",
+            );
+            return;
+        };
+        self.scene_programs.swap_remove(i);
+        self.program_aliases.retain(|_, to| *to != live);
+        if self.ctx.program_is_valid(live) {
+            self.ctx.destroy_program(live);
+        }
     }
 
     // --- models ---------------------------------------------------------------
@@ -1268,7 +1294,8 @@ impl Scene {
 
     /// Frees everything the scene owns: its renderer resources, the built-in
     /// shaders, the models added with `addModel`, the cloned materials and
-    /// the textures `loadTexture` made. Dropping the scene does the same
+    /// the textures `loadTexture` made, the `createProgram` shaders. Dropping
+    /// the scene does the same
     /// (`free()`, or the garbage collector once it's unreachable); this does
     /// it now. Handles you passed in (`setMesh`) stay yours.
     pub fn destroy(self) {
@@ -1322,6 +1349,11 @@ impl Scene {
         for t in std::mem::take(&mut self.textures) {
             if current && self.ctx.texture_is_valid(t.id) {
                 self.ctx.destroy_texture(t.id);
+            }
+        }
+        for p in std::mem::take(&mut self.scene_programs) {
+            if current && self.ctx.program_is_valid(p.id) {
+                self.ctx.destroy_program(p.id);
             }
         }
         for m in std::mem::take(&mut *self.reloads.borrow_mut()) {
